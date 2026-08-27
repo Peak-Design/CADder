@@ -151,6 +151,11 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             "filepath": filepath,
             "out_blend": out_blend,
             "op_kwargs": self._op_kwargs,
+            # load_step divides the file unit scale by the scene unit
+            # length. The worker starts from a factory scene at 1.0, so
+            # without this a background import comes out a different
+            # size than the same file imported directly.
+            "scene_unit_scale": context.scene.unit_settings.scale_length,
             "prefs": self._prefs_snapshot,
             "parent_pid": os.getpid(),
         }
@@ -302,6 +307,12 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             for obj in list(ws.collection.objects):
                 ws.collection.objects.unlink(obj)
                 target.objects.link(obj)
+            # The worker recorded how it imported the file on ITS scene,
+            # and that scene goes now. Carry the record across, or a
+            # refresh has nothing to reproduce and falls back to the
+            # defaults, which cannot repeat a custom scale.
+            from . import refresh as refresh_mod
+            refresh_mod.merge_registry(context.scene, ws)
             bpy.data.scenes.remove(ws)
         # Appended objects need a depsgraph pass before their matrices are valid
         context.view_layer.update()

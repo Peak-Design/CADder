@@ -65,8 +65,8 @@
 #     closed tubes/rings (Euler-characteristic test), so unwrapping
 #     flattens them cleanly, shading unaffected. Import dialog options are
 #     remembered across Blender sessions ("Remember import settings"
-#     preference, on by default. Folder batch import follows them too). Normalize UVs now defaults to off (real-world UV
-#     scale). Recursive
+#     preference, on by default. Folder batch import follows them too).
+#     Normalize UVs now defaults to off (real-world UV scale). Recursive
 #     folder batch import. Multi-file drag & drop fixed (files list now
 #     uses OperatorFileListElement)
 #   - v2.4.6: fixed engineering materials always being created gray. The

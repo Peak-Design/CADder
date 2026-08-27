@@ -233,6 +233,39 @@ def _material_base_color(mat, fallback=(0.8, 0.8, 0.8)):
     return tuple(mat.diffuse_color[:3])
 
 
+# The object color the import wrote, so a refresh can tell it apart from one
+# the user picked. Kept next to the value it describes.
+OBJECT_COLOR_PROP = "STEP_object_color"
+
+
+def set_object_colors(objects):
+    """Copies the CAD color onto each object's own color.
+
+    obj.color is what a Solid viewport shows with Color set to Object, and
+    what an Object Info node reads in a shader. The color is already in the
+    material, but nothing outside Material Preview reads a material, so a
+    solid viewport showed a gray assembly. This makes it match the file.
+
+    A part with more than one material takes the first, which is the
+    shape-level color the file gives the product. Per-face colors have no
+    single answer, and guessing one would be worse than taking the one the
+    file states.
+
+    STEP carries no transparency here, so the alpha stays at 1.
+    """
+    for obj in objects:
+        data = getattr(obj, "data", None)
+        slots = getattr(data, "materials", None) or ()
+        first = next((m for m in slots if m is not None), None)
+        if first is None:
+            continue
+        color = _material_base_color(first, None)
+        if color is None:
+            continue
+        obj.color = (*color, 1.0)
+        obj[OBJECT_COLOR_PROP] = list(obj.color)
+
+
 def bpy_update_object_data(objdata, bm, vcol_name, colors, uvs, norms, mat_names, build_materials=True):
     if build_materials:
         # set colors and mats
@@ -1743,6 +1776,39 @@ def load_step(
     # real-world scene units for consistent texel density across parts.
     step_reader.uv_world_scale = None if uv_normalize else scale
 
+    # Everything a refresh needs to repeat this import. It goes on the scene
+    # AND on every object the import makes. A refresh reads the scene copy
+    # first, but that copy does not always survive: a background import
+    # records it on a worker scene which is deleted once its content has
+    # been appended. The copy on the objects travels with them.
+    #
+    # "unit_scale" is the resolved scale in Blender units, and
+    # "scene_unit_scale" the scene unit length it was resolved against.
+    # Together they let a refresh reproduce the SIZE. A background import
+    # needs that: it runs in a factory scene at 1.0, which is not
+    # necessarily the scene the objects end up in.
+    import_record = {
+        "up_as": up_as if isinstance(up_as, str) else up_as[0],
+        "htypes": htypes,
+        "apply_scale": apply_scale,
+        "custom_scale": custom_scale,
+        "unit_scale": scale,
+        "scene_unit_scale": context.scene.unit_settings.scale_length,
+        "lin_deflection": lin_deflection,
+        "ang_deflection": ang_deflection,
+        "material_database": material_database,
+        "skip_construction": skip_construction,
+        "uv_mode": _uv_options["mode"],
+        "uv_normalize": _uv_options["normalize"],
+        "uv_split_closed": _uv_options["split_closed"],
+        "box_uv_scale": _uv_options["box_scale"],
+        "import_curves": import_curves,
+        "eng_materials": eng_materials,
+        "group_in_collection": group_in_collection,
+        "separate_solids": separate_solids,
+    }
+    import_record_json = json.dumps(import_record)
+
     wm = bpy.context.window_manager
 
     created_objs = []
@@ -1950,6 +2016,7 @@ def load_step(
                         proto["STEP_name"] = name
                         proto["STEP_tree_location"] = node_index
                         proto["STEP_applied_scale"] = scale if apply_scale else 0.0
+                        proto["STEP_import_settings"] = import_record_json
                         if proto.data is not None and proto.data.materials:
                             proto["STEP_materials"] = json.dumps(
                                 [m.name if m else "" for m in proto.data.materials])
@@ -2007,16 +2074,7 @@ def load_step(
             obj["STEP_name"] = name
             obj["STEP_tree_location"] = node_index
             obj["STEP_applied_scale"] = scale if apply_scale else 0.0
-            obj["STEP_import_settings"] = json.dumps({
-                "lin_deflection": lin_deflection,
-                "ang_deflection": ang_deflection,
-                "uv_mode": _uv_options["mode"],
-                "uv_normalize": _uv_options["normalize"],
-                "uv_split_closed": _uv_options["split_closed"],
-                "box_uv_scale": _uv_options["box_scale"],
-                "unit_scale": scale,
-                "eng_materials": eng_materials,
-            })
+            obj["STEP_import_settings"] = import_record_json
             # Engineering material metadata (AP242/AP214) as custom
             # properties, regardless of the assignment option
             mat_info = getattr(node, "material", None)
@@ -2193,6 +2251,12 @@ def load_step(
         _apply_matdb_to_objects(matdb_targets, mappings)
         _cleanup_unused_step_materials(known_names=set(mappings))
 
+    # The CAD color on the objects themselves, so a Solid viewport set to
+    # Object color matches the file. After the material database pass,
+    # because that pass is what decides the final material.
+    set_object_colors(created_objs)
+    set_object_colors(instance_prototypes.values())
+
     print(f"\n--- Phase 3/3: Applying transforms ---")
     transform_to_up(up_as[0], created_objs, scale, apply_scale=apply_scale)
 
@@ -2213,27 +2277,16 @@ def load_step(
                     me.update()
                 processed_meshes.add(me)
 
+    # Where the import put every object, so a later refresh can tell a part
+    # that moved in CAD from one the user moved in Blender.
+    refresh_mod.stamp_basis(created_objs)
+    refresh_mod.stamp_basis(instance_prototypes.values())
+
     # What this file was imported with, so a refresh reproduces it rather
     # than falling back to whatever the dialog happens to hold later.
     try:
-        refresh_mod.record_import(context.scene if context else None, filepath, {
-            "up_as": up_as if isinstance(up_as, str) else up_as[0],
-            "htypes": htypes,
-            "apply_scale": apply_scale,
-            "custom_scale": custom_scale,
-            "lin_deflection": lin_deflection,
-            "ang_deflection": ang_deflection,
-            "material_database": material_database,
-            "skip_construction": skip_construction,
-            "uv_mode": uv_mode,
-            "uv_normalize": uv_normalize,
-            "uv_split_closed": uv_split_closed,
-            "box_uv_scale": box_uv_scale,
-            "import_curves": import_curves,
-            "eng_materials": eng_materials,
-            "group_in_collection": group_in_collection,
-            "separate_solids": separate_solids,
-        })
+        refresh_mod.record_import(context.scene if context else None,
+                                  filepath, import_record)
     except Exception as exc:
         print("STEPper NEXT: could not record the import:", exc)
 

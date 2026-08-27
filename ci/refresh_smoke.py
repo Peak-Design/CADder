@@ -2,7 +2,10 @@
 """Refresh-from-disk: does it bring the file back and leave the user's work
 alone?
 
-    blender -b --factory-startup -P ci/refresh_smoke.py
+    blender -b --factory-startup --python-exit-code 1 -P ci/refresh_smoke.py
+
+Keep --python-exit-code. Without it Blender exits 0 even when the
+script raises, and a test that crashed reads as a test that passed.
 
 Two halves.
 

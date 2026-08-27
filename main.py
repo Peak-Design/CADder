@@ -216,6 +216,39 @@ def _material_base_color(mat, fallback=(0.8, 0.8, 0.8)):
     return tuple(mat.diffuse_color[:3])
 
 
+# The object color the import wrote, so a refresh can tell it apart from one
+# the user picked. Kept next to the value it describes.
+OBJECT_COLOR_PROP = "STEP_object_color"
+
+
+def set_object_colors(objects):
+    """Copies the CAD color onto each object's own color.
+
+    obj.color is what a Solid viewport shows with Color set to Object, and
+    what an Object Info node reads in a shader. The color is already in the
+    material, but nothing outside Material Preview reads a material, so a
+    solid viewport showed a gray assembly. This makes it match the file.
+
+    A part with more than one material takes the first, which is the
+    shape-level color the file gives the product. Per-face colors have no
+    single answer, and guessing one would be worse than taking the one the
+    file states.
+
+    STEP carries no transparency here, so the alpha stays at 1.
+    """
+    for obj in objects:
+        data = getattr(obj, "data", None)
+        slots = getattr(data, "materials", None) or ()
+        first = next((m for m in slots if m is not None), None)
+        if first is None:
+            continue
+        color = _material_base_color(first, None)
+        if color is None:
+            continue
+        obj.color = (*color, 1.0)
+        obj[OBJECT_COLOR_PROP] = list(obj.color)
+
+
 def bpy_update_object_data(objdata, bm, vcol_name, colors, uvs, norms, mat_names, build_materials=True):
     if build_materials:
         # set colors and mats
@@ -2200,6 +2233,12 @@ def load_step(
             matdb_targets.extend(instance_prototypes.values())
         _apply_matdb_to_objects(matdb_targets, mappings)
         _cleanup_unused_step_materials(known_names=set(mappings))
+
+    # The CAD color on the objects themselves, so a Solid viewport set to
+    # Object color matches the file. After the material database pass,
+    # because that pass is what decides the final material.
+    set_object_colors(created_objs)
+    set_object_colors(instance_prototypes.values())
 
     print(f"\n--- Phase 3/3: Applying transforms ---")
     transform_to_up(up_as[0], created_objs, scale, apply_scale=apply_scale)

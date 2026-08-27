@@ -56,6 +56,11 @@ ROLE_PROP = "STEP_role"
 # between this and the object's transform now is the user's own move, which
 # a refresh has to carry over onto the new CAD placement.
 BASIS_PROP = "STEP_import_basis"
+
+# The object color the import wrote. Set in main.set_object_colors, and read
+# back here to tell it apart from a color the user picked.
+OBJECT_COLOR_PROP = "STEP_object_color"
+
 # Scene-level record of what was imported and how, so a refresh can reproduce
 # the import rather than guess at its settings.
 REGISTRY_PROP = "step_import_registry"
@@ -486,6 +491,19 @@ def _restore_vertex_groups(obj, saved):
             groups[index].add([vert], weight, "REPLACE")
 
 
+def _object_color_is_users(obj):
+    """Whether the object color on screen is the user's pick rather than the
+    one the import wrote. The importer stamps what it wrote, so anything
+    else is theirs and a refresh leaves it alone."""
+    stamped = obj.get(OBJECT_COLOR_PROP)
+    if stamped is None:
+        return True          # imported before the stamp: never overwrite
+    try:
+        return any(abs(a - b) > 1e-6 for a, b in zip(obj.color, stamped))
+    except TypeError:
+        return True
+
+
 def _adopt(old, fresh, col_map):
     """Moves the freshly imported result onto the object already in the
     scene. Returns the data the object used to hold, for purging.
@@ -497,6 +515,7 @@ def _adopt(old, fresh, col_map):
     was = old.data
     mine = _user_materials(old)
     groups = _vertex_groups(old)
+    keep_color = _object_color_is_users(old)
     if old.type == fresh.type:
         old.data = fresh.data
     else:
@@ -525,6 +544,11 @@ def _adopt(old, fresh, col_map):
         old.instance_collection = col_map.get(target, target)
 
     _restamp(old, fresh)
+
+    # The object color comes from the file, so a part recolored in CAD
+    # shows the new color. One the user picked themselves stays theirs.
+    if not keep_color:
+        old.color = fresh.color
     return was
 
 

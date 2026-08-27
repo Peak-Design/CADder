@@ -33,6 +33,7 @@ Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 **Materials & UVs**
 
 - Per-face vertex colors and automatic material creation from STEP color data
+- The CAD color is also written to the object color, so a Solid viewport set to Object color matches the file
 - Engineering material metadata (AP242/AP214 name, description, density) imported as custom properties, and optionally as named Blender materials
 - Material database system for automatic material replacement on import
 - UV generation from CAD surfaces, angle-based unwrap, or box projection, with optional real-world UV scale and automatic seams on cylindrical/closed faces

@@ -21,7 +21,7 @@ REQUIRED_FILES = [
     "__init__.py", "main.py", "importer.py", "import_ui.py", "uv.py",
     "tools.py", "formats.py", "curves.py", "analyzer.py", "background.py",
     "worker.py", "trimesh.py", "nurbs.py", "ocp_utils.py", "stepanalyzer.py",
-    "updater.py",
+    "updater.py", "refresh.py",
     "blender_manifest.toml", "LICENSE",
 ]
 missing = [f for f in REQUIRED_FILES

@@ -41,6 +41,7 @@ from . import uv as uv_mod
 from . import tools as tools_mod
 from . import curves as curves_mod
 from . import analyzer as analyzer_mod
+from . import refresh as refresh_mod
 from . import background as background_mod
 from . import updater as updater_mod
 from .formats import classes as formats_classes
@@ -65,19 +66,43 @@ def _quantize_color(col):
     return tuple(round(c * _COLOR_MERGE_PRECISION) / _COLOR_MERGE_PRECISION for c in col)
 
 
+# Freshness stamp per cached path. The cache used to key on path alone,
+# which served YESTERDAY'S geometry whenever a file was re-exported to the
+# same path (an export loop that rewrites one file does exactly that,
+# live 2026-08-23, when a re-posed assembly kept importing at the old pose).
+global_file_cache_meta = {}
+
+
+def _file_signature(filepath):
+    try:
+        st = os.stat(filepath)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
 def _cache_put(filepath, step_reader):
     """Add to file cache with LRU eviction."""
     if filepath in global_file_cache:
         global_file_cache.move_to_end(filepath)
     global_file_cache[filepath] = step_reader
+    global_file_cache_meta[filepath] = _file_signature(filepath)
     while len(global_file_cache) > MAX_FILE_CACHE:
         evicted_path, _ = global_file_cache.popitem(last=False)
+        global_file_cache_meta.pop(evicted_path, None)
         print(f"Cache evicted: {os.path.basename(evicted_path)}")
 
 
 def _cache_get(filepath):
-    """Get from file cache, updating LRU order. Returns None if not found."""
+    """Get from file cache, updating LRU order. Returns None if not found
+    or if the file on disk changed since it was cached."""
     if filepath in global_file_cache:
+        sig = _file_signature(filepath)
+        if sig is None or sig != global_file_cache_meta.get(filepath):
+            del global_file_cache[filepath]
+            global_file_cache_meta.pop(filepath, None)
+            print(f"Cache stale (file changed on disk): {os.path.basename(filepath)}")
+            return None
         global_file_cache.move_to_end(filepath)
         return global_file_cache[filepath]
     return None
@@ -1151,7 +1176,33 @@ _ADDON_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def _get_matdb_dir():
-    """Return the MaterialDB folder inside the addon directory, creating it if needed."""
+    """The folder holding the material databases.
+
+    The addon's own MaterialDB folder by default, and a folder the user
+    names in preferences when they set one. A database inside the addon is
+    wiped by every reinstall and cannot be shared between machines or with a
+    team, which is exactly what a material library is for."""
+    custom = ""
+    try:
+        custom = (_get_addon_prefs().matdb_dir or "").strip()
+    except Exception:
+        # Called from an enum callback before the preferences exist.
+        custom = ""
+    if custom:
+        d = bpy.path.abspath(custom)
+        # A path that is not there yet is created, the same as the built-in
+        # one; a path that cannot be made is reported once and falls back,
+        # because losing the databases is worse than ignoring the setting.
+        try:
+            os.makedirs(d, exist_ok=True)
+            return d
+        except OSError as exc:
+            global _matdb_dir_warned
+            if _matdb_dir_warned != d:
+                _matdb_dir_warned = d
+                print("STEPper NEXT: material database folder %r is "
+                      "unusable (%s); using the addon's own folder" % (d, exc))
+
     d = os.path.join(_ADDON_DIR, "MaterialDB")
     try:
         os.makedirs(d, exist_ok=True)
@@ -1160,6 +1211,9 @@ def _get_matdb_dir():
         # "no databases"; raising here would crash the enum callback
         pass
     return d
+
+
+_matdb_dir_warned = ""
 
 
 def _sanitize_db_name(name):
@@ -1432,6 +1486,109 @@ def _cleanup_unused_step_materials(known_names=None):
     return removed
 
 
+def _cache_drop(filepath):
+    """Forget a file so the next read comes off disk. A refresh exists to
+    pick up a changed file, and the cache would hand back the old one."""
+    global_file_cache.pop(filepath, None)
+    global_file_cache_meta.pop(filepath, None)
+
+
+def import_defaults():
+    """The import settings load_step would use right now, as keyword
+    arguments. Used when a blend predates the import registry and a refresh
+    has nothing recorded to reproduce."""
+    prefs = _get_addon_prefs()
+    lin, ang = calculate_detail_level(bpy.context.scene.stepper.detail_level)
+    return {
+        "up_as": prefs.preferred_up_axis,
+        "htypes": prefs.preferred_hierarchy,
+        "apply_scale": True,
+        "lin_deflection": lin,
+        "ang_deflection": ang,
+    }
+
+
+def _own_collection(name, filepath, role):
+    """A new collection that says which import made it, and what for.
+
+    Refreshing a file has to take its own collections away and leave the
+    user's alone, and there is no way to tell them apart after the fact:
+    names collide, and a user is free to move, rename or nest anything. So
+    the importer marks its own as it creates them.
+    """
+    col = bpy.data.collections.new(name)
+    col["STEP_file"] = filepath
+    col["STEP_role"] = role
+    return col
+
+
+def _split_solids(entries, step_reader):
+    """One entry per BODY, for shapes that hold more than one.
+
+    A multibody part exports as ONE product whose shape is a compound of
+    several solids, and there is no assembly structure to tell them apart.
+    the importer builds one object with every body merged into it. This
+    hands each body back as its own entry so it becomes its own object.
+
+    Only a shape holding two or more bodies is touched; a single-body shape
+    keeps its sub-index of None and is byte-for-byte the same import as
+    before. Solids are preferred, and free shells are used only where a
+    shape has no solids at all, which is the surface-body case (the option's
+    own description names solids, shells and surfaces).
+
+    Identity is ShapeKey, not an OCCT map: per-entity handle lookups are
+    broken in OCP 7.9.3.1, which is why curves.py does the same.
+    """
+    from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from .ocp_utils import ShapeKey
+
+    def inherit_colour(parent, body):
+        """A body carries its product's colour. Its FACES are the same OCC
+        faces the whole shape had, so per-face colour resolves unchanged; it
+        is only the shape-level fallback that has to be carried across."""
+        pkey, bkey = ShapeKey(parent), ShapeKey(body)
+        if pkey in step_reader.face_colors:
+            step_reader.face_colors.setdefault(
+                bkey, step_reader.face_colors[pkey])
+        prio = getattr(step_reader, "face_color_priority", None)
+        if prio is not None and pkey in prio:
+            prio.setdefault(bkey, prio[pkey])
+
+    def bodies(shape, kind):
+        found, seen = [], set()
+        ex = TopExp_Explorer(shape, kind)
+        while ex.More():
+            cur = ex.Current()
+            key = ShapeKey(cur)
+            if key not in seen:
+                seen.add(key)
+                found.append(cur)
+            ex.Next()
+        return found
+
+    out = []
+    split_shapes = 0
+    for shp, idx, _sub in entries:
+        parts = []
+        if shp is not None:
+            parts = bodies(shp, TopAbs_SOLID)
+            if len(parts) < 2 and not parts:
+                parts = bodies(shp, TopAbs_SHELL)
+        if len(parts) < 2:
+            out.append((shp, idx, None))
+            continue
+        split_shapes += 1
+        for k, body in enumerate(parts):
+            inherit_colour(shp, body)
+            out.append((body, idx, k))
+
+    if split_shapes:
+        print("Separate solids: %d shape(s) became %d bodies"
+              % (split_shapes, len(out) - (len(entries) - split_shapes)))
+    return out
+
+
 def load_step(
     context,
     filepath,
@@ -1451,6 +1608,8 @@ def load_step(
     box_uv_scale=1.0,
     import_curves=False,
     eng_materials=False,
+    group_in_collection=False,
+    separate_solids=False,
 ):
     from . import importer
 
@@ -1473,6 +1632,46 @@ def load_step(
     # splitext, not split("."): multi-dot names ("part.rev2.step") must keep
     # their dots, and extensionless names must not collapse to ""
     filename = os.path.splitext(ntpath.basename(filepath))[0] or "STEP"
+
+    # Everything this import creates goes under ONE collection, so that a
+    # second import does not interleave with the first and so the whole
+    # assembly can be moved, hidden or deleted as a unit. Off by default:
+    # the scene collection is where every earlier version put things.
+    _dest_col = []
+
+    def destination():
+        if not _dest_col:
+            if group_in_collection:
+                col = _own_collection(filename, filepath, "wrapper")
+                bpy.context.scene.collection.children.link(col)
+            else:
+                col = bpy.context.scene.collection
+            _dest_col.append(col)
+        return _dest_col[0]
+
+    # Curves are their own collection, because a sketch is not a part: it is
+    # reference geometry a viewport wants to switch off in one gesture.
+    # Created on demand, so an import with no free edges makes no empty
+    # collection.
+    curve_objs = set()
+    _curve_col = []
+
+    def curves_collection():
+        if not _curve_col:
+            col = _own_collection("Cad Curves", filepath, "curves")
+            destination().children.link(col)
+            _curve_col.append(col)
+        return _curve_col[0]
+
+    def link_created(obj, collection):
+        """Links one created object where it belongs: a curve into the Cad
+        Curves collection, everything else where the hierarchy says. Parenting
+        and transforms are untouched. Collection membership is orthogonal to
+        both, so a curve still rides its assembly."""
+        if obj in curve_objs:
+            curves_collection().objects.link(obj)
+        else:
+            collection.objects.link(obj)
 
     skip_prefixes = ()
     if skip_construction:
@@ -1535,7 +1734,13 @@ def load_step(
 
     # traverse shapes, render in "face" mode
     start_time = time.time()
-    all_shapes = tree.get_shapes()
+    # Every entry is (shape, node index, sub-index). The sub-index is None
+    # for a shape taken whole and 0..n-1 for one body of a shape that was
+    # separated, and it is what keeps the mesh cache, the object names and
+    # the instancing apart afterwards.
+    all_shapes = [(shp, idx, None) for shp, idx in tree.get_shapes()]
+    if separate_solids:
+        all_shapes = _split_solids(all_shapes, step_reader)
     total = len(all_shapes)
 
     # Tessellation is done on-demand inside build_trimesh (per shape).
@@ -1563,23 +1768,27 @@ def load_step(
         hacks.add("skip_solids")
     build_materials = _get_addon_prefs().build_materials
 
-    def _variant_name(tag, node):
+    def _variant_name(tag, node, sub_index=None):
         """Mesh dedup key: shape tag, plus the instance color override when
         present (instances with different override colors can't share mesh
-        data since materials are baked per face)."""
+        data since materials are baked per face), plus which body of the
+        shape this is when the shape was separated. The bodies share a tag
+        and would otherwise all collapse onto the first one's mesh."""
         base = "tt_" + repr(tag)
         if node.color_override is not None:
             base += "|oc" + repr(node.color_override)
+        if sub_index is not None:
+            base += "|b" + repr(sub_index)
         return base
 
     # Identify unique shapes (first occurrence per variant)
     unique_shapes = {}  # variant_name -> (shp, part_name, color_override)
-    for shp, node_index in all_shapes:
+    for shp, node_index, sub_index in all_shapes:
         if shp is None:
             continue
         node = tree.nodes[node_index]
         _, _, tag, part_name, _, _, _ = node.get_values()
-        shape_name = _variant_name(tag, node)
+        shape_name = _variant_name(tag, node, sub_index)
         if shape_name not in unique_shapes:
             unique_shapes[shape_name] = (shp, part_name, node.color_override)
 
@@ -1640,14 +1849,16 @@ def load_step(
     instance_prototypes = {}  # variant_name -> prototype mesh object (instances mode)
     _no_curve_shapes = set()  # variants with no free edges (curves mode)
     wm.progress_begin(0, total)
-    for i, (shp, node_index) in enumerate(all_shapes):
+    for i, (shp, node_index, sub_index) in enumerate(all_shapes):
         node = tree.nodes[node_index]
         parent_uuid, self_uuid, tag, name, _, local_t, global_t = node.get_values()
 
         if name == "root":
             name = filename + ".empties"
+        if sub_index is not None:
+            name = "%s.body%03d" % (name, sub_index + 1)
 
-        shape_name = _variant_name(tag, node)
+        shape_name = _variant_name(tag, node, sub_index)
         wm.progress_update(i)
         obj = None
 
@@ -1757,6 +1968,7 @@ def load_step(
                     cobj["STEP_name"] = name + ".curves"
                     cobj["STEP_tree_location"] = node_index
                     cobj["STEP_applied_scale"] = scale if apply_scale else 0.0
+                    curve_objs.add(cobj)
                     created_objs.append(cobj)
 
         # No shape in leaf, empty creation enabled, do this
@@ -1800,7 +2012,12 @@ def load_step(
             # Store original STEP material names for material database feature
             if obj.data is not None and hasattr(obj.data, 'materials') and obj.data.materials:
                 obj["STEP_materials"] = json.dumps([m.name if m else "" for m in obj.data.materials])
-            created_uuid[self_uuid] = obj
+            # Children of this node parent to ONE object, so the first
+            # body speaks for a separated shape. A node with children is an
+            # assembly node and carries no shape of its own, so this only
+            # ever arises for a leaf someone has parented to.
+            if sub_index in (None, 0):
+                created_uuid[self_uuid] = obj
 
     # assert len(created_objs) == len(shapes_labels)
     if _debug_timing:
@@ -1822,8 +2039,8 @@ def load_step(
 
     # build flat collection
     if hierarchy_flat:
-        flat_collection = bpy.data.collections.new(filename + ".flat")
-        bpy.context.scene.collection.children.link(flat_collection)
+        flat_collection = _own_collection(filename + ".flat", filepath, "flat")
+        destination().children.link(flat_collection)
 
         created_collections = {}
         for obj in created_objs:
@@ -1835,7 +2052,7 @@ def load_step(
 
             # TODO: check dupe collections for dupe imports
             if group_name not in created_collections:
-                group_collection = bpy.data.collections.new(group_name)
+                group_collection = _own_collection(group_name, filepath, "group")
                 created_collections[group_name] = group_collection
                 flat_collection.children.link(group_collection)
             else:
@@ -1843,12 +2060,13 @@ def load_step(
 
             global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
             set_obj_matrix_world(obj, global_t)
-            group_collection.objects.link(obj)
+            link_created(obj, group_collection)
 
     # build tree of collections
     if hierarchy_tree:
-        tree_collection = bpy.data.collections.new(filename + ".hierarchy")
-        bpy.context.scene.collection.children.link(tree_collection)
+        tree_collection = _own_collection(
+            filename + ".hierarchy", filepath, "hierarchy")
+        destination().children.link(tree_collection)
         hierarchy_collections = {}
         hierarchy_collections[-1] = tree_collection
 
@@ -1863,7 +2081,8 @@ def load_step(
                 node_idx, level, parent_collection = stack.pop()
                 node = tree.nodes[node_idx]
                 if len(node.children) > 0:
-                    collection_node = bpy.data.collections.new(node.name)
+                    collection_node = _own_collection(
+                        node.name, filepath, "node")
                     assert node.index not in hierarchy_collections
                     hierarchy_collections[node.index] = collection_node
                     parent_collection.children.link(collection_node)
@@ -1875,11 +2094,11 @@ def load_step(
                 for obj in created_objs:
                     parent_id = obj.get("STEP_parent", -1)
                     if parent_id in hierarchy_collections:
-                        hierarchy_collections[parent_id].objects.link(obj)
+                        link_created(obj, hierarchy_collections[parent_id])
                     elif -1 in hierarchy_collections:
-                        hierarchy_collections[-1].objects.link(obj)
+                        link_created(obj, hierarchy_collections[-1])
                     else:
-                        bpy.context.scene.collection.objects.link(obj)
+                        link_created(obj, destination())
                     global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
                     set_obj_matrix_world(obj, global_t)
 
@@ -1888,7 +2107,7 @@ def load_step(
         for obj in created_objs:
             global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
             set_obj_matrix_world(obj, global_t)
-            bpy.context.scene.collection.objects.link(obj)
+            link_created(obj, destination())
 
             # Parent objs
             parent_id = obj["STEP_parent"]
@@ -1901,8 +2120,9 @@ def load_step(
     # ".components" collection; every occurrence is an instancing empty
     # parented like the EMPTIES mode.
     if hierarchy_instances:
-        components_col = bpy.data.collections.new(filename + ".components")
-        bpy.context.scene.collection.children.link(components_col)
+        components_col = _own_collection(
+            filename + ".components", filepath, "components")
+        destination().children.link(components_col)
 
         part_collections = {}
         for vname, proto in instance_prototypes.items():
@@ -1910,7 +2130,7 @@ def load_step(
             col_name = proto["STEP_name"]
             if len(col_name) > 50:
                 col_name = col_name[:25] + "_" + col_name[-25:]
-            part_col = bpy.data.collections.new(col_name)
+            part_col = _own_collection(col_name, filepath, "part")
             components_col.children.link(part_col)
             part_col.objects.link(proto)
             proto.matrix_world = Matrix.Identity(4)
@@ -1919,7 +2139,7 @@ def load_step(
         for obj in created_objs:
             global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
             set_obj_matrix_world(obj, global_t)
-            bpy.context.scene.collection.objects.link(obj)
+            link_created(obj, destination())
 
             vname = obj.get("STEP_instance_of")
             if vname is not None and vname in part_collections:
@@ -1975,6 +2195,30 @@ def load_step(
                     me.vertices.foreach_set("co", verts)
                     me.update()
                 processed_meshes.add(me)
+
+    # What this file was imported with, so a refresh reproduces it rather
+    # than falling back to whatever the dialog happens to hold later.
+    try:
+        refresh_mod.record_import(context.scene if context else None, filepath, {
+            "up_as": up_as if isinstance(up_as, str) else up_as[0],
+            "htypes": htypes,
+            "apply_scale": apply_scale,
+            "custom_scale": custom_scale,
+            "lin_deflection": lin_deflection,
+            "ang_deflection": ang_deflection,
+            "material_database": material_database,
+            "skip_construction": skip_construction,
+            "uv_mode": uv_mode,
+            "uv_normalize": uv_normalize,
+            "uv_split_closed": uv_split_closed,
+            "box_uv_scale": box_uv_scale,
+            "import_curves": import_curves,
+            "eng_materials": eng_materials,
+            "group_in_collection": group_in_collection,
+            "separate_solids": separate_solids,
+        })
+    except Exception as exc:
+        print("STEPper NEXT: could not record the import:", exc)
 
     wm.progress_end()
     elapsed = time.time() - start_time
@@ -2290,7 +2534,24 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     import_curves: bpy.props.BoolProperty(
         name="Import curves",
         description="Import free edges (sketches, construction wires) as "
-                    "curve objects",
+                    "curve objects, in a collection named \"Cad Curves\"",
+        default=False,
+    )
+
+    separate_solids: bpy.props.BoolProperty(
+        name="Separate solids",
+        description="Give every body of a multibody part its own object. Use "
+                    "this for a file that holds several solids, shells or "
+                    "surfaces with no assembly structure to tell them apart",
+        default=False,
+    )
+
+    group_in_collection: bpy.props.BoolProperty(
+        name="Group in a collection",
+        description="Put everything this file creates under one collection "
+                    "named after the file. A second import then does not "
+                    "interleave with the first. The whole assembly moves, hides"
+                    " and deletes as one unit",
         default=False,
     )
 
@@ -2349,6 +2610,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "box_uv_scale": self.box_uv_scale,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
+            "group_in_collection": self.group_in_collection,
+            "separate_solids": self.separate_solids,
             "tessellation_relative": self.tessellation_relative,
             "lin_deflection_rel": self.lin_deflection_rel,
         }
@@ -2420,6 +2683,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_split_closed=self.uv_split_closed,
                 box_uv_scale=self.box_uv_scale,
                 import_curves=self.import_curves,
+                group_in_collection=self.group_in_collection,
+                separate_solids=self.separate_solids,
                 eng_materials=self.eng_materials,
             )
             if result is False:
@@ -3032,8 +3297,10 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
             box = layout.box().column(align=True)
             box.label(text="Version %s is available" % update["version"],
                       icon="INFO")
-            box.operator("wm.url_open", icon="IMPORT",
-                         text="Download %s" % update["version"]).url =                 update["url"]
+            download = box.operator(
+                "wm.url_open", icon="IMPORT",
+                text="Download %s" % update["version"])
+            download.url = update["url"]
             box.label(text="Install the zip as usual to update.")
 
 
@@ -3199,6 +3466,16 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         description="Active material database for import",
     )
 
+    matdb_dir: bpy.props.StringProperty(
+        name="Material database folder",
+        description="Folder that holds the .blend material databases. Leave it "
+                    "empty to use the MaterialDB folder inside the addon. Every"
+                    " reinstall wipes that folder, and you cannot share it "
+                    "between machines or with a team",
+        subtype="DIR_PATH",
+        default="",
+    )
+
     remember_import_settings: bpy.props.BoolProperty(
         name="Remember import settings",
         description="Save the import dialog options after every import and "
@@ -3340,8 +3617,13 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.prop(self, "debug_timing")
 
-        row = layout.row()
-        row.prop(self, "active_matdb")
+        col = layout.box().column(align=True)
+        col.label(text="Material database:")
+        col.prop(self, "active_matdb")
+        col.prop(self, "matdb_dir")
+        if not self.matdb_dir.strip():
+            col.label(text="Using the addon's own folder. A reinstall "
+                           "wipes it", icon="INFO")
 
         col = layout.box().column(align=True)
         col.label(text="Import dialog defaults:")
@@ -3367,13 +3649,16 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             row.alert = True
             row.label(text="Version %s is available" % update["version"],
                       icon="INFO")
-            col.operator("wm.url_open", icon="URL",
-                         text="Download %s" % update["version"]).url =                 update["url"]
+            download = col.operator(
+                "wm.url_open", icon="URL",
+                text="Download %s" % update["version"])
+            download.url = update["url"]
         else:
             col.label(text="STEPper NEXT %s is up to date"
                            % updater_mod.version_string(), icon="CHECKMARK")
-        col.operator("wm.url_open", icon="FUND",
-                     text="Support development on Ko-fi").url =             updater_mod.KOFI_URL
+        kofi = col.operator("wm.url_open", icon="FUND",
+                            text="Support development on Ko-fi")
+        kofi.url = updater_mod.KOFI_URL
 
 
 def menu_func_import(self, context):
@@ -3406,6 +3691,7 @@ classes = (
     STEP_PT_STEPper_Debug,
 ) + (import_ui.classes + uv_mod.classes + tools_mod.classes
      + curves_mod.classes + formats_classes + analyzer_mod.classes
+     + refresh_mod.classes
      + background_mod.classes)
 
 

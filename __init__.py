@@ -76,6 +76,22 @@
 #     swatch), which the addon never writes, so it always came back as
 #     Blender's default 0.8 grey; it now reads the Principled BSDF's Base
 #     Color input, which is where add_material puts the CAD color
+#   - Import options: "Group in a collection" puts everything one file
+#     creates under a collection named after it, and "Separate solids"
+#     gives every body of a multibody part its own object
+#   - Imported files panel: lists every STEP file the .blend has imported
+#     and refreshes one from disk, keeping the collections, parenting and
+#     visibility arranged around it (refresh.py)
+#   - The file cache now checks the size and modification time on disk, so
+#     re-exporting over the same path no longer imports yesterday's
+#     geometry
+#   - Material databases can live in a folder of your choosing, so a
+#     reinstall cannot wipe them and a team can share one library
+#   - A part name that is not valid UTF-8 (a degree sign, for example) no
+#     longer aborts the whole import
+#   - Update notice in the sidebar with a download link for your platform,
+#     plus a Ko-fi link, and all user facing copy rewritten in Simplified
+#     Technical English
 
 bl_info = {
     "name": "STEPper NEXT",

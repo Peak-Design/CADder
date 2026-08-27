@@ -99,6 +99,40 @@ The material database lets you define mappings from generic STEP material names 
 
 Select a database from the dropdown in the STEP import dialog under **Material DB**. The selected database persists between sessions. When importing, all matching STEP materials are automatically replaced.
 
+### Imported files, and refreshing them
+
+The N-panel lists every STEP file this .blend has imported, with what it holds
+and whether the file has changed on disk since. **Refresh from disk** reads the
+file again and puts the arrangement back around it:
+
+- objects stay in the collections you put them in, including a part
+  ctrl-dragged into a second collection so it lives in two places at once;
+- the import's own collections go back inside whatever collection you moved
+  them into;
+- objects of your own that you parented to a part are re-attached to it;
+- what you hid stays hidden.
+
+Components that have gone from the file, or are new in it, are reported rather
+than guessed at: that is the signal that the assembly itself changed, not just
+its geometry. The settings a file was imported with are remembered per file, so
+a refresh reproduces the import rather than using whatever the dialog holds at
+the time.
+
+### Import options worth knowing
+
+- **Group in a collection**: everything a file creates goes under one
+  collection named after it, so a second import does not interleave with the
+  first.
+- **Import curves**: free edges (sketches, construction wires) become POLY
+  curve objects in a collection named "Cad Curves". They keep their place in
+  the assembly and ride their parent.
+- **Separate solids**: one object per body of a multibody part, for files
+  that hold several solids, shells or surfaces with no assembly structure to
+  tell them apart. Off by default.
+- The **material database folder** can be set in preferences. Left empty it
+  uses the folder inside the addon, which a reinstall wipes and which cannot be
+  shared between machines.
+
 ### Panel buttons
 
 | Button | Description |

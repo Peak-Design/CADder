@@ -1439,7 +1439,7 @@ class ReadSTEP:
                 with self._lock:
                     self.recovered_parts.append(_part_name or "unknown")
 
-        iter_shapes = [shape] + self.sub_shapes[ShapeKey(shape)]
+        iter_shapes = [shape] + self.sub_shapes.get(ShapeKey(shape), [])
         if recovered_shape is not None:
             iter_shapes = [recovered_shape]
         iter_shapes.sort(key=lambda x: x.Checked())

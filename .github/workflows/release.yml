@@ -75,7 +75,7 @@ jobs:
           ADDON_DIR="STEPper_NEXT"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py LICENSE README.md; do
+          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi
@@ -172,7 +172,7 @@ jobs:
             local dir="STEPper_NEXT-$plat"
             mkdir -p "$dir/wheels" "$dir/native_libs"
 
-            for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py LICENSE README.md; do
+            for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
               cp "$f" "$dir/"
             done
             if [ -d "docs" ]; then cp -r docs "$dir/docs"; fi
@@ -303,7 +303,7 @@ jobs:
           ADDON_DIR="STEPper_NEXT"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py LICENSE README.md; do
+          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi

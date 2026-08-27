@@ -103,20 +103,32 @@ Select a database from the dropdown in the STEP import dialog under **Material D
 
 The N-panel lists every STEP file this .blend has imported, with what it holds
 and whether the file has changed on disk since. **Refresh from disk** reads the
-file again and puts the arrangement back around it:
+file again and moves the new CAD data onto the objects you already have.
 
-- objects stay in the collections you put them in, including a part
-  ctrl-dragged into a second collection so it lives in two places at once.
-- the import's own collections go back inside whatever collection you moved
-  them into.
-- objects of your own that you parented to a part are re-attached to it.
-- what you hid stays hidden.
+The objects are kept, not rebuilt. Only the mesh, the material slots and the
+CAD placement change, so the work you built on top stays:
+
+- modifiers, constraints, drivers and animation.
+- the collections you put an object in, including a part ctrl-dragged into a
+  second collection so it lives in two places at once.
+- objects of your own that you parented to a part.
+- a part you re-parented onto a rig of your own. The file decides the assembly
+  structure everywhere else.
+- materials you assigned yourself, and your vertex groups.
+- what you hid, your custom properties and your object colors.
+
+Placement works the same way. The importer writes down where it put each
+object, so a refresh can tell a part that moved in CAD from one you moved in
+Blender. A part you moved stays where you put it. A part that moved in CAD
+moves. A part that moved in both does both.
+
+A refresh never changes the size of the assembly. The settings a file was
+imported with are remembered per file and stamped on the objects, so a refresh
+repeats the import instead of using whatever the dialog holds at the time.
 
 Components that have gone from the file, or are new in it, are reported rather
-than guessed at: that is the signal that the assembly itself changed, not just
-its geometry. The settings a file was imported with are remembered per file, so
-a refresh reproduces the import rather than using whatever the dialog holds at
-the time.
+than guessed at. That is the signal that the assembly itself changed, and not
+only its geometry.
 
 ### Import options worth knowing
 

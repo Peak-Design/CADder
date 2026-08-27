@@ -1,58 +1,73 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Re-import a STEP file over the top of the one already in the scene, and
-keep the arrangement the user built around it.
+keep the work the user built around it.
 
 A refresh is not "delete and import again". Between the first import and the
-refresh a user has been WORKING: they have dragged the assembly into a
-collection of their own, ctrl-dragged a part into a second collection so it
-shows up in two places, parented a light to a bracket, hidden the fasteners.
-None of that lives in the STEP file, and all of it is lost by a naive
-re-import. What this module does is write it down first and put it back
-after.
+refresh a user has been WORKING: they put a bevel and a weighted normal on a
+bracket, dragged the assembly into a collection of their own, parented a
+light to a part, moved the whole thing off the origin, hid the fasteners.
+None of that is in the STEP file, and a naive re-import throws all of it
+away.
 
-Three things are recorded, and each one answers a real workflow:
+So the objects are not replaced. They are KEPT. Only what the file describes
+moves onto them: the mesh, the material slots and the CAD placement. The
+object datablock never goes, so everything hanging off it survives without
+being written down and put back: modifiers, constraints, drivers, animation,
+custom properties, which collections it sits in, and whatever the user
+parented to it.
 
-  * The collections each object is linked into that the IMPORT did not
-    create. That is the ctrl-drag case, and the reason the importer marks
-    its own collections as it makes them (main._own_collection): after the
-    fact there is no way to tell "Cad Curves" that the importer made from
-    "Cad Curves" that a user made, and names collide freely.
+Two things the file describes are still the user's to override, and both are
+kept:
 
-  * Where the import's own root collections were LINKED. A user who drags
-    the whole "part.hierarchy" into their "STEP" collection has rearranged
-    nothing inside it, so no object has a user collection to restore, but
-    the fresh import would still appear at the scene root instead of where
-    they put it.
+  * Placement. The file decides where a part sits, but a user who moved the
+    assembly off the origin meant it. The importer writes down where it put
+    each object (STEP_import_basis), so the refresh can tell a part that
+    moved in CAD from one the user moved in Blender, and apply the user's
+    move on top of the new CAD position.
 
-  * Per-object parenting to objects OUTSIDE the import, and the hide flags.
+  * Parenting. The assembly structure comes from the file, unless the user
+    re-parented an object onto something of their own. That is a rig, and
+    the refresh leaves it alone.
 
-Identity across a re-import is a cascade, because none of the single keys
-survives every edit. An object's own NAME first, which is what the user sees
-and what the importer reproduces deterministically for an unchanged file. Then the CAD node index with the CAD name, which survives a rename. Then the
-CAD name alone where it is unique, which survives a node index shifting
-because a component was added earlier in the tree. What matches by none of
-them is reported rather than guessed at: an object that has gone from the
-file, or one that is new in it, is exactly the "the assembly structure
+Identity across a re-import is a cascade, because no single key survives
+every edit. The CAD uuid with the CAD name first. Then the CAD name with the
+node tag, which survives a uuid changing. Then the CAD name alone, which
+survives a node moving in the tree. Last the object's own name. What matches
+by none of them is reported rather than guessed at: an object that has gone
+from the file, or one that is new in it, is exactly the "the assembly
 changed" signal worth showing a user.
 """
 
+import inspect
 import json
 import os
 
 try:
     import bpy
+    from mathutils import Matrix
 except ImportError:
     bpy = None
+    Matrix = None
 
 FILE_PROP = "STEP_file"
 ROLE_PROP = "STEP_role"
 
+# Where the import put an object, as 16 floats in row order. The difference
+# between this and the object's transform now is the user's own move, which
+# a refresh has to carry over onto the new CAD placement.
+BASIS_PROP = "STEP_import_basis"
 # Scene-level record of what was imported and how, so a refresh can reproduce
 # the import rather than guess at its settings.
 REGISTRY_PROP = "step_import_registry"
 
+# Every custom property the importer owns starts with this. A refresh takes
+# the whole set off the object and puts the new one on, so a stamp that is
+# no longer written does not linger. Anything else on the object is the
+# user's and is never touched.
+STAMP_PREFIX = "STEP_"
 
-# ── the registry ────────────────────────────────────────────────────────────
+
+# -- the registry ------------------------------------------------------------
 
 def _registry_read(scene):
     raw = scene.get(REGISTRY_PROP) or ""
@@ -89,6 +104,26 @@ def record_import(scene, path, settings):
     _registry_write(scene, data)
 
 
+def merge_registry(target, source):
+    """Copies one scene's import records onto another.
+
+    A background import builds the objects in a worker scene and appends
+    them, then deletes that scene. The record of how the file was imported
+    is on it, so it has to travel with them. Without this a refresh has
+    nothing to reproduce, and a file imported at a custom scale comes back
+    a different size.
+    """
+    if target is None or source is None:
+        return 0
+    incoming = _registry_read(source)
+    if not incoming:
+        return 0
+    data = _registry_read(target)
+    data.update(incoming)
+    _registry_write(target, data)
+    return len(incoming)
+
+
 def forget(scene, path):
     data = _registry_read(scene)
     if data.pop(path, None) is not None:
@@ -105,6 +140,26 @@ def settings_for(scene, path):
     return settings if isinstance(settings, dict) else None
 
 
+def stamped_settings(path):
+    """The same record, read back off the objects themselves.
+
+    The importer stamps it on everything it makes. That copy travels with
+    the objects through a background import, where the scene copy does not,
+    so it is what a refresh falls back to before it falls back to guessing.
+    """
+    for obj in file_objects(path):
+        raw = obj.get("STEP_import_settings")
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("unit_scale"):
+            return data
+    return None
+
+
 def changed_on_disk(scene, path):
     """Whether the file has been written since it was imported. None when
     that cannot be told: no record, or the file is gone."""
@@ -116,7 +171,61 @@ def changed_on_disk(scene, path):
     return [round(was[0], 3), was[1]] != [round(now[0], 3), now[1]]
 
 
-# ── what is in the scene ────────────────────────────────────────────────────
+# -- reproducing the import --------------------------------------------------
+
+def _accepted_kwargs():
+    from . import main as _main
+    return set(inspect.signature(_main.load_step).parameters)
+
+
+def _scale_override(record, scene):
+    """The scale that keeps a refresh the same size as the import it repeats.
+
+    load_step divides the file's unit scale by the scene unit length, so the
+    same file gives a different size in two scenes set up differently. A
+    background import runs in a factory scene at 1.0, which is not
+    necessarily the scene the objects ended up in. Feeding the resolved
+    scale back through that division reproduces the size exactly.
+
+    Only a mismatch is corrected. The file's own units decide the size of a
+    first import, and they still decide it here when nothing disagrees, so
+    a part whose units really did change in CAD is not pinned to the old
+    size.
+    """
+    was = record.get("scene_unit_scale")
+    resolved = record.get("unit_scale")
+    if record.get("custom_scale") is not None or not was or not resolved:
+        return None
+    now = scene.unit_settings.scale_length
+    if abs(was - now) <= 1e-12 * max(1.0, abs(now)):
+        return None
+    return resolved * now
+
+
+def import_settings(scene, path):
+    """The load_step arguments that repeat this import, and where they came
+    from. Returns (kwargs, record, source). `source` is None when nothing
+    was recorded and the current defaults are all there is to go on."""
+    from . import main as _main
+
+    record = settings_for(scene, path)
+    source = "recorded settings"
+    if not record:
+        record = stamped_settings(path)
+        source = "settings stamped on the objects"
+    if not record:
+        record = dict(_main.import_defaults())
+        source = None
+
+    accepted = _accepted_kwargs()
+    kwargs = {k: v for k, v in record.items() if k in accepted}
+    override = _scale_override(record, scene)
+    if override is not None:
+        kwargs["custom_scale"] = override
+    return kwargs, record, source
+
+
+# -- what is in the scene ----------------------------------------------------
 
 def _own(datablock, path):
     """Whether this object or collection was made by the import of `path`."""
@@ -135,8 +244,8 @@ def file_collections(path):
 
 
 def imported_files():
-    """Every STEP file this blend holds, newest-first by nothing in
-    particular, sorted by path so the panel does not reorder itself."""
+    """Every STEP file this blend holds, sorted by path so the panel does not
+    reorder itself."""
     counts = {}
     for obj in bpy.data.objects:
         f = obj.get(FILE_PROP)
@@ -166,7 +275,7 @@ def _parents_of(col):
 
 
 def owned_roots(path):
-    """The import's own collections that are NOT inside another of its own.
+    """The import's own collections that are NOT inside another of its own:
     the tops of its subtree, and the only ones whose placement a user can
     have changed without touching anything inside."""
     owned = {c.name for c in file_collections(path)}
@@ -179,271 +288,363 @@ def owned_roots(path):
     return roots
 
 
-# ── snapshot and restore ────────────────────────────────────────────────────
+# -- matching the new import onto what is already here -----------------------
 
-def snapshot(path):
-    """Everything about the current arrangement that the file itself does not
-    describe."""
-    owned_cols = {c.name for c in file_collections(path)}
-    own_objs = {o.name for o in file_objects(path)}
-
-    # Objects of the user's that hang off this import, indexed by the part
-    # they hang off. Deleting the part orphans them, and nothing else in the
-    # scene records where they belonged.
-    external_children = {}
-    for obj in bpy.data.objects:
-        if obj.parent is None or _own(obj, path):
-            continue
-        if obj.parent.name in own_objs:
-            external_children.setdefault(obj.parent.name, []).append(obj.name)
-
-    objects = {}
-    for obj in file_objects(path):
-        user_cols = [c.name for c in obj.users_collection
-                     if c.name not in owned_cols]
-        parent = obj.parent.name if (obj.parent is not None
-                                     and obj.parent.name not in own_objs) else None
-        objects[obj.name] = {
-            "name": obj.name,
-            "step_name": obj.get("STEP_name"),
-            "uuid": obj.get("STEP_uuid"),
-            "user_collections": user_cols,
-            # Whether it was still inside the import's own hierarchy. If it
-            # was, the fresh hierarchy is where it belongs and the user's
-            # collections are EXTRA. If it was not, the user took it out and
-            # their collections are the whole answer.
-            "in_owned": any(c.name in owned_cols for c in obj.users_collection),
-            "external_children": external_children.get(obj.name, []),
-            "in_scene_root": [s.name for s in bpy.data.scenes
-                              if obj.name in [o.name for o in s.collection.objects]],
-            "parent": parent,
-            "hide_viewport": bool(obj.hide_viewport),
-            "hide_render": bool(obj.hide_render),
-        }
-
-    roots = {}
-    for col in owned_roots(path):
-        roots[col.get(ROLE_PROP) or col.name] = {
-            "name": col.name,
-            "parents": _parents_of(col),
-        }
-
-    # Collections of somebody else's nested INSIDE the import's own, such as a rig
-    # collection put with the assembly it drives, or anything the user
-    # dragged in. Removing the import unlinks them from their only home, and
-    # a collection linked nowhere is gone from the scene, so where they sat
-    # has to be written down before that happens. Keyed by the owner's ROLE,
-    # which the re-import recreates. Its NAME may come back as name.001.
-    external_collections = {}
-    for col in file_collections(path):
-        strays = [c.name for c in col.children if c.name not in owned_cols]
-        if strays:
-            external_collections.setdefault(
-                col.get(ROLE_PROP) or col.name, []).extend(strays)
-
-    return {"objects": objects, "roots": roots,
-            "external_collections": external_collections}
+def _is_occurrence(obj):
+    """An instancing empty, as COLLECTION_INSTANCES mode makes. It carries
+    the same CAD name as the prototype it instances, so the two have to be
+    told apart or they match each other."""
+    return obj.get("STEP_instance_of") is not None
 
 
-def _surviving_home(col, owned):
-    """The nearest place above `col` that this clear is NOT about to remove."""
-    seen = set()
-    cur = col
-    while cur is not None and cur.name not in seen:
-        seen.add(cur.name)
-        nxt = None
-        for kind, name in _parents_of(cur):
-            if kind == "SCENE":
-                scene = bpy.data.scenes.get(name)
-                if scene is not None:
-                    return scene.collection
-            elif name not in owned:
-                return bpy.data.collections.get(name)
-            elif nxt is None:
-                nxt = bpy.data.collections.get(name)
-        cur = nxt
-    scene = bpy.data.scenes[0] if bpy.data.scenes else None
-    return scene.collection if scene is not None else None
+def _keys(obj):
+    """The identity cascade for one object, strongest key first."""
+    name = obj.get("STEP_name")
+    kind = _is_occurrence(obj)
+    return (
+        ("uuid", obj.get("STEP_uuid"), name, kind),
+        ("tag", name, obj.get("STEP_tag"), kind),
+        ("name", name, kind),
+        ("object", obj.name),
+    )
 
 
-def clear(path):
-    """Removes the import: its objects and its OWN collections, and nothing
-    else. A user collection that held them survives, empty."""
-    removed_objs = 0
-    for obj in file_objects(path):
-        bpy.data.objects.remove(obj, do_unlink=True)
-        removed_objs += 1
+def _match(old_objs, fresh_objs):
+    """Pairs each freshly imported object with the one it replaces.
 
-    # Anything of somebody else's nested inside first moves somewhere that
-    # will still exist afterwards. Blender does not delete a child
-    # collection along with its parent. It simply unlinks it, and a
-    # collection linked nowhere is out of the scene. `restore` puts these
-    # back inside. This is what keeps them ALIVE for it to find.
-    owned = {c.name for c in file_collections(path)}
-    for col in file_collections(path):
-        for child in list(col.children):
-            if child.name in owned:
-                continue
-            home = _surviving_home(col, owned)
-            col.children.unlink(child)
-            if home is not None and child.name not in [c.name for c in home.children]:
-                home.children.link(child)
-
-    removed_cols = 0
-    for col in file_collections(path):
-        bpy.data.collections.remove(col)
-        removed_cols += 1
-    return removed_objs, removed_cols
-
-
-def _index(snap):
-    """The three lookups the identity cascade uses."""
-    by_name, by_uuid, by_step = {}, {}, {}
-    for rec in snap["objects"].values():
-        by_name[rec["name"]] = rec
-        if rec.get("uuid") is not None:
-            by_uuid[(rec["uuid"], rec.get("step_name"))] = rec
-        by_step.setdefault(rec.get("step_name"), []).append(rec)
-    return by_name, by_uuid, by_step
-
-
-def restore(path, snap):
-    """Puts the arrangement back onto the freshly imported objects.
-
-    Returns (restored, unmatched_old, unmatched_new), the last two being the
-    components that have gone from the file and the ones that are new in it.
+    Returns (pairs, added, gone): the matches, the objects that are new in
+    the file, and the ones that have gone from it.
     """
-    by_name, by_uuid, by_step = _index(snap)
-    used = set()
-    restored = 0
-    fresh = file_objects(path)
-    owned_cols = {c.name for c in file_collections(path)}
-
-    for obj in fresh:
-        rec = by_name.get(obj.name)
-        if rec is None or id(rec) in used:
-            rec = by_uuid.get((obj.get("STEP_uuid"), obj.get("STEP_name")))
-        if rec is None or id(rec) in used:
-            same = [r for r in by_step.get(obj.get("STEP_name"), [])
-                    if id(r) not in used]
-            rec = same[0] if len(same) == 1 else None
-        if rec is None or id(rec) in used:
-            continue
-        used.add(id(rec))
-        restored += 1
-
-        # Collections. Only when the user had put this object somewhere of
-        # their own: an object still sitting in the import's own hierarchy
-        # has nothing to restore and must keep the fresh placement.
-        wanted = [bpy.data.collections.get(n) for n in rec["user_collections"]]
-        wanted = [c for c in wanted if c is not None and c.name not in owned_cols]
-        scenes = [bpy.data.scenes.get(n) for n in rec.get("in_scene_root") or []]
-        scenes = [s for s in scenes if s is not None]
-        if wanted or scenes:
-            # An object still inside the import's own hierarchy keeps the
-            # fresh placement and gains the user's collections on top: that
-            # is what a ctrl-drag did, a second home and not a move. One the
-            # user had taken OUT of the hierarchy is placed only where they
-            # put it, or the fresh import would drag it back in.
-            if not rec.get("in_owned"):
-                for col in list(obj.users_collection):
-                    col.objects.unlink(obj)
-            for col in wanted:
-                if obj.name not in col.objects:
-                    col.objects.link(obj)
-            for scene in scenes:
-                if obj.name not in scene.collection.objects:
-                    scene.collection.objects.link(obj)
-
-        parent = bpy.data.objects.get(rec["parent"] or "")
-        if parent is not None and parent.name not in {o.name for o in fresh}:
-            world = obj.matrix_world.copy()
-            obj.parent = parent
-            obj.matrix_parent_inverse = parent.matrix_world.inverted()
-            obj.matrix_world = world
-
-        # Whatever of the user's hung off this part goes back onto it.
-        for child_name in rec.get("external_children") or []:
-            child = bpy.data.objects.get(child_name)
-            if child is None or _own(child, path):
+    buckets = {}
+    for obj in old_objs:
+        for level, key in enumerate(_keys(obj)):
+            if key[1] is None:
                 continue
-            world = child.matrix_world.copy()
-            child.parent = obj
-            child.matrix_parent_inverse = obj.matrix_world.inverted()
-            child.matrix_world = world
+            buckets.setdefault((level, key), []).append(obj)
 
-        obj.hide_viewport = rec["hide_viewport"]
-        obj.hide_render = rec["hide_render"]
-
-    # The import's own roots go back where the user had put them.
-    fresh_roots = {(c.get(ROLE_PROP) or c.name): c for c in owned_roots(path)}
-    for role, rec in snap["roots"].items():
-        col = fresh_roots.get(role)
-        if col is None or not rec["parents"]:
-            continue
-        placed = False
-        for kind, name in rec["parents"]:
-            if kind == "SCENE":
-                scene = bpy.data.scenes.get(name)
-                if scene is not None and col.name not in [
-                        c.name for c in scene.collection.children]:
-                    scene.collection.children.link(col)
-                    placed = True
-            else:
-                parent = bpy.data.collections.get(name)
-                if parent is not None and col.name not in [
-                        c.name for c in parent.children]:
-                    parent.children.link(col)
-                    placed = True
-        if placed:
-            # Drop the placement the fresh import chose, but only once the
-            # recorded one is in: a collection linked nowhere is invisible.
-            for scene in bpy.data.scenes:
-                names = [c.name for c in scene.collection.children]
-                if col.name in names and not any(
-                        k == "SCENE" and n == scene.name for k, n in rec["parents"]):
-                    scene.collection.children.unlink(col)
-
-    # ...and whatever of the user's had been nested inside them goes back
-    # in. `clear` parked these somewhere that would survive it. This is the
-    # move that returns them, so a rig collection kept with its assembly
-    # stays with it across a refresh.
-    fresh_by_role = {(c.get(ROLE_PROP) or c.name): c
-                     for c in file_collections(path)}
-    for role, names in (snap.get("external_collections") or {}).items():
-        owner = fresh_by_role.get(role)
-        if owner is None:
-            continue
-        for name in names:
-            child = bpy.data.collections.get(name)
-            if child is None or _own(child, path):
+    taken, pairs, added = set(), [], []
+    for fresh in fresh_objs:
+        found = None
+        for level, key in enumerate(_keys(fresh)):
+            if key[1] is None:
                 continue
-            if child.name in [c.name for c in owner.children]:
+            same = [o for o in buckets.get((level, key), ()) if o not in taken]
+            # A key that picks out more than one object has not identified
+            # anything. Fall through to the weaker keys instead of guessing.
+            if len(same) == 1:
+                found = same[0]
+                break
+            # Except at the end of the cascade. Several objects left sharing
+            # the last key are repeated occurrences of ONE part, which is
+            # what an assembly is mostly made of. Their uuids all change
+            # together when a component is added earlier in the tree, and
+            # they are interchangeable apart from the work the user did on
+            # them. Pairing them in order keeps that work on the part it
+            # belongs to. Calling them all new would throw it away.
+            if same and key[0] == "name":
+                found = same[0]
+                break
+        if found is None:
+            added.append(fresh)
+        else:
+            taken.add(found)
+            pairs.append((found, fresh))
+    gone = [o for o in old_objs if o not in taken]
+    return pairs, added, gone
+
+
+def _map_collections(old_cols, fresh_cols, fresh_to_old):
+    """Which collection already in the scene each freshly made one repeats.
+
+    Roles the import makes one of (the wrapper, the curves collection, the
+    components collection) match on the role alone. A per-part collection is
+    identified by the prototype inside it, which the object matching has
+    already paired up.
+    """
+    by_role = {}
+    for col in old_cols:
+        by_role.setdefault(col.get(ROLE_PROP) or col.name, []).append(col)
+
+    out = {}
+    for col in fresh_cols:
+        role = col.get(ROLE_PROP) or col.name
+        if role == "part":
+            for obj in col.objects:
+                old = fresh_to_old.get(obj)
+                if old is None:
+                    continue
+                for home in old.users_collection:
+                    if (home.get(ROLE_PROP) or "") == "part":
+                        out[col] = home
+                        break
+                break
+        else:
+            same = by_role.get(role) or []
+            if len(same) == 1:
+                out[col] = same[0]
+    return out
+
+
+# -- moving the new import onto the objects already here ---------------------
+
+def _user_move(obj):
+    """How far the user has moved this object since the import put it down,
+    in its parent's space. None when they have not touched it."""
+    stored = obj.get(BASIS_PROP)
+    try:
+        rows = [list(stored[i * 4:i * 4 + 4]) for i in range(4)]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if len(rows) != 4 or any(len(r) != 4 for r in rows):
+        return None
+    try:
+        was = Matrix(rows)
+        delta = obj.matrix_basis @ was.inverted()
+    except ValueError:
+        return None
+    # Inverting and multiplying never gives back an exact identity, so an
+    # object nobody touched has to be recognized as untouched or it drifts
+    # a little further on every refresh.
+    if all(abs(delta[i][j] - (1.0 if i == j else 0.0)) < 1e-6
+           for i in range(4) for j in range(4)):
+        return None
+    return delta
+
+
+def stamp_basis(objects):
+    """Writes down where the import put each object. Called at the end of an
+    import and again after a refresh."""
+    for obj in objects:
+        try:
+            obj[BASIS_PROP] = [v for row in obj.matrix_basis for v in row]
+        except (AttributeError, TypeError, ReferenceError):
+            pass
+
+
+def _restamp(old, fresh):
+    """Replaces the importer's own custom properties, and only those."""
+    for key in [k for k in old.keys() if k.startswith(STAMP_PREFIX)]:
+        del old[key]
+    for key in fresh.keys():
+        if key.startswith(STAMP_PREFIX):
+            old[key] = fresh[key]
+
+
+def _user_materials(obj):
+    """The material slots the user put there, or None when the slots are
+    still the import's own.
+
+    Materials sit on the mesh, and the mesh is replaced, so a material the
+    user assigned to an imported part would go. The importer writes down
+    what it assigned (STEP_materials), so anything else in the slots now is
+    the user's and has to be put back.
+    """
+    data = getattr(obj, "data", None)
+    if data is None or not hasattr(data, "materials"):
+        return None
+    try:
+        was = json.loads(obj.get("STEP_materials") or "[]")
+    except (TypeError, ValueError):
+        return None
+    now = [m.name if m else "" for m in data.materials]
+    if not isinstance(was, list) or now == was:
+        return None
+    return now
+
+
+def _vertex_groups(obj):
+    """The user's vertex groups, taken off the mesh before it is replaced.
+
+    Vertex groups live on the mesh data, so swapping the mesh takes them
+    with it. The names always come back, because a modifier that points at
+    one by name loses the link otherwise. The weights only come back when
+    the part is unchanged: they index vertices, and a part re-tessellated or
+    edited in CAD has different ones.
+    """
+    data = getattr(obj, "data", None)
+    if data is None or not hasattr(data, "vertices"):
+        return None
+    names = [g.name for g in obj.vertex_groups]
+    if not names:
+        return None
+    weights = [(v.index, g.group, g.weight)
+               for v in data.vertices for g in v.groups]
+    return names, weights, len(data.vertices)
+
+
+def _restore_vertex_groups(obj, saved):
+    names, weights, count = saved
+    groups = []
+    for name in names:
+        existing = obj.vertex_groups.get(name)
+        groups.append(existing if existing is not None
+                      else obj.vertex_groups.new(name=name))
+    if len(obj.data.vertices) != count:
+        return
+    for vert, index, weight in weights:
+        if index < len(groups):
+            groups[index].add([vert], weight, "REPLACE")
+
+
+def _adopt(old, fresh, col_map):
+    """Moves the freshly imported result onto the object already in the
+    scene. Returns the data the object used to hold, for purging.
+
+    Only what the STEP file describes is touched. The object keeps its
+    modifiers, constraints, drivers, animation, collections, visibility and
+    anything parented to it, because it is the same object.
+    """
+    was = old.data
+    mine = _user_materials(old)
+    groups = _vertex_groups(old)
+    if old.type == fresh.type:
+        old.data = fresh.data
+    else:
+        was = None
+        mine = None
+        groups = None
+
+    if groups is not None:
+        _restore_vertex_groups(old, groups)
+
+    if mine is not None:
+        slots = old.data.materials
+        for i, name in enumerate(mine):
+            mat = bpy.data.materials.get(name) if name else None
+            if i < len(slots):
+                slots[i] = mat
+            elif mat is not None:
+                slots.append(mat)
+
+    # An instancing empty points at the collection holding its prototype.
+    # That prototype is one of the objects already in the scene, so the
+    # empty has to point at ITS collection, not the freshly made duplicate.
+    if fresh.instance_type == "COLLECTION":
+        old.instance_type = "COLLECTION"
+        target = fresh.instance_collection
+        old.instance_collection = col_map.get(target, target)
+
+    _restamp(old, fresh)
+    return was
+
+
+def _purge(datablocks):
+    """Meshes and curves the refresh replaced. Blender keeps a datablock with
+    no users until the file is reopened, so without this a refresh a day
+    grows the blend by a whole assembly each time."""
+    for data in datablocks:
+        if data is None:
+            continue
+        try:
+            if data.users:
                 continue
-            for kind, parent_name in _parents_of(child):
-                if kind == "SCENE":
-                    scene = bpy.data.scenes.get(parent_name)
-                    if scene is not None:
-                        scene.collection.children.unlink(child)
-                else:
-                    parent = bpy.data.collections.get(parent_name)
-                    if parent is not None:
-                        parent.children.unlink(child)
-            owner.children.link(child)
-
-    unmatched_old = [r["name"] for r in snap["objects"].values()
-                     if id(r) not in used]
-    unmatched_new = len(fresh) - restored
-    return restored, unmatched_old, unmatched_new
+            if isinstance(data, bpy.types.Mesh):
+                bpy.data.meshes.remove(data)
+            elif isinstance(data, bpy.types.Curve):
+                bpy.data.curves.remove(data)
+        except (ReferenceError, RuntimeError):
+            pass
 
 
-# ── operators and panel ─────────────────────────────────────────────────────
+def _once(names):
+    """The same names, in order, without the repeats."""
+    seen, out = set(), []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def apply_import(path, old_objs, old_cols):
+    """Folds a completed re-import into the objects that were already here.
+
+    `old_objs` and `old_cols` are what the file owned BEFORE load_step ran.
+    Everything it owns now that is not in those lists is freshly made.
+
+    Returns (kept, added, gone): how many objects were updated in place, the
+    names that are new in the file, and the names that have gone from it.
+    """
+    known_objs, known_cols = set(old_objs), set(old_cols)
+    fresh_objs = [o for o in file_objects(path) if o not in known_objs]
+    fresh_cols = [c for c in file_collections(path) if c not in known_cols]
+
+    pairs, added, gone = _match(old_objs, fresh_objs)
+    fresh_to_old = {fresh: old for old, fresh in pairs}
+    col_map = _map_collections(old_cols, fresh_cols, fresh_to_old)
+
+    # 1. The geometry, the material slots and the import's own stamps.
+    stale = [_adopt(old, fresh, col_map) for old, fresh in pairs]
+
+    # 2. Parenting. The assembly structure is the file's, unless the user
+    #    re-parented the object onto something of their own. That is a rig,
+    #    and tearing it apart on a refresh is exactly what this module is
+    #    written to avoid.
+    for old, fresh in pairs:
+        if old.parent is not None and not _own(old.parent, path):
+            continue
+        want = fresh.parent
+        if want is not None:
+            want = fresh_to_old.get(want, want)
+        if old.parent is not want:
+            old.parent = want
+        old.matrix_parent_inverse = fresh.matrix_parent_inverse.copy()
+    for obj in added:
+        if obj.parent in fresh_to_old:
+            obj.parent = fresh_to_old[obj.parent]
+
+    # 3. Placement, with the user's own move carried over onto it.
+    for old, fresh in pairs:
+        move = _user_move(old)
+        old.matrix_basis = (move @ fresh.matrix_basis if move is not None
+                            else fresh.matrix_basis.copy())
+
+    # 4. Components that are new in the file stay where the import put them,
+    #    except that the import put them in a duplicate of a collection the
+    #    scene already has. Move them into the real one.
+    for col in fresh_cols:
+        target = col_map.get(col)
+        if target is None:
+            continue                       # a collection new in this import
+        for obj in list(col.objects):
+            col.objects.unlink(obj)
+            if obj in fresh_to_old or obj.name in target.objects:
+                continue
+            target.objects.link(obj)
+        for child in list(col.children):
+            col.children.unlink(child)
+            if child in col_map:
+                continue                   # a duplicate, removed below
+            if child.name not in [c.name for c in target.children]:
+                target.children.link(child)
+
+    # 5. The duplicates have handed everything over and can go. Read the
+    #    names for the report first: an object cannot be asked for its name
+    #    once it has been removed.
+    #    COLLECTION_INSTANCES mode makes two objects per component, the
+    #    prototype and the empty that instances it, so report the CAD names
+    #    once each and not once per object.
+    added_names = _once([o.get("STEP_name") or o.name for o in added])
+    gone_names = _once([o.get("STEP_name") or o.name for o in gone])
+    for old, fresh in pairs:
+        bpy.data.objects.remove(fresh, do_unlink=True)
+    for col in col_map:
+        bpy.data.collections.remove(col)
+    for obj in gone:
+        bpy.data.objects.remove(obj, do_unlink=True)
+    _purge(stale)
+
+    stamp_basis(file_objects(path))
+    return len(pairs), added_names, gone_names
+
+
+# -- operators and panel -----------------------------------------------------
 
 if bpy is not None:
 
     class STEP_OT_RefreshFile(bpy.types.Operator):
-        """Re-import this STEP file from disk, keeping the collections,
-        parenting and visibility you arranged around it"""
+        """Re-import this STEP file from disk. Your modifiers, collections,
+        parenting and placement are kept"""
         bl_idname = "stepper.refresh_file"
         bl_label = "Refresh from disk"
         bl_options = {"REGISTER", "UNDO"}
@@ -455,19 +656,20 @@ if bpy is not None:
 
             path = self.filepath
             if not os.path.isfile(bpy.path.abspath(path)):
-                self.report({"ERROR"},
-                            "Not on disk any more: %s" % path)
+                self.report({"ERROR"}, "Not on disk any more: %s" % path)
                 return {"CANCELLED"}
 
-            settings = settings_for(context.scene, path)
-            if settings is None:
+            settings, record, source = import_settings(context.scene, path)
+            if source is None:
                 self.report({"WARNING"},
                             "No record of how this file was imported. "
                             "Refreshing with the current defaults")
-                settings = _main.import_defaults()
 
-            snap = snapshot(path)
-            n_obj, n_col = clear(path)
+            old_objs = file_objects(path)
+            old_cols = file_collections(path)
+            if not old_objs:
+                self.report({"ERROR"}, "Nothing in the scene from this file")
+                return {"CANCELLED"}
 
             # The reader caches by path, and the whole point of a refresh is
             # to read the file again.
@@ -485,18 +687,29 @@ if bpy is not None:
                 self.report({"ERROR"}, "Re-import failed. See the console")
                 return {"CANCELLED"}
 
-            restored, gone, added = restore(path, snap)
-            record_import(context.scene, path, settings)
+            kept, added, gone = apply_import(path, old_objs, old_cols)
 
-            msg = ("Refreshed %s: %d object(s) replaced, %d arrangement(s) "
-                   "restored" % (os.path.basename(path), n_obj, restored))
+            msg = "Refreshed %s: %d object(s) updated in place" % (
+                os.path.basename(path), kept)
             level = "INFO"
-            if gone or added:
+            if added or gone:
                 level = "WARNING"
-                msg += (". The assembly changed - %d component(s) gone, %d "
-                        "new" % (len(gone), added))
+                msg += (". The assembly changed: %d component(s) gone, %d new"
+                        % (len(gone), len(added)))
                 for name in gone[:10]:
                     print("[STEPper refresh] gone from the file: %s" % name)
+                for name in added[:10]:
+                    print("[STEPper refresh] new in the file: %s" % name)
+
+            # The size must not change on a refresh. It can only change if
+            # the file's units changed, and a user who sees their assembly
+            # resize needs to be told why rather than left to guess.
+            was = (record or {}).get("unit_scale")
+            now = (stamped_settings(path) or {}).get("unit_scale")
+            if was and now and abs(was - now) > 1e-9 * max(was, now):
+                level = "WARNING"
+                msg += (". The file's units changed, so the size changed by "
+                        "%.4g times" % (now / was))
             self.report({level}, msg)
             return {"FINISHED"}
 

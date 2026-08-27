@@ -85,6 +85,13 @@ def main():
             except Exception as e:
                 print(f"worker: could not apply preference {key}: {e}")
 
+    # Match the parent session's scene unit length. load_step divides
+    # the file unit scale by it, so a factory scene at 1.0 would import
+    # a different size than the scene the result is appended into.
+    unit_scale = request.get("scene_unit_scale")
+    if unit_scale:
+        bpy.context.scene.unit_settings.scale_length = unit_scale
+
     log({"phase": "importing"})
     result = bpy.ops.import_scene.occ_import_step(
         filepath=filepath, override_file=os.path.basename(filepath),

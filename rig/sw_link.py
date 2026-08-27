@@ -3,7 +3,7 @@
 
 The bridge in bridge.py listens so SolidWorks can push a model in. This is
 the other direction: a client that finds a running SolidWorks with the
-SW To Blender add-in loaded and asks it for something — today, for a part
+SW To Blender add-in loaded and asks it for something: today, for a part
 to be tessellated again at a finer tolerance.
 
 Discovery mirrors the one on the add-in's side exactly: each process drops
@@ -11,7 +11,7 @@ a small JSON file naming its port and a per-session token, and a stale file
 whose process is gone is deleted on sight rather than tried twice.
 
 Requests are answered with a FILE PATH, not geometry. Both ends are on the
-same machine by construction — the whole protocol is 127.0.0.1 — so a
+same machine by construction (the whole protocol is 127.0.0.1), so a
 megabyte of triangles has no business being JSON-escaped through a socket.
 """
 
@@ -80,7 +80,7 @@ def discover():
         try:
             reply = _post(inst, "/ping", None, _TIMEOUT_PING)
         except (urllib.error.URLError, OSError, ValueError):
-            # The SolidWorks behind this entry is gone; clearing it keeps the
+            # The SolidWorks behind this entry is gone. Clearing it keeps the
             # next discovery from paying the timeout again.
             try:
                 os.unlink(path)
@@ -94,7 +94,7 @@ def discover():
 
 def first():
     """The one SolidWorks to talk to, or an error explaining that there is
-    none — the message a user actually needs at that moment."""
+    none: the message a user actually needs at that moment."""
     instances = discover()
     if not instances:
         raise SwLinkError(

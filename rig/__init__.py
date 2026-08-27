@@ -4,8 +4,8 @@
 (schema and semantics live in the SW-To-Blender repo, schema/SCHEMA.md).
 
 Registered from STEPper NEXT's main.register(), guarded there so a rig
-failure never costs STEP import. Importable without Blender — manifest.py
-and graph.py run under plain Python in CI; the bpy-dependent classes only
+failure never costs STEP import. Importable without Blender: manifest.py
+and graph.py run under plain Python in CI. The bpy-dependent classes only
 exist inside Blender."""
 
 from . import constraints, drivers, graph, loops  # noqa: F401
@@ -25,7 +25,7 @@ if bpy is not None:
             description="Path to the .rig.json written by Peak.SwToBlender",
             # Not FILE_PATH: that subtype draws its own UNFILTERED browse
             # button beside the panel's filtered one (swtb.pick_manifest),
-            # and two file buttons with different behaviour reads as a bug.
+            # and two file buttons with different behavior reads as a bug.
             default="",
         )
 

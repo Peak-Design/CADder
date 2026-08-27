@@ -37,14 +37,14 @@ _RIG_NAME_FALLBACK = "SW_Rig"
 #   helpers    pure scaffolding: aim duplicates, IK targets, cone poles.
 #
 # Only controls and limits are visible when the rig is built. The rest exist
-# and work; they just do not clutter the viewport with things that cannot be
+# and work. They just do not clutter the viewport with things that cannot be
 # grabbed.
 _HELPERS_COLLECTION = "SW_helpers"
 _CONTROLS_COLLECTION = "SW_controls"
 _LIMITS_COLLECTION = "SW_limits"
 _MECHANISM_COLLECTION = "SW_mechanism"
 
-# Blender's stock bone colour sets, so they follow the user's theme.
+# Blender's stock bone color sets, so they follow the user's theme.
 _COLOUR_CONTROL = "THEME01"     # red
 _COLOUR_LIMIT = "THEME09"       # yellow
 _COLOUR_MECHANISM = "THEME03"   # green
@@ -84,8 +84,8 @@ class BuildResult:
     limit_names: Dict[str, str] = field(default_factory=dict)   # group id -> limit bone name
     contact_mesh_names: Dict[str, str] = field(default_factory=dict)  # joint id -> rail or patch object name
     # Swing-cone balls AND cone_spin collapses: bone_names[gid] is the
-    # hidden DEF bone (geometry and child bones ride the clamped result);
-    # the visible user handle is here.
+    # hidden DEF bone (geometry and child bones ride the clamped result).
+    # The visible user handle is here.
     ball_ctrl_names: Dict[str, str] = field(default_factory=dict)   # group id -> bone name
     ball_pole_names: Dict[str, str] = field(default_factory=dict)
     ball_goal_names: Dict[str, str] = field(default_factory=dict)
@@ -98,7 +98,7 @@ def _unit_scale(context):
         scale = float(context.scene.unit_settings.scale_length)
     except (AttributeError, TypeError):
         return 1.0
-    # Blender units per metre; the manifest is metres everywhere.
+    # Blender units per metre. The manifest is metres everywhere.
     return 1.0 / scale if scale > 0.0 else 1.0
 
 
@@ -110,7 +110,7 @@ def _normalized(v):
 
 
 def _frame_matrix(y_axis, secondary, translation):
-    """Columns x, y, z with y the DOF axis; z from the secondary axis
+    """Columns x, y, z with y the DOF axis. Z from the secondary axis
     orthogonalised against y, falling back to global Z then X when the
     secondary is missing or parallel."""
     y = _normalized(y_axis)
@@ -167,7 +167,7 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
         # The root rests AT the assembly origin, world-aligned. A grounded
         # group's manifest frame is whichever member the exporter anchored
         # it to (live 2026-08-23: the flexible-sub "baseplate" bone landed
-        # on the hinge boss) — for static geometry the origin is the one
+        # on the hinge boss), for static geometry the origin is the one
         # placement that never surprises.
         return Matrix.Identity(4)
     joint = bone_plan.joint
@@ -175,9 +175,9 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
     if collapsed is not None:
         # Contact-aligned frame so the channel locks mean the contact:
         #   planar_spin: Y = spin axis, Z = the contact plane normal
-        #     (lock loc Z = stay on the plane; rot X locked = no tilt).
+        #     (lock loc Z = stay on the plane. Rot X locked = no tilt).
         #   planar_ball / slide_ball: Y = the carrier's axis (plane normal /
-        #     slide direction) — same convention as planar and prismatic.
+        #     slide direction): same convention as planar and prismatic.
         #   orbit_spin: Y = spin axis, secondary as exported.
         j1 = collapsed.carrier_joint
         j2 = collapsed.spin_joint
@@ -195,9 +195,9 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
     if bone_plan.mirror_normal is not None:
         # Half of a mirror pair: BOTH bones rest with the SAME plane-aligned
         # orientation (local +Y = the mirror normal) at their own mirrored
-        # positions. Equal rest axes make the reflection exact per channel —
+        # positions. Equal rest axes make the reflection exact per channel:
         # loc y negates, euler x and z negate, the rest come through
-        # unchanged — and those three negating channels are exactly the ones
+        # unchanged, and those three negating channels are exactly the ones
         # the symmetry constrains, so they are the only ones driven.
         origin = _group_fallback_translation(manifest, bone_plan.group)
         m = _frame_matrix(bone_plan.mirror_normal, None, origin)
@@ -207,20 +207,20 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
     if bone_plan.aim_at is not None and joint is not None \
             and joint.origin is not None:
         # Half of a slider-crank. The bone rests pointing AT the other half's
-        # pivot, because that is the axis Damped Track will aim — a bone
+        # pivot, because that is the axis Damped Track will aim: a bone
         # resting along its own joint axis would have Blender swing the PIN
         # round to face the target instead (live ClampRig, 2026-08-24:
         # the ram bones rested along their vertical pivots and pointed
         # straight up). It also lays the two halves along the ram, which is
         # what the machine looks like.
         #
-        # Local Z is the bone's own PIN, exactly — not merely near it. A body
+        # Local Z is the bone's own PIN, exactly, not merely near it. A body
         # on a pin can turn about that pin and nothing else, which is a Locked
-        # Track about local Z (sliders.py); locking an axis that is only
+        # Track about local Z (sliders.py). Locking an axis that is only
         # approximately the pin lets the ram swing off it by the same angle.
         # So the aim direction is projected onto the plane the pin turns in
         # before it becomes local Y. Where the pin already stands square to
-        # the ram — every ram on live ClampRig — the projection changes
+        # the ram (every ram on live ClampRig), the projection changes
         # nothing and +Y still lies exactly along the ram.
         origin = joint.origin
         toward = Vector((bone_plan.aim_at[0] - origin[0],
@@ -241,9 +241,9 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
             return m
     if swing_cone(joint):
         # The bone points along the child-side measured direction (the stud
-        # axis), NOT along joint.axis — for a ball the axis is the
+        # axis), NOT along joint.axis, for a ball the axis is the
         # parent-fixed CONE axis the limit band is measured from. Roll from
-        # the cone axis, so the frame is deterministic; at a rest inside the
+        # the cone axis, so the frame is deterministic. At a rest inside the
         # cone the two may be parallel and _frame_matrix falls back.
         origin = joint.origin if joint.origin is not None else \
             _group_fallback_translation(manifest, bone_plan.group)
@@ -262,7 +262,7 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
         # A ball has no axis, but a world-aligned bone LIES about the pose:
         # the stud tilted 45° in SolidWorks still grew a vertical bone (live
         # corpus 04, 2026-08-23). The child part's own rotation is rigid
-        # with the geometry, so the bone tilts exactly as the part does —
+        # with the geometry, so the bone tilts exactly as the part does:
         # whatever local axis the part was modelled along.
         m = _group_component_rotation(manifest, bone_plan.group)
         for i in range(3):
@@ -323,7 +323,7 @@ def _ik_driven_groups(plan):
 
     A closed loop is solved with IK on the driven side: those bones take the
     pose the solver gives them, and dragging one only fights it back. Only
-    the loop's own driver is worth grabbing — live corpus 06 (2026-08-25):
+    the loop's own driver is worth grabbing: live corpus 06 (2026-08-25):
     the four-bar offered two red bones and the second one did nothing.
     """
     driven = set()
@@ -336,11 +336,11 @@ def _ik_driven_groups(plan):
 
 def _bone_role(bone_plan, pose_bone, ik_driven=()):
     """What this bone IS to the user, decided from the kinematics and the
-    channel locks that follow from them — never from a name.
+    channel locks that follow from them: never from a name.
 
     The root is NOT special-cased into a control. A grounded group is locked
     on purpose (constraints.lock_all), so it cannot be posed, and offering it
-    as something to grab would be a lie; the whole assembly is moved by its
+    as something to grab would be a lie. The whole assembly is moved by its
     armature object instead.
 
     Nor is a driven half of a coupling special-cased any more. What decides
@@ -364,14 +364,14 @@ def _bone_role(bone_plan, pose_bone, ik_driven=()):
 def _widget_kind(bone_plan):
     """The motion this bone stands for, as a joint-type name.
 
-    A collapsed contact poses on ONE bone, so its carrier — not the pair of
-    joints behind it — says what the motion really is.
+    A collapsed contact poses on ONE bone, so its carrier, not the pair of
+    joints behind it: says what the motion really is.
     """
     collapsed = bone_plan.collapsed
     if collapsed is not None:
         return {"planar_spin": "planar", "planar_ball": "planar",
                 # A vertex riding a line or a face, tumbling freely, is a
-                # POINT — not a barrel that slides and spins about its own
+                # POINT, not a barrel that slides and spins about its own
                 # axis. The marker has to claim only what the contact is.
                 "slide_ball": "point",
                 "orbit_spin": "revolute",
@@ -383,7 +383,7 @@ def _widget_kind(bone_plan):
 # The limit arc rings the dial from OUTSIDE rather than fighting it for the
 # same pixels, and the dial's pointer reaches almost to it: rim ends at
 # 0.5175, the point reaches 0.6075, the band starts at 0.61. They come close
-# and never intersect, which matters because they are coplanar — an overlap
+# and never intersect, which matters because they are coplanar: an overlap
 # would be z-fighting, not a drawing.
 #
 # The widths are written as a thickness divided by a radius because that is
@@ -393,7 +393,7 @@ _DIAL_WIDTH = 0.0675 / _DIAL_RADIUS
 _DIAL_POINTER = 0.35
 _ARC_RADIUS = 0.70
 _ARC_WIDTH = 0.09 / _ARC_RADIUS
-# A slide bar is one bone length, centred on the bone's own origin, so its
+# A slide bar is one bone length, centered on the bone's own origin, so its
 # rail runs half a bone length past each stop. The rail is slimmer than the
 # bar so it still reads when the bar is sitting on it.
 _SLIDE_LENGTH = 1.0
@@ -450,7 +450,7 @@ def _control_geometry(bone_plan):
 
 def _style_bones(context, arm_obj, plan, result, unit_scale,
                  controls_coll, limits_coll, mechanism_coll, helpers_coll):
-    """Colour every bone by what it is, and give the ones worth grabbing a
+    """Color every bone by what it is, and give the ones worth grabbing a
     widget that says what they do.
 
     Runs last, in Pose mode, because the classification reads the channel
@@ -478,7 +478,7 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
     for bp in plan.bones:
         gid = bp.group.id
         # For a swing-cone ball or a cone_spin the user handle is the ctrl
-        # bone; bone_names[gid] is the clamped DEF that geometry rides.
+        # bone. bone_names[gid] is the clamped DEF that geometry rides.
         handle_name = result.ball_ctrl_names.get(gid, result.bone_names[gid])
         handle = pose.bones.get(handle_name)
         if handle is None:
@@ -543,7 +543,7 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
             lo = joint.translation_limit.delta_min * unit_scale
             hi = joint.translation_limit.delta_max * unit_scale
             # The limit is a limit on the slide's ORIGIN, and the slide bar
-            # is centred on that origin — so the rail runs half a bar past
+            # is centered on that origin, so the rail runs half a bar past
             # each end. Otherwise the bar hangs half off the rail exactly
             # when it is hard against the stop, which is the one moment the
             # rail has to be right.
@@ -592,7 +592,7 @@ def _bone_length(group, unit_scale):
 
 def _ensure_object_mode(context):
     """Object mode is PER-OBJECT since 2.8: context.mode reports only the
-    active object, so a background armature can still sit in Pose mode —
+    active object, so a background armature can still sit in Pose mode,
     and deleting it (the rig rebuild does) freezes Blender (live
     2026-08-23, send-while-posing). Sweep every object's own mode."""
     view_layer = context.view_layer
@@ -613,7 +613,7 @@ def _ensure_object_mode(context):
 
 
 def _driven_objects(manifest):
-    """The scene objects matching has tagged for this manifest — the ones
+    """The scene objects matching has tagged for this manifest: the ones
     relink will attach to bones."""
     ids = {c.id for c in manifest.components}
     gids = {g.id for g in manifest.rigid_groups}
@@ -631,7 +631,7 @@ def _driven_objects(manifest):
 def _collection_paths(scene):
     """Every collection under the scene, as its path from the scene root.
 
-    Linked into two places, a collection has two paths; the shallowest wins,
+    Linked into two places, a collection has two paths. The shallowest wins,
     which is the one a user thinks of as where it lives.
     """
     paths = {}
@@ -652,7 +652,7 @@ def _rig_home(context, manifest):
     drives.
 
     A rig parked at the scene root beside its assembly cannot be hidden with
-    it — the collection switch hides the parts and leaves the bones floating,
+    it: the collection switch hides the parts and leaves the bones floating,
     or hides the bones and leaves the parts (live, 2026-08-25). Inside the
     import's own collection, one switch takes the whole machine.
 
@@ -706,7 +706,7 @@ def _place_rig_collection(context, manifest, rig_name):
     """The rig's own collection, put where the assembly it drives lives.
 
     An existing one is left where it is if the user has moved it somewhere
-    deliberate; only the default parking spot — loose at the scene root —
+    deliberate. Only the default parking spot (loose at the scene root)
     is re-homed, so old scenes gain the fix on their next rebuild without
     overriding anyone's arrangement.
     """
@@ -719,7 +719,7 @@ def _place_rig_collection(context, manifest, rig_name):
         return collection
 
     # A user who dragged geometry into the rig collection could make the
-    # home the rig collection itself, or something inside it; linking a
+    # home the rig collection itself, or something inside it. Linking a
     # collection into its own descendant is a cycle Blender refuses.
     if home.name == collection.name or home.name in {
             c.name for c in collection.children_recursive}:
@@ -759,8 +759,8 @@ def _thread_through(pts, rest, tolerance):
     """Inserts the joint's rest point into a sampled polyline so the path
     passes exactly through it.
 
-    The manifest asserts two things that must agree — the curve's samples
-    and where the mate holds the part — and a chord-sampled curve misses
+    The manifest asserts two things that must agree: the curve's samples
+    and where the mate holds the part, and a chord-sampled curve misses
     its own vertex by the sagitta. Since the rest pose is what the user
     sees on load, it wins, but only within `tolerance`: a rest point
     genuinely off the path is a data problem the relink warning should
@@ -841,7 +841,7 @@ def _make_path_rail(collection, joint, frame, unit_scale):
     obj["RIG_rig"] = True
     obj["RIG_helper"] = joint.id
     obj.hide_render = True
-    # A ribbon this thin has no readable solid shading; drawn as wire it
+    # A ribbon this thin has no readable solid shading. Drawn as wire it
     # reads as the path line it stands for.
     obj.display_type = "WIRE"
     collection.objects.link(obj)
@@ -852,7 +852,7 @@ def _pin_through(verts, faces, rest, tolerance):
     """The 2-D twin of _thread_through: fans the triangle under the joint's
     rest point into three through the point itself, so a tessellated face
     passes exactly through the contact its mate defines. Same reasoning and
-    the same tolerance gate — a chordal face misses its own mate vertex by
+    the same tolerance gate: a chordal face misses its own mate vertex by
     the sagitta, and the rest pose is what the user sees on load."""
     best = (tolerance, -1)
     for i, tri in enumerate(faces):
@@ -863,7 +863,7 @@ def _pin_through(verts, faces, rest, tolerance):
         normal = normal.normalized()
         planar = rest - normal * (rest - a).dot(normal)
         # Inside test by the sign of each edge's cross product against the
-        # face normal — a point outside the triangle belongs to a neighbour.
+        # face normal: a point outside the triangle belongs to a neighbour.
         inside = True
         for p, q in ((a, b), (b, c), (c, a)):
             if (q - p).cross(planar - p).dot(normal) < -1e-12:
@@ -886,8 +886,8 @@ def _make_surface_patch(collection, joint, frame, unit_scale):
     """The face a surface joint's bone rides: the manifest's triangulation,
     placed through the same scene frame as the bones.
 
-    Same machinery as _make_path_rail one dimension up — a shrinkwrap onto
-    a real mesh — because SolidWorks will mate a point to a torus, a fillet
+    Same machinery as _make_path_rail one dimension up: a shrinkwrap onto
+    a real mesh, because SolidWorks will mate a point to a torus, a fillet
     or a loft, and none of those has a joint type to be. The patch is the
     face alone, not the whole body, so the point cannot wander onto a
     neighbouring face the mate never mentioned."""
@@ -918,9 +918,8 @@ def _make_surface_patch(collection, joint, frame, unit_scale):
 
 def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     """Builds the armature, constraints, drivers and loop closures.
-    plan already passed the dependency pre-flight in graph.build — nothing
-    here is allowed to create a depsgraph cycle. Geometry is not required;
-    the rig builds identically on an empty scene.
+    plan already passed the dependency pre-flight in graph.build: nothing
+    here is allowed to create a depsgraph cycle. Geometry is not required. The rig builds identically on an empty scene.
 
     frame_rows is the scene-frame transform from matching (manifest
     coordinates in Blender units -> where the geometry actually sits, e.g.
@@ -928,7 +927,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     bone is placed through it, so the rig lands on the geometry whatever up
     axis the import used. Without a frame (no match run, or nothing to
     anchor one) the rig lands at the 3D cursor, like the STEP import itself
-    does — never silently at the world origin. Limits and drivers are
+    does: never silently at the world origin. Limits and drivers are
     bone-local and need no adjustment."""
     result = BuildResult()
     result.warnings.extend(plan.warnings)
@@ -941,7 +940,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
         except (AttributeError, TypeError):
             frame = Matrix.Identity(4)
 
-    # ---- Phase 1: Object mode — datablocks only -------------------------
+    # ---- Phase 1: Object mode, datablocks only -------------------------
     _ensure_object_mode(context)
 
     rig_name = _rig_name(manifest)
@@ -949,7 +948,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     _remove_previous_rig(collection)
 
     # ops.armature_add would depend on cursor, context overrides and the
-    # active collection; direct datablock creation depends on nothing.
+    # active collection. Direct datablock creation depends on nothing.
     arm_data = bpy.data.armatures.new(rig_name)
     arm_obj = bpy.data.objects.new(rig_name, arm_data)
     arm_obj["RIG_rig"] = True
@@ -965,7 +964,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     limits_coll = arm_data.collections.new(_LIMITS_COLLECTION)
     mechanism_coll = arm_data.collections.new(_MECHANISM_COLLECTION)
 
-    # ---- Phase 2: one Edit-mode session — every bone --------------------
+    # ---- Phase 2: one Edit-mode session, every bone --------------------
     context.view_layer.objects.active = arm_obj
     arm_obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -979,8 +978,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             eb.tail = (0.0, 1.0, 0.0)
             eb.matrix = frame @ _bone_rest_matrix(manifest, bp, unit_scale)
             eb.length = _bone_length(bp.group, unit_scale)
-            # Connected bones ignore Limit Location entirely — a prismatic
-            # joint dies silently — so no bone is ever connected.
+            # Connected bones ignore Limit Location entirely: a prismatic
+            # joint dies silently, so no bone is ever connected.
             eb.use_connect = False
             if bp.parent_group_id is not None:
                 eb.parent = edit_bones[result.bone_names[bp.parent_group_id]]
@@ -1008,7 +1007,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 # which equals the handle inside the cone and is minimally
                 # corrected onto the cone surface beyond it (constraints in
                 # Phase 3). POLE anchors the cone axis at one handle-length
-                # from the centre; GOAL rests at the handle's tail. All three
+                # from the center. GOAL rests at the handle's tail. All three
                 # created BEFORE any child bone looks up bone_names[gid], so
                 # children parent to DEF, never to the unclamped handle.
                 result.ball_ctrl_names[bp.group.id] = eb.name
@@ -1057,12 +1056,12 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             c = bp.collapsed
             if c is not None and c.kind == "cone_spin":
                 # Tangent cone on ONE grabbable bone (live corpus 15 cone3,
-                # 2026-08-23): the bone above is the HANDLE — it slides on
+                # 2026-08-23): the bone above is the HANDLE. It slides on
                 # the plane and rotates freely. DEF carries geometry and
                 # children, following the handle with its axis clamped onto
                 # the fixed-tilt ring (the ball template with a degenerate
                 # band). POLE anchors the ring and RIDES the handle through
-                # a local-space location copy — its rest orientation must
+                # a local-space location copy: its rest orientation must
                 # equal the handle's so the local channels map 1:1. FRM is
                 # the STATIC plane frame the handle's on-plane clamp
                 # measures in (a follower frame would cycle the depsgraph).
@@ -1121,8 +1120,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 helpers_coll.assign(gb)
                 result.ball_goal_names[bp.group.id] = gb.name
 
-        # Orbit-contact targets: a hidden bone at the orbit centre, riding
-        # the parent body — the child bone's Limit Distance holds the
+        # Orbit-contact targets: a hidden bone at the orbit center, riding
+        # the parent body: the child bone's Limit Distance holds the
         # tangency radius against it.
         for bp in plan.bones:
             c = bp.collapsed
@@ -1168,7 +1167,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
 
             # The effector carries the closure point rigidly on the driven
             # tip: its TAIL sits exactly at the closure origin, because the
-            # tip bone's own tail is NOT the closure point — with bones along
+            # tip bone's own tail is NOT the closure point, with bones along
             # the hinge axes a tail cannot even move in the mechanism plane,
             # and aiming IK at it left the solve dead (live corpus 06). The
             # tail, not the head: IK's use_tail=False actually re-targets the
@@ -1187,7 +1186,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
 
         for splan in plan.sliders:
             # One duplicate per half, each carrying the OTHER half's pivot and
-            # parented to that half's PARENT — never to the half itself, or
+            # parented to that half's PARENT: never to the half itself, or
             # the two Damped Tracks would depend on each other.
             for tag, pivot, aim_parent in (
                     ("a", splan.c_pivot, splan.a_aim_parent),
@@ -1233,7 +1232,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             contact_meshes[bp.joint.id] = obj
             result.contact_mesh_names[bp.joint.id] = obj.name
 
-    # ---- Phase 3: Pose mode — channels, constraints, drivers, IK --------
+    # ---- Phase 3: Pose mode, with channels, constraints, drivers and IK --------
     bpy.ops.object.mode_set(mode="POSE")
     try:
         pose = arm_obj.pose
@@ -1295,9 +1294,9 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 if (bp.joint.coupling is not None
                         and bp.joint.coupling.kind == "mirror"):
                     # Only the three channels a plane-to-plane symmetry
-                    # actually constrains are driver-owned — the translation
+                    # actually constrains are driver-owned: the translation
                     # along the mirror normal (local Y) and the two rotations
-                    # that tilt it. Locks stop the user posing those; the
+                    # that tilt it. Locks stop the user posing those. the
                     # sign-flip drivers still animate them through the locks.
                     #
                     # The other three stay UNLOCKED on purpose: sliding
@@ -1320,7 +1319,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 constraints.unlock_all(pb)
 
         for splan in plan.sliders:
-            # The aim duplicates only ever move with their parents; posing
+            # The aim duplicates only ever move with their parents. posing
             # one by hand would quietly detune the closure.
             for tag in ("a", "c"):
                 name = result.aim_names.get((splan.loop.id, tag))
@@ -1333,8 +1332,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 pb.lock_scale = [True, True, True]
 
         for lplan in plan.loops:
-            # Helper and effector only ever move with their parents;
-            # hand-posing either would silently detune the closure. Both
+            # Helper and effector only ever move with their parents.
+            # Hand-posing either would silently detune the closure. Both
             # carry RIG_helper so parenting and matching skip them.
             for name in (result.helper_names[lplan.loop.id],
                          result.effector_names[lplan.loop.id]):
@@ -1368,7 +1367,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
 
-    # A rail or patch is geometry of the joint's PARENT side — when that body
+    # A rail or patch is geometry of the joint's PARENT side, when that body
     # moves, the slot the child follows moves with it. Same bone-parent
     # matrix math as parenting.py: BONE parenting evaluates at the tail, so
     # the parent inverse is set against it and matrix_basis restores the

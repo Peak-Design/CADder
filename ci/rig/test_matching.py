@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Matching hygiene tests, born from the live corpus 07 round three
-(2026-08-22): a long-lived test scene — stale RIG_* tags from earlier
+(2026-08-22), a long-lived test scene: stale RIG_* tags from earlier
 manifests, imports of several STEP files side by side, twin subassembly
-instances sharing one occurrence path — reported "unmatched: c004" for a
+instances sharing one occurrence path: reported "unmatched: c004" for a
 component whose object sat exactly where the manifest said. Each test here
 pins one of the hygiene rules that make the cascade survive such scenes.
 
-No bpy — matching.py degrades to plain Python and the fake objects provide
+No bpy: matching.py degrades to plain Python and the fake objects provide
 the tiny surface it reads."""
 
 import os
@@ -32,7 +32,7 @@ def translated(x, y, z):
 
 
 def turned(x):
-    """Turned 180 degrees about Z and moved to x — a mirrored instance, which
+    """Turned 180 degrees about Z and moved to x: a mirrored instance, which
     is what puts an occurrence's parts in the opposite order along an axis
     from the order they are walked in."""
     return [[-1.0, 0.0, 0.0, x],
@@ -78,7 +78,7 @@ class FakeCollection:
 
 def make_manifest(comps, step_file="asm.step"):
     """comps: list of (cid, step_name, occurrence_path, transform) or the
-    same with a fifth entry, subassembly_solving — "rigid" or "flexible" for
+    same with a fifth entry, subassembly_solving: "rigid" or "flexible" for
     a component that IS a subassembly occurrence, absent for a part."""
     comps = [c if len(c) == 5 else tuple(c) + (None,) for c in comps]
     return manifest.parse({
@@ -111,7 +111,7 @@ def make_manifest(comps, step_file="asm.step"):
 
 class TwinPathsTest(unittest.TestCase):
     """Two instances of one subassembly rebuild the SAME product-name
-    occurrence path — the exact-path step sees two hits for each twin
+    occurrence path: the exact-path step sees two hits for each twin
     component. That ambiguity must fall through to the transform step, not
     kill the component (the old cascade dropped it on the spot)."""
 
@@ -207,7 +207,7 @@ class ForeignFileTest(unittest.TestCase):
 class CollectionHierarchyTest(unittest.TestCase):
     """A rigid subassembly is ONE body, so the manifest names the assembly
     occurrence rather than its parts. That node carries no shape, so the
-    import modes that build collections give it no object at all — it exists
+    import modes that build collections give it no object at all: it exists
     only as a COLLECTION, and the body it stands for is every part below it.
 
     Live ClampRig (2026-08-24) came in as a tree collection: 53 of 122
@@ -297,8 +297,8 @@ class TwinCollectionsTest(unittest.TestCase):
         base = FakeObj("base", {"STEP_name": "base", "STEP_uuid": 1,
                                 "STEP_parent": 10, "STEP_file": "asm.step"},
                        identity4())
-        # Both occurrences hold the part at the same place INSIDE themselves
-        # — that is what makes them the same product.
+        # Both occurrences hold the part at the same place INSIDE themselves,
+        # which is what makes them the same product.
         left = FakeObj("part", {"STEP_name": "part", "STEP_uuid": 3,
                                 "STEP_parent": 2, "STEP_file": "asm.step"},
                        translated(0.1, 0.0, 0.0))
@@ -381,7 +381,7 @@ class TwinCollectionsTest(unittest.TestCase):
 class FlexibleOccurrenceTest(unittest.TestCase):
     """A flexible subassembly is walked, so every part inside it is a
     component in its own right and usually in another rigid group. It must be
-    PAIRED — that is what tells its rigid twin's collection from its own —
+    PAIRED (that is what tells its rigid twin's collection from its own)
     but never expanded, or it claims parts that belong to those components.
 
     Live corpus 07 flexible-sub1 (2026-08-24): two instances of one hinge,
@@ -425,7 +425,7 @@ class FlexibleOccurrenceTest(unittest.TestCase):
 
 class UnnamedProductsTest(unittest.TestCase):
     """A STEP file whose product labels are blank gives every component the
-    same useless occurrence path — live corpus 07 flexible-sub2 spells all
+    same useless occurrence path: live corpus 07 flexible-sub2 spells all
     five of them "flexible-sub2/ ". The occurrence's own name is then the
     only join left, and the collection still carries it."""
 
@@ -454,9 +454,9 @@ class UnnamedProductsTest(unittest.TestCase):
 class StaleMemberTagTest(unittest.TestCase):
     """A part claimed as a MEMBER of a subassembly body carries RIG_group but
     no RIG_component_id, so neither the pre-seed nor the stale-tag sweep can
-    see it on a later run. Group ids are positional — a re-export that drops
-    a component renumbers them — so a tag that survives names a DIFFERENT
-    body, and parenting reads the raw tag. Out of the rig is recoverable; in
+    see it on a later run. Group ids are positional: a re-export that drops
+    a component renumbers them, so a tag that survives names a DIFFERENT
+    body, and parenting reads the raw tag. Out of the rig is recoverable. In
     the wrong rigid group is not."""
 
     def test_a_member_this_run_did_not_reclaim_loses_its_group(self):

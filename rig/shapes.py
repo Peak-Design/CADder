@@ -3,7 +3,7 @@
 
 These are made in code rather than loaded from a library, because the useful
 ones are MEASURED. A limit arc for +/-30 degrees is a different mesh from one
-for +/-90; a stroke rail has to be the stroke's real length; a swing cone has
+for +/-90. A stroke rail has to be the stroke's real length. A swing cone has
 to be the mate's real half angle. A library of static shapes can only give a
 generic ring, and a generic ring tells the user nothing they did not already
 know. Everything needed to size them is already in the manifest, so the rig
@@ -18,15 +18,15 @@ pointer on the dial: the pointer sits at t = 0 when the joint is at rest, and
 Blender's own rotation channel is measured the same way.
 
 SOLID or WIRE, by what the widget is for. A widget that stands for a part you
-take hold of — a dial, its limit arc, a slide bar, its rail, a ball and its
-stud, a screw's wire, a point marker — is a real surface: it reads at a
+take hold of (a dial, its limit arc, a slide bar, its rail, a ball and its
+stud, a screw's wire, a point marker) is a real surface. It reads at a
 glance, from any angle, without having to hunt for a line against the model
 behind it. The two that stay WIRE are the ones something has to be visible
 INSIDE: a swing cone with the stud it limits standing in it, and the ground
 cross, which is the world rather than a part.
 
-The geometry functions are pure — they take numbers and return
-(verts, edges, faces) — so they can be checked without Blender. `edges` holds
+The geometry functions are pure: they take numbers and return
+(verts, edges, faces), so they can be checked without Blender. `edges` holds
 LOOSE edges only, never an edge that a face already owns, because from_pydata
 would then build it twice. Only `widget` and `widget_collection` touch bpy.
 """
@@ -75,7 +75,7 @@ def _both_sides(verts, faces):
     """A flat widget, drawn from either side of its plane.
 
     Bone custom shapes are backface culled, so a one-sided dial disappears
-    the moment the view crosses its plane — and a dial you can only read from
+    the moment the view crosses its plane, and a dial you can only read from
     one side of the machine is half a dial. The back is a separate COPY of
     the vertices rather than the same ones wound the other way: two faces on
     one set of vertices are a duplicate face, and Blender's own mesh
@@ -97,12 +97,12 @@ def ring_with_pointer(radius=1.0, segments=48, pointer=0.35, width=0.15):
     the two meet.
 
     That only works because a vertex lands exactly on t = 0. `_band` steps
-    from t0, so index 0 is at t0 = 0, which is rest — the angle Blender's
+    from t0, so index 0 is at t0 = 0, which is rest: the angle Blender's
     own rotation channel reads zero at. Off by half a segment and the dial
     would point a few degrees away from where the joint actually sits.
 
-    The ring is centred on the widget's own origin, which is where the
-    bone's head is drawn, so it turns about its centre rather than around
+    The ring is centered on the widget's own origin, which is where the
+    bone's head is drawn, so it turns about its center rather than around
     it. `pointer` is how far past the rim the spike reaches, as a fraction
     of the radius.
     """
@@ -118,7 +118,7 @@ def ring_with_pointer(radius=1.0, segments=48, pointer=0.35, width=0.15):
 def limit_arc(delta_min, delta_max, radius=1.0, segments=64, width=0.15):
     """A rotation limit: a solid band over exactly the arc the joint may turn
     through, drawn around the dial it belongs to so the dial's pointer runs
-    along it. The band and nothing else — its own two ends already say where
+    along it. The band and nothing else: its own two ends already say where
     the travel starts and stops."""
     span = delta_max - delta_min
     n = max(3, min(int(segments), int(abs(span) / (math.pi / 48.0)) + 3))
@@ -144,7 +144,7 @@ def cylinder(length=1.0, radius=0.5, segments=16):
 
 def cuboid(length=1.0, half_width=0.4):
     """A slide that may NOT turn: a square section has a corner, so any spin
-    would be obvious — and there is none."""
+    would be obvious, and there is none."""
     half = length * 0.5
     verts = []
     for sign in (-1.0, 1.0):
@@ -167,7 +167,7 @@ def stroke_bar(delta_min, delta_max, half_width=0.25, pad=0.0,
 
     `pad` extends it past each limit by half the slide widget's own length.
     Without that the rail stops at the limit VALUE, which is where the
-    slide's centre gets to — so at either end of the stroke the slide hangs
+    slide's center gets to, so at either end of the stroke the slide hangs
     half its length off the rail. Padded, the ends line up.
     """
     lo = min(delta_min, delta_max) - pad
@@ -182,7 +182,7 @@ def stroke_bar(delta_min, delta_max, half_width=0.25, pad=0.0,
 
 def helix(length=1.0, radius=0.5, turns=2.0, segments=48, thread=0.0):
     """A screw: a slide and a turn that are ONE motion, which is exactly what
-    a helix draws. `thread` is the section radius of the wire — 0 leaves it
+    a helix draws. `thread` is the section radius of the wire: 0 leaves it
     a bare line."""
     half = length * 0.5
     path = []
@@ -241,9 +241,9 @@ def _sphere(radius, rings=8, segments=16, centre=(0.0, 0.0, 0.0)):
 def _tube(path, radius, sides=8, cap=True):
     """A solid tube swept along a run of points, wound outward.
 
-    The section frame is carried along by parallel transport — rotate the
+    The section frame is carried along by parallel transport: rotate the
     previous frame by the smallest rotation taking the old tangent to the
-    new one — so the tube does not twist or flip where the path turns.
+    new one, so the tube does not twist or flip where the path turns.
     """
     n = max(3, int(sides))
     pts = [tuple(p) for p in path]
@@ -336,7 +336,7 @@ def ball_with_stub(radius=0.35, stub=1.0, rings=8, segments=16):
 
 def swing_cone(half_angle, length=1.0, segments=24, meridians=8):
     """A ball's swing limit: the cone the stud may lean anywhere inside. The
-    mate gives an unsigned swing angle, so the cone is what it means — not a
+    mate gives an unsigned swing angle, so the cone is what it means, not a
     box on two axes. Wire, because the stud it limits lives inside it."""
     a = max(1e-4, min(abs(half_angle), math.pi * 0.98))
     r = math.sin(a) * length
@@ -357,7 +357,7 @@ def disc_with_pointer(radius=1.0, thickness=0.25, segments=48, pointer=0.35,
     """A planar contact: the revolute's dial given thickness.
 
     A plane joint slides in its plane AND spins about the plane's normal, so
-    the dial is exactly the right marker — extruded, it also reads as the
+    the dial is exactly the right marker: extruded, it also reads as the
     disc lying on the face, which is what the contact is. Local +Y is the
     plane normal, so the disc lies flat in the plane by construction.
     """
@@ -407,7 +407,7 @@ def slot(length=1.0, radius=0.35, segments=16):
 
 def diamond(size=1.0):
     """A point held on a curve or a face: the geometry owns where it goes, so
-    the widget marks the point and claims no axis. A solid octahedron —
+    the widget marks the point and claims no axis. A solid octahedron,
     which is what a point marker should look like from every side."""
     s = size
     verts = [(0.0, s, 0.0), (s, 0.0, 0.0), (0.0, 0.0, s),

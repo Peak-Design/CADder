@@ -2,9 +2,9 @@
 """The .swmesh format crosses a language boundary, so the test that means
 something is the one where the writer and the reader are the real ones.
 The C# side (MeshWriterTests.WritesTheGoldenFileTheConsumerTestReads) emits
-a sample into its own build output; this reads it back and checks every
+a sample into its own build output. This reads it back and checks every
 field, because a wire format fails by putting the right bytes in the wrong
-slot — which loads fine and looks wrong.
+slot, which loads fine and looks wrong.
 
 The golden file is skipped when the add-in has not been built, so this
 suite still runs on a machine with no .NET.
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
 
 from STEPper_NEXT.rig import swmesh  # noqa: E402
 
-# Written by the C# test suite into its own source tree; see the module
+# Written by the C# test suite into its own source tree. See the module
 # docstring for why the two halves have to meet on a real file.
 GOLDEN = os.path.join(
     "C:", os.sep, "PeakDesign", "SW-To-Blender", "sw-addin", "tests",
@@ -29,7 +29,7 @@ GOLDEN = os.path.join(
 
 
 @pytest.mark.skipif(not os.path.exists(GOLDEN),
-                    reason="add-in not built; no golden .swmesh to read")
+                    reason="add-in not built. No golden .swmesh to read")
 def test_reads_the_scene_the_addin_wrote():
     scene = swmesh.load(GOLDEN)
 
@@ -56,7 +56,7 @@ def test_reads_the_scene_the_addin_wrote():
     assert list(d.normals) == pytest.approx([0, 0, 1] * 4)
     assert list(d.uvs) == pytest.approx([0, 0, 1, 0, 0, 1, 1, 1])
     assert list(d.triangles) == [0, 1, 2, 1, 3, 2]
-    # Per TRIANGLE, not per vertex — the whole reason the field exists.
+    # Per TRIANGLE, not per vertex: the whole reason the field exists.
     assert list(d.triangle_materials) == [1, 0]
 
     inst = scene.instances[0]

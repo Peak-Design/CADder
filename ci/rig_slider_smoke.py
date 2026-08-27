@@ -16,8 +16,8 @@ extending or retracting the ram does.
 
 What this asserts is the whole point of the aim pair: after the clamp is
 posed, each half of the ram still POINTS AT the other's pivot, and the gap
-between them has changed. Blender's IK cannot do that — a slide inside a
-chain can only be locked — so before this closure existed the ram bones sat
+between them has changed. Blender's IK cannot do that: a slide inside a
+chain can only be locked, so before this closure existed the ram bones sat
 frozen while the clamp swung away from them.
 """
 
@@ -155,7 +155,7 @@ def run():
            "slider halves are {}/{}".format(sp.a_group, sp.c_group))
     _check(sp.a_pivot == [1.0, 0.0, 0.0], "barrel pivot {}".format(sp.a_pivot))
     _check(sp.c_pivot == [0.0, 1.0, 0.0], "rod pivot {}".format(sp.c_pivot))
-    # Each half's target rides the OTHER half's parent — that is what keeps
+    # Each half's target rides the OTHER half's parent, that is what keeps
     # the two aim constraints out of a dependency cycle.
     _check(sp.a_aim_parent == "g001",
            "barrel aims at a target on {}".format(sp.a_aim_parent))
@@ -200,8 +200,8 @@ def run():
         _check(err < 1e-4,
                "bone {} is {:.4f} rad off its target at rest".format(name, err))
 
-    # 4) Pose the clamp — the input a hand actually grabs — and the ram must
-    #    follow it round. The rod pin C swings with the clamp; both halves
+    # 4) Pose the clamp (the input a hand actually grabs) and the ram must
+    #    follow it round. The rod pin C swings with the clamp. Both halves
     #    must still be pointing at each other afterwards, and the gap between
     #    them must have changed, which is the ram extending.
     def pivots():
@@ -223,14 +223,14 @@ def run():
 
         a_now, c_now = pivots()
         _check((a_now - a_rest).length < 1e-4,
-               "the bore pivot moved; it is fixed to the body")
+               "the bore pivot moved. It is fixed to the body")
         moved = (c_now - c_rest).length
         _check(moved > 0.05,
                "posing the clamp moved the rod pin only {:.4f}".format(moved))
 
         length = (c_now - a_now).length
         _check(abs(length - rest_len) > 0.05,
-               "the ram length did not change ({:.4f} vs {:.4f}) — the halves "
+               "the ram length did not change ({:.4f} vs {:.4f}): the halves "
                "are frozen".format(length, rest_len))
 
         # The law of cosines the exporter used to derive the clamp's limit:
@@ -259,7 +259,7 @@ def run():
     bp = arm_obj.pose.bones[barrel]
     pin = (arm_obj.matrix_world @ bp.matrix).to_3x3().col[2]
     _check(abs(abs(pin.z) - 1.0) < 1e-6,
-           "with its target off the pin plane the barrel tilted to {} — it "
+           "with its target off the pin plane the barrel tilted to {}: it "
            "is no longer turning about its pin".format(tuple(pin)))
     aim = (arm_obj.matrix_world @ bp.matrix).to_3x3().col[1]
     _check(abs(aim.z) < 1e-6,
@@ -271,14 +271,14 @@ def run():
     #    posed past the point where the ram bottoms out.
     limits = [c for c in arm_obj.pose.bones[clamp].constraints
               if c.type == "LIMIT_ROTATION"]
-    _check(limits, "the clamp has no rotation limit; it can swing off the ram")
+    _check(limits, "the clamp has no rotation limit. It can swing off the ram")
     lim = limits[0]
     _check(abs(lim.min_y + math.pi / 6.0) < 1e-6
            and abs(lim.max_y - math.pi / 6.0) < 1e-6,
            "clamp limit is [{:.4f}, {:.4f}], expected +/- 30 deg".format(
                lim.min_y, lim.max_y))
 
-    print("rig_slider_smoke: OK — {} bones, {} aim targets, ram tracked "
+    print("rig_slider_smoke: OK: {} bones, {} aim targets, ram tracked "
           "through {} poses".format(
               len(result.bone_names), len(result.aim_names), 2))
 

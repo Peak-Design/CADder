@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Geometry matching: manifest components -> scene objects.
 
-Blender object names are display labels — 63-byte truncation and ".001"
-dedup make them useless as identity — so nothing here matches on obj.name
+Blender object names are display labels: 63-byte truncation and ".001"
+dedup make them useless as identity, so nothing here matches on obj.name
 except the last-resort fuzzy step, which exists for foreign importers that
 wrote no STEP_* properties at all.
 
@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .manifest import Component, Manifest
 
-# Importable under plain Python; every entry point that needs Blender
+# Importable under plain Python. Every entry point that needs Blender
 # checks for bpy itself.
 try:
     import bpy
@@ -57,20 +57,20 @@ class MatchEntry:
     object_name: str
     step: int
     confidence: str
-    # Every object this component owns. A plain part owns one; a rigid
+    # Every object this component owns. A plain part owns one. A rigid
     # SUBASSEMBLY owns all of its parts, because the manifest treats the
     # subassembly as one body and names the assembly occurrence rather than
     # the parts inside it. Appended last and defaulted: the tests and
     # native_import build MatchEntry positionally.
     object_names: List[str] = field(default_factory=list)
     # Set when the component was resolved to a collection subtree rather
-    # than to an object of its own — there is then no single object holding
+    # than to an object of its own: there is then no single object holding
     # the occurrence's pose, which pose_sync has to know.
     collection_name: Optional[str] = None
 
     def __post_init__(self):
         # Every other producer of this record (native_import, the tests)
-        # names one object; the list is the general form of the same thing.
+        # names one object. The list is the general form of the same thing.
         if not self.object_names and self.collection_name is None:
             self.object_names = [self.object_name]
 
@@ -89,7 +89,7 @@ class MatchReport:
     notes: List[str] = field(default_factory=list)
     # The scene-frame transform: manifest coordinates (Blender units) ->
     # where the geometry actually sits. Identity when the import kept the
-    # manifest's Z-up frame; a rotation when the user imported with another
+    # manifest's Z-up frame. A rotation when the user imported with another
     # up axis. rig_build applies it to every bone it places.
     frame_rows: Optional[List[List[float]]] = None
     frame_agree: int = 0
@@ -126,8 +126,8 @@ def _loose_path(path: str) -> str:
 
 
 def _fuzzy_label(text: str) -> str:
-    # ".NNN" is Blender's duplicate suffix, "-N" is the CAD instance suffix;
-    # both are identity noise for a last-resort name comparison.
+    # ".NNN" is Blender's duplicate suffix, "-N" is the CAD instance suffix.
+    # Both are identity noise for a last-resort name comparison.
     label = str(text)
     while True:
         stripped = re.sub(r"\.\d+$", "", label)
@@ -139,7 +139,7 @@ def _fuzzy_label(text: str) -> str:
 
 
 def _strip_dedup(name: str) -> str:
-    """Blender appends '.001' to a duplicate datablock name; the CAD node
+    """Blender appends '.001' to a duplicate datablock name. The CAD node
     name underneath it is what the manifest knows."""
     label = str(name)
     while True:
@@ -165,7 +165,7 @@ def _collection_paths(collections):
     (main.py: hierarchy_collections[node.index], then
     hierarchy_collections[obj["STEP_parent"]].objects.link(obj)). So the
     collection nesting IS the assembly tree, and it is the only place a
-    subassembly occurrence exists at all in that mode — no object is made
+    subassembly occurrence exists at all in that mode: no object is made
     for a node that carries no shape of its own.
 
     bpy gives a collection its children and never its parent, so the parent
@@ -189,7 +189,7 @@ def _collection_paths(collections):
 
 def _container_depth(paths, wanted) -> int:
     """How many leading segments of a collection path belong to the IMPORT
-    rather than to the STEP tree — "<file>.hierarchy", plus any collection
+    rather than to the STEP tree: "<file>.hierarchy", plus any collection
     the user has since nested the import inside. Voted rather than assumed:
     the offset that lines the most collection paths up with a path the
     manifest actually names."""
@@ -288,7 +288,7 @@ def _mat_mul(a, b):
 
 
 def _invert_rows(rows):
-    """Inverse of a 4x4 with a [0,0,0,1] bottom row, via the 3x3 adjugate —
+    """Inverse of a 4x4 with a [0,0,0,1] bottom row, via the 3x3 adjugate:
     the import can bake a scale into the matrix, so no rigid shortcut."""
     d = (rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
          - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
@@ -327,7 +327,7 @@ def _internal_layout(objs, frame_rows, scene_scale):
     # of the tree. Two occurrences of one product are walked identically, so
     # ordering by it puts corresponding parts opposite each other. Ordering
     # by position instead would compare a part of one occurrence against a
-    # DIFFERENT part of the other wherever several parts share a name — and
+    # DIFFERENT part of the other wherever several parts share a name, and
     # in an assembly of fasteners, most of them do (live ClampRig,
     # 2026-08-24: a 98-part module read as laid out differently from its own
     # twin).
@@ -395,7 +395,7 @@ def _rotation_columns(rows) -> Optional[List[List[float]]]:
 
 
 def _rotation_angle(cols_a, cols_b) -> float:
-    # trace(A^T B) via column dot products; acos clamped against fp drift.
+    # trace(A^T B) via column dot products. Acos clamped against fp drift.
     trace = 0.0
     for c in range(3):
         trace += (cols_a[c][0] * cols_b[c][0]
@@ -405,13 +405,13 @@ def _rotation_angle(cols_a, cols_b) -> float:
 
 
 # ── Scene-frame estimation ──────────────────────────────────────────────
-# The manifest is Z-up SolidWorks global; the importer may have rotated the
+# The manifest is Z-up SolidWorks global. The importer may have rotated the
 # geometry (STEPper's up-axis option, or any foreign importer's convention).
 # Comparing manifest transforms against object transforms directly would
-# then fail everywhere — and a rig built in the manifest frame would not
+# then fail everywhere, and a rig built in the manifest frame would not
 # touch the geometry. The orientation-independent matches (steps 0–2, name
 # and path based) anchor an estimate of the frame transform F with
-# obj.matrix_world ≈ F @ component_transform; the transform step and the
+# obj.matrix_world ≈ F @ component_transform. The transform step and the
 # rig builder both work under F afterwards.
 
 def _normalized_rot(rows):
@@ -434,7 +434,7 @@ def _rot_apply(a, v):
 
 
 def _snap_frame_rot(r):
-    """Up-axis conversions are exact ±90°/180° rotations; snapping removes
+    """Up-axis conversions are exact ±90°/180° rotations. Snapping removes
     the fp noise the anchor pair injected. Anything that does not snap to a
     legal right-handed axis swap comes back unchanged."""
     snapped = []
@@ -528,8 +528,8 @@ def _frame_agrees(frame, obj_rows, comp_rows, scene_scale,
 
 def estimate_frame(anchor_pairs, scene_scale):
     """anchor_pairs: (obj_rows, comp_rows_units) from orientation-independent
-    matches. Each anchor proposes a frame; the one most anchors agree with
-    wins — a single mis-tagged object cannot hijack the frame. Returns
+    matches. Each anchor proposes a frame. The one most anchors agree with
+    wins: a single mis-tagged object cannot hijack the frame. Returns
     (frame_rows, agree_count). Consensus tolerances are looser than the
     match tolerances: anchors vote on the frame, they are not re-matched."""
     best = None
@@ -595,7 +595,7 @@ def _dims_agree(a: List[float], b: List[float]) -> bool:
 def collect_candidates(objects=None):
     """Scene objects that may carry manifest geometry. INSTANCES-mode
     prototypes (STEP_name without STEP_uuid, identity-placed in the hidden
-    components collection) are excluded — the occurrence empties are the
+    components collection) are excluded: the occurrence empties are the
     things that sit at the manifest transforms."""
     if objects is None:
         if bpy is None:
@@ -629,9 +629,9 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     collections = collect_collections(collections)
     scene_scale = _scene_scale()
 
-    # A long-lived test scene accumulates imports of OTHER step files; their
+    # A long-lived test scene accumulates imports of OTHER step files. their
     # objects must never compete for this manifest's components. Objects from
-    # the manifest's own file are identified by the STEP_file tag — but only
+    # the manifest's own file are identified by the STEP_file tag, but only
     # when at least one exists, so foreign importers (no tag at all) keep
     # their fuzzy-step chance in an otherwise empty scene.
     want_file = _basename(getattr(manifest, "step_file", None))
@@ -657,7 +657,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         if key.uuid is not None:
             by_uuid[(key.file, key.uuid)] = obj
 
-    # A component may BE a subassembly occurrence — a rigid subassembly is one
+    # A component may BE a subassembly occurrence: a rigid subassembly is one
     # body, so the manifest names the node, not its parts. That node carries no
     # shape of its own, so it becomes an object only in the import modes that
     # build empties. "Tree collection" and "Flat collection" build collections
@@ -666,7 +666,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # collapses to its own name because the ancestors are missing too. Counting
     # the objects whose parent is not in the pool identifies that at a glance.
     # (Live ClampRig, 2026-08-24: imported as a tree collection, 53 of
-    # 122 components matched and only the loose parts moved with the rig; the
+    # 122 components matched and only the loose parts moved with the rig. the
     # same file and manifest under "Parented empties" matched 122 of 122.)
     orphaned = 0
     for obj in candidates:
@@ -684,8 +684,8 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # ONLY place the assembly structure survives.
     wanted_paths = {_norm_path(c.step_occurrence_path)
                     for c in comps.values() if c.step_occurrence_path}
-    # Objects are already restricted to this manifest's own STEP file;
-    # collections must be too, or a scene holding two imports counts the
+    # Objects are already restricted to this manifest's own STEP file.
+    # Collections must be too, or a scene holding two imports counts the
     # other one's occurrences and no bucket ever balances.
     if want_file:
         mine = []
@@ -709,7 +709,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         """One entry per COMPONENT, however many objects it owns.
 
         `claimed` stays a 1:1 map of the objects that carry a component's own
-        pose — the scene-frame vote and the stale-tag sweep both index it —
+        pose (the scene-frame vote and the stale-tag sweep both index it),
         so a component resolved to a subassembly's parts is not in it: no
         member part sits at the assembly occurrence's transform, and letting
         one vote would tilt the frame every bone is placed through.
@@ -758,7 +758,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     def note_ambiguous(component_id, objs):
         ambiguous_seen[component_id] = [o.name for o in objs]
 
-    # Pre-seed from a previous run; a tag pointing at an id this manifest
+    # Pre-seed from a previous run. A tag pointing at an id this manifest
     # does not know is stale and ignored.
     for obj in list(pool):
         try:
@@ -769,7 +769,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             claim(tagged, obj, 0)
 
     # Step 1: exact STEP_name plus rebuilt occurrence path. The uuid chain
-    # is preferred; where it dead-ends because the ancestors were built as
+    # is preferred. Where it dead-ends because the ancestors were built as
     # collections rather than objects, the collection ancestry supplies the
     # same path.
     paths = {}
@@ -795,7 +795,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         elif len(hits) > 1:
             note_ambiguous(cid, hits)
 
-    # Step 2: path equality with instance suffixes and separators normalised.
+    # Step 2: path equality with instance suffixes and separators normalized.
     for cid in sorted(todo):
         comp = todo[cid]
         if comp.step_occurrence_path is None:
@@ -810,11 +810,11 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
 
     # The scene frame: estimated from the name/path anchors when there are
     # any. Without them (FLAT imports, foreign importers), uniquely-named
-    # components still anchor a FULL frame — rotation and translation, so
+    # components still anchor a FULL frame: rotation and translation, so
     # an import dropped at the 3D cursor is found, not only an up-axis
     # swap. Only when every name is duplicated do the canonical up-axis
     # conversions compete on how many components each one names-and-places
-    # (they carry no translation — transform agreement is the only signal
+    # (they carry no translation: transform agreement is the only signal
     # that can disambiguate identical names).
     unit_scale = 1.0 / scene_scale
     anchor_pairs = [(_matrix_rows(claimed[e.component_id]),
@@ -855,7 +855,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # written by an earlier manifest can sit on an object this manifest's
     # component no longer describes (rounds of re-import and re-export in one
     # scene). Now that a frame exists, any step-0 claim whose object is not
-    # where the component says gets reverted and re-matched from scratch —
+    # where the component says gets reverted and re-matched from scratch:
     # the frame vote is majority-based, so a minority of stale tags cannot
     # defend themselves by defining the frame.
     stale = [e for e in report.matched
@@ -873,8 +873,8 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
                 del obj[tag]
             except (KeyError, TypeError):
                 pass
-        print("[SWTB match] stale tag: %s no longer sits at %s's transform; "
-              "re-matching both" % (obj.name, e.component_id))
+        print("[SWTB match] stale tag: %s no longer sits at %s's transform. "
+              "Re-matching both" % (obj.name, e.component_id))
 
     # Step 3: same STEP_name plus transform agreement under the scene frame.
     for cid in sorted(todo):
@@ -927,7 +927,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # The exporter's rule is that a rigid subassembly is ONE body, so the
     # manifest names the assembly occurrence and not the parts inside it.
     # That occurrence node carries no shape of its own, so an import that
-    # builds collections rather than empties gives it no object to match —
+    # builds collections rather than empties gives it no object to match:
     # it is a COLLECTION, and the body it stands for is every part below it.
     #
     # Deepest first: the manifest nests components inside one another (live
@@ -956,9 +956,9 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             _norm_path(comp.step_occurrence_path), []).append(cid)
 
     # One bucket per set of occurrences that have to be told apart. Normally
-    # the occurrence path names them; where the STEP file carried no product
-    # names it does not — every component of live corpus 07 flexible-sub2
-    # reads "flexible-sub2/ " — and the occurrence's own name, which the
+    # the occurrence path names them. Where the STEP file carried no product
+    # names it does not: every component of live corpus 07 flexible-sub2
+    # reads "flexible-sub2/ ", and the occurrence's own name, which the
     # collection still carries, is the only join left.
     buckets = []
     for path in by_collection_path:
@@ -1011,13 +1011,13 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         # file stores a product's internal arrangement once, so applying an
         # occurrence's true frame in reverse always gives that same
         # arrangement. Take the pairing whose layouts all agree, and position
-        # only decides between pairings that are equally consistent — which
+        # only decides between pairings that are equally consistent, which
         # happens whenever the occurrences are related by a symmetry, and is
         # exactly where position is decisive.
         #
         # Position alone would swap a pair as soon as the offset between an
         # occurrence's origin and its parts grew past half the spacing
-        # between two of them; layout does not care where anything is.
+        # between two of them. Layout does not care where anything is.
         want_at = {}
         layout_of = {}
         for cid in cids:
@@ -1060,7 +1060,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             chosen = min(consistent, key=cost)
         else:
             # Either a single occurrence, or the STEP and the manifest
-            # disagree about the arrangement itself — which is what a
+            # disagree about the arrangement itself, which is what a
             # flexible subassembly inserted more than once does. Position is
             # then all there is, and the report says so.
             order = sorted(bodies,
@@ -1085,8 +1085,8 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             spent.add(col.name)
             # Only a RIGID subassembly is one body. A flexible one is walked,
             # so every part inside it is a component in its own right and
-            # usually in another rigid group; expanding it would claim parts
-            # that belong to those components — and put a moving part in the
+            # usually in another rigid group. Expanding it would claim parts
+            # that belong to those components, and put a moving part in the
             # grounded group when they had not matched yet (live corpus 07
             # flexible-sub1, 2026-08-24). It is still PAIRED, because that is
             # what tells its rigid twin's collection from its own.
@@ -1098,14 +1098,14 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # subassembly occurrences: those are the ones no collection import gives
     # an object of their own. `orphaned` says the scene was built that way,
     # but step 6 now resolves such components, so it stays large for a
-    # perfectly healthy import — a leftover PART (renamed in the STEP, say)
+    # perfectly healthy import: a leftover PART (renamed in the STEP, say)
     # must not draw this.
     stuck_subs = [cid for cid, comp in todo.items()
                   if comp.subassembly_solving is not None]
     if stuck_subs and orphaned:
         report.hint = (
             "%d object(s) name a parent that is not in the scene, so this "
-            "STEP was imported as a collection hierarchy; %d subassembly "
+            "STEP was imported as a collection hierarchy. %d subassembly "
             "occurrence(s) still did not resolve to one. Importing with Tree "
             "hierarchy = \"Parented empties\" gives every subassembly an "
             "object of its own and needs none of this guesswork."
@@ -1122,10 +1122,10 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # RIG_component_id, so it has neither a pre-seed nor a stale-tag path and
     # nothing above can ever take that group back. Group ids are positional:
     # a re-export that drops a component renumbers them, and a surviving tag
-    # then names a DIFFERENT body — parenting reads the raw tag, so the part
+    # then names a DIFFERENT body: parenting reads the raw tag, so the part
     # would silently ride that body's bone. A member this run did not
     # re-claim loses its tags here. Out of the rig is visible and
-    # recoverable; in the wrong rigid group is neither.
+    # recoverable. In the wrong rigid group is neither.
     for obj in pool:
         try:
             was_member = obj.get("RIG_component_of") is not None
@@ -1139,14 +1139,14 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             except (KeyError, TypeError):
                 pass
         print("[SWTB match] stale member tag: %s no longer belongs to a "
-              "matched subassembly body; group tag cleared" % obj.name)
+              "matched subassembly body. Group tag cleared" % obj.name)
 
     report.unclaimed_objects = [o.name for o in pool]
 
-    # Say WHY, per failure — the console line is what turns the next
+    # Say WHY, per failure: the console line is what turns the next
     # "unmatched: c004" report into a one-look diagnosis.
     for cid, names in report.ambiguous:
-        print("[SWTB match] ambiguous: %s (%s) — candidates %s"
+        print("[SWTB match] ambiguous: %s (%s), candidates %s"
               % (cid, comps[cid].step_name, ", ".join(names)))
     for cid in report.unmatched:
         comp = comps[cid]
@@ -1154,7 +1154,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         pred = apply_frame(frame, crows)
         name_hits = [o for o in pool if get_step_key(o).name == comp.step_name]
         if not name_hits:
-            print("[SWTB match] unmatched: %s — no unclaimed object carries "
+            print("[SWTB match] unmatched: %s, no unclaimed object carries "
                   "STEP_name %r" % (cid, comp.step_name))
             continue
         nearest = []
@@ -1164,6 +1164,6 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             nearest.append((d * scene_scale, o.name))
         nearest.sort()
         detail = ", ".join("%s at %.4f m off" % (n, d) for d, n in nearest[:3])
-        print("[SWTB match] unmatched: %s (%s) — same-name candidates rejected "
+        print("[SWTB match] unmatched: %s (%s), same-name candidates rejected "
               "on transform: %s" % (cid, comp.step_name, detail))
     return report

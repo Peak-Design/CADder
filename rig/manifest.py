@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Rig-manifest parsing and validation.
 
-No bpy import — this module runs under plain Python in CI. The shape of the
+No bpy import: this module runs under plain Python in CI. The shape of the
 file is fixed by schema/rig-manifest.schema.json and its meaning by
-schema/SCHEMA.md; this parser accepts unknown extra fields (minor-version
+schema/SCHEMA.md. This parser accepts unknown extra fields (minor-version
 additions) and refuses unknown major versions.
 
 Limits are stored as the file carries them (absolute mate values plus
@@ -57,7 +57,7 @@ class Coupling:
     mirror_plane_point: Optional[Vec3] = None
     mirror_plane_normal: Optional[Vec3] = None
     # mirror only: how much of the pose is reflected. "plane" is a symmetric
-    # MATE between planar faces — a plane-to-plane relation, so only the
+    # MATE between planar faces: a plane-to-plane relation, so only the
     # translation along the normal and the two tilts follow. "rigid" is an
     # assembly MIRROR FEATURE, where the instance is a full reflection of its
     # source and every channel follows.
@@ -126,7 +126,7 @@ class Loop:
     # of the cut hang off their own pins and aim at each other, because no
     # rotational solver can lengthen a slide. "none" means the exporter cut
     # the loop so that the TREE already carries the motion, and solving it
-    # would move a body the mates never let move. Absent means "ik" — that is
+    # would move a body the mates never let move. Absent means "ik", that is
     # what every manifest written before the field meant.
     closure_kind: str = "ik"
 

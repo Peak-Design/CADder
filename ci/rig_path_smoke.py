@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Headless smoke for the two joints that carry their own geometry — path
+"""Headless smoke for the two joints that carry their own geometry: path
 (SW-To-Blender corpus 17) and surface. Both work the same way: the manifest's
 shape becomes a hidden mesh parented to the parent bone, the child bone
 carries a nearest-surface Shrinkwrap targeting it, a dragged bone lands ON
-that shape, and — the regression that cost a live round (2026-08-23) — a
+that shape, and, in the regression that cost a live round (2026-08-23), a
 bone RESTING on it must not move at all, which Clamp To violated by 26 mm
 because it maps one location axis into curve parameter instead of finding
 the nearest point.
@@ -53,7 +53,7 @@ MANIFEST = {
     ],
     "joints": [
         # The rest point is the midpoint of the first segment lifted 60 um
-        # off the chord — a real mate vertex sits on the CURVE, so it misses
+        # off the chord: a real mate vertex sits on the CURVE, so it misses
         # the sampled polyline by the sagitta.
         {"id": "j001", "type": "path", "parent_group": "g000",
          "child_group": "g001", "origin": [0.015, 0.005, 0.02006],
@@ -121,7 +121,7 @@ def main():
         "dragged bone left the path (%.4f off)" % off_path(dragged)
     assert (dragged - rest).length > 0.01, "the drag did not move the bone"
 
-    print("rig_path_smoke: OK — resting bone held to %.7f m, dragged bone "
+    print("rig_path_smoke: OK: resting bone held to %.7f m, dragged bone "
           "%.7f m off the path" % (drift, off_path(dragged)))
 
 
@@ -217,7 +217,7 @@ def surface_main():
     assert worst < sag, \
         "dragged bone left the torus by %.6f m (sagitta %.6f)" % (worst, sag)
 
-    print("rig_path_smoke: OK — surface joint on a %d-triangle torus, rest "
+    print("rig_path_smoke: OK: surface joint on a %d-triangle torus, rest "
           "held to %.7f m, dragged %.7f m off the face (sagitta %.7f)"
           % (len(tris), drift, worst, sag))
 

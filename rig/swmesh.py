@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Reader for .swmesh — the geometry the SolidWorks add-in tessellates and
+"""Reader for .swmesh: the geometry the SolidWorks add-in tessellates and
 sends directly, instead of writing a STEP file for OpenCASCADE to re-read.
 
 Deliberately dependency-free and bpy-free: the parse is pure Python and
@@ -7,7 +7,7 @@ testable on its own, and native_import.py turns the result into objects.
 
 The layout is little-endian throughout and is written by
 Core/MeshWriter.cs. Bulk arrays are read with array.array, which is a
-memcpy when the byte order already matches — the point of a binary format
+memcpy when the byte order already matches: the point of a binary format
 in the first place.
 
   header      magic 'SWMH', version, flags, tolerance, three counts
@@ -16,8 +16,8 @@ in the first place.
               one material index per triangle
   instances   definition id, component id, name, 4x4 row-major transform
 
-A definition is a part tessellated once; an instance is one placement of
-it. The component id is the same one the rig manifest uses — that is what
+A definition is a part tessellated once. An instance is one placement of
+it. The component id is the same one the rig manifest uses, that is what
 ties the two files together, and why nothing here has to be matched up by
 name or position afterwards.
 """
@@ -131,7 +131,7 @@ class _Reader:
 
 
 def parse(data) -> Scene:
-    """Parses a .swmesh image. Raises SwMeshError on anything unreadable —
+    """Parses a .swmesh image. Raises SwMeshError on anything unreadable:
     a half-built scene is worse than none, because the half that is missing
     is invisible."""
     r = _Reader(data)

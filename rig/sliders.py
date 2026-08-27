@@ -9,8 +9,8 @@ this way by hand (Oscar, 2026-08-24).
 
 Two tracks pointing at each other would be a dependency cycle, so each half
 tracks a DUPLICATE bone carrying the other's pivot, parented to the other's
-PARENT rather than to the other half. Those parents — the posed clamp and the
-ground — are aimed at nothing, so the graph stays acyclic.
+PARENT rather than to the other half. Those parents: the posed clamp and the
+ground: are aimed at nothing, so the graph stays acyclic.
 
 The bones rest with local +Y already along the ram (graph.BonePlan.aim_at,
 applied by rig_build._bone_rest_matrix), which is what makes TRACK_Y the
@@ -18,14 +18,14 @@ right axis and what makes the rig look like the machine.
 
 WHICH track. A Damped Track aims +Y and leaves every other rotation free, but
 a ram half hangs on a PIN: the only turn it can make is about that pin. A
-Locked Track says exactly that — turn about the locked axis until +Y comes as
-near the target as it can — so it is used whenever the half's mount names an
+Locked Track says exactly that: turn about the locked axis until +Y comes as
+near the target as it can, so it is used whenever the half's mount names an
 axis. rig_build rests these bones with local Z on the pin exactly, which is
 what LOCK_Z then means. Damped Track remains the fallback for a mount with no
 axis of its own (a ball, a free pair), where nothing is known to lock.
 
 Without the lock the ram is free to roll about its own length and to swing out
-of the plane its pin allows; live ClampRig (2026-08-24) showed the
+of the plane its pin allows. Live ClampRig (2026-08-24) showed the
 second of those as a rod meeting its bore at an angle.
 """
 
@@ -38,7 +38,7 @@ _TRACK_NAME = "SWTB Aim "
 
 
 def _pinned(plan, gid):
-    """Whether this half hangs on a mount with an axis of its own — the case
+    """Whether this half hangs on a mount with an axis of its own: the case
     rig_build rests with local Z ON that axis, so LOCK_Z is the pin."""
     bp = getattr(plan, "bone_by_group", {}).get(gid)
     if bp is None or bp.joint is None or bp.joint.axis is None:
@@ -94,7 +94,7 @@ def close_sliders(arm_obj, plan, bone_names, aim_names):
             con.name = _TRACK_NAME + splan.loop.id
             con.target = arm_obj
             con.subtarget = target
-            # The target bone's HEAD is the pivot; head_tail 0 is the default
+            # The target bone's HEAD is the pivot. head_tail 0 is the default
             # but it is the whole geometry of this closure, so it is stated.
             con.head_tail = 0.0
             con.track_axis = "TRACK_Y"

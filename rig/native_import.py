@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Builds Blender objects from a .swmesh — the direct link.
+"""Builds Blender objects from a .swmesh: the direct link.
 
 The STEP path asks OpenCASCADE to rebuild a solid model from a neutral
 file and then has to work out, afterwards, which imported object is which
@@ -11,7 +11,7 @@ Two consequences worth stating, because they are what the path buys:
 
   * A definition becomes ONE Blender mesh datablock and every occurrence
     of it becomes an object sharing that datablock. A part used two
-    hundred times costs two hundred objects and one mesh — that is real
+    hundred times costs two hundred objects and one mesh, that is real
     Blender instancing, not a copy.
   * Because the component ids come with the geometry, the match report
     this returns is exact by construction. The rig, pose sync and relink
@@ -19,7 +19,7 @@ Two consequences worth stating, because they are what the path buys:
 
 What it does NOT buy is a solid model. These are triangles at the
 tolerance the add-in was asked for, so a part that needs to be smoother
-has to be asked for again — which is what the quality round trip is for.
+has to be asked for again, which is what the quality round trip is for.
 """
 
 import bpy
@@ -29,7 +29,7 @@ from . import matching, swmesh
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
-# with it made every part invisible to the re-link stage — they arrived in
+# with it made every part invisible to the re-link stage: they arrived in
 # the right place and were never attached to a bone.
 _TAG_COMPONENT = "RIG_component_id"
 _TAG_GROUP = "RIG_group"
@@ -63,7 +63,7 @@ def _material(spec, name_prefix):
 
 def _build_mesh(definition, materials, unit_scale):
     """One mesh datablock from one definition. foreach_set moves the whole
-    buffer in one call — looping in Python over a hundred thousand vertices
+    buffer in one call: looping in Python over a hundred thousand vertices
     is the difference between instant and unusable."""
     me = bpy.data.meshes.new(definition.name or "SWMesh")
     me.vertices.add(definition.vertex_count)
@@ -128,7 +128,7 @@ def _matrix(transform, unit_scale):
 
 def remove_previous(collection_name):
     """Clears a previous native import so a re-send replaces rather than
-    accumulates. Meshes go too — an orphaned datablock of a million
+    accumulates. Meshes go too: an orphaned datablock of a million
     triangles is invisible in the outliner and very much present in the
     file."""
     removed = 0
@@ -164,7 +164,7 @@ def build(context, path, manifest=None, collection_name="SW_Native",
 
     The report is what ties this into the existing pipeline: every entry is
     exact, so pose sync, the rig build and relink behave as though matching
-    had run and got everything right — which, here, it has. The manifest is
+    had run and got everything right, which, here, it has. The manifest is
     needed for one thing only: the component-to-group map that re-linking
     attaches by."""
     scene = swmesh.load(path)
@@ -210,7 +210,7 @@ def build(context, path, manifest=None, collection_name="SW_Native",
 def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     """Swaps in finer geometry for objects that are already in the scene.
 
-    The objects themselves are kept — only their mesh DATA is replaced — so
+    The objects themselves are kept (only their mesh DATA is replaced), so
     transforms, bone parenting, constraints and the rig survive untouched.
     That is the whole point: refining a part must not cost the pose it is
     in, or the round trip would be useless for exactly the assemblies it is

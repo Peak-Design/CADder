@@ -3,7 +3,7 @@
 geometry and swapping it in.
 
 SolidWorks is stood in for by a small HTTP server that speaks the same
-protocol — discovery file, token header, a .swmesh path in the reply — so
+protocol (discovery file, token header, a .swmesh path in the reply), so
 the whole Blender half is exercised for real: the client, the operator,
 and the in-place mesh swap. The one thing it cannot test is the
 tessellation itself, which needs SolidWorks.
@@ -41,7 +41,7 @@ def _text(s):
 
 
 def write_mesh(path, triangles, tolerance):
-    """A fan of `triangles` triangles — the count is how the test tells the
+    """A fan of `triangles` triangles: the count is how the test tells the
     coarse mesh from the refined one."""
     n = triangles + 2
     verts = []
@@ -115,7 +115,7 @@ def main():
     # A PRIVATE registry directory for the duration. Pointing at the real
     # one would let discovery find a SolidWorks that is genuinely running
     # on this machine, and the test would then quietly measure that
-    # instead — which is exactly what happened the first time.
+    # instead, which is exactly what happened the first time.
     real_registry = sw_link._REGISTRY
     sw_link._REGISTRY = os.path.join(tempfile.gettempdir(), "swtb-smoke-registry")
     os.makedirs(sw_link._REGISTRY, exist_ok=True)
@@ -184,7 +184,7 @@ def main():
             "the coarse mesh was left behind"
         assert len(bpy.data.meshes) == meshes_before
 
-        print("refine_smoke: OK — %d -> %d triangles, object kept its bone "
+        print("refine_smoke: OK: %d -> %d triangles, object kept its bone "
               "parent and world pose" % (COARSE_TRIS, FINE_TRIS))
     finally:
         server.shutdown()

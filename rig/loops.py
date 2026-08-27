@@ -2,12 +2,12 @@
 """Loop closures: IK from an effector on the driven tip to a helper on the
 driver side.
 
-The manifest's loop list is authoritative — the exporter already chose the
+The manifest's loop list is authoritative: the exporter already chose the
 cut edge and this module never re-derives cycles. Two hidden bones per loop
 (created in rig_build's single edit session, in the SW_helpers collection)
 meet at the closure point: the helper's HEAD sits on it riding the
-driver-side bone, so posing the driver drags the IK target; the effector's
-TAIL sits on it riding the driven tip, and owns the IK constraint — the
+driver-side bone, so posing the driver drags the IK target. The effector's
+TAIL sits on it riding the driven tip, and owns the IK constraint: the
 solver rotates the driven chain until that tail lands on the helper. Aiming
 IK at the tip bone's own tail instead left the four-bar dead (live corpus
 06): bones point along the hinge axes, so a tip tail sits off the closure
@@ -46,13 +46,13 @@ def _configure_chain_bone(pb, joint, planar_loop):
 
     if jtype in ("revolute", "cylindrical", "planar", "pin_slot"):
         # IK only rotates, so a pin_slot in a chain contributes its spin and
-        # holds its slide at rest — same shape as the others here.
+        # holds its slide at rest: same shape as the others here.
         pb.lock_ik_x = True
         pb.lock_ik_z = True
         if joint.rotation_limit is not None:
             _set_ik_y_limit(pb, joint.rotation_limit)
     elif jtype in ("prismatic", "screw"):
-        # Blender IK only rotates; a sliding joint inside a chain cannot be
+        # Blender IK only rotates. A sliding joint inside a chain cannot be
         # solved, so the bone is held rigid rather than allowed to rotate in
         # a way the joint never could.
         pb.lock_ik_x = True
@@ -79,7 +79,7 @@ def _configure_chain_bone(pb, joint, planar_loop):
 
     if planar_loop:
         # Off-plane swing lets the solver branch-flip out of the mechanism
-        # plane; with joint axes normal to the plane, X and Z are off-plane.
+        # plane. With joint axes normal to the plane, X and Z are off-plane.
         pb.lock_ik_x = True
         pb.lock_ik_z = True
 
@@ -115,11 +115,11 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names):
         con.subtarget = helper
         # use_tail stays ON: the effector's tail IS the closure point
         # (rig_build placed it there). Turning it off would re-target the
-        # owner's parent's tail — Blender's use_tail=False is only "use the
-        # head" for connected bones — and walk the chain one bone too far,
+        # owner's parent's tail: Blender's use_tail=False is only "use the
+        # head" for connected bones, and walk the chain one bone too far,
         # recruiting the mechanism root into a depsgraph cycle.
         con.use_tail = True
-        # The effector plus exactly the driven chain — one bone more would
+        # The effector plus exactly the driven chain: one bone more would
         # recruit the common ancestor and bend the driver side too.
         con.chain_count = lplan.chain_count + 1
         con.use_stretch = False

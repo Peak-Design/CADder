@@ -109,7 +109,7 @@ def four_bar_manifest():
 
 
 def ram_manifest(closure_kind="aim_pair"):
-    """A hydraulic ram working a clamp — the shape live ClampRig has
+    """A hydraulic ram working a clamp: the shape live ClampRig has
     twice over. Down the pin axis: the clamp pivots at the origin, the ram's
     bore at (1,0,0) and the rod's pin at (0,1,0), so the ram is sqrt(2) long
     and the corner at the clamp pivot is square."""

@@ -150,7 +150,7 @@ class NormalsTest(unittest.TestCase):
     difference between a solid bar and one you can see straight through."""
 
     def test_a_closed_widget_faces_outward(self):
-        # Not "away from the centre" — an annulus's inner wall faces its own
+        # Not "away from the center": an annulus's inner wall faces its own
         # axis, which IS outward for that solid. The test that holds for any
         # shape is that the mesh closes up and encloses a positive volume.
         cases = {
@@ -169,7 +169,7 @@ class NormalsTest(unittest.TestCase):
             bad, lonely = edge_pairing(faces)
             self.assertFalse(bad, "%s: %d edge(s) used twice the same way"
                              % (name, len(bad)))
-            self.assertFalse(lonely, "%s: %d edge(s) with no facing pair — "
+            self.assertFalse(lonely, "%s: %d edge(s) with no facing pair. "
                              "the mesh is not closed" % (name, len(lonely)))
             self.assertGreater(enclosed_volume(verts, faces), 0.0,
                                "%s: wound inside out" % name)
@@ -208,7 +208,7 @@ class SlideLengthTest(unittest.TestCase):
             low, high = bounds(geom[0], 1)
             self.assertAlmostEqual(1.0, high - low, places=9, msg=name)
             self.assertAlmostEqual(0.0, high + low, places=9,
-                                   msg=name + " is not centred on its origin")
+                                   msg=name + " is not centered on its origin")
 
 
 class RevoluteDialTest(unittest.TestCase):
@@ -241,7 +241,7 @@ class RevoluteDialTest(unittest.TestCase):
             self.assertTrue(on_rest, "%d segments: nothing at t=0" % segments)
 
     def test_the_ring_is_centred_on_the_widget_origin(self):
-        # The bone's head is drawn at the widget's origin, so a ring centred
+        # The bone's head is drawn at the widget's origin, so a ring centered
         # anywhere else would ORBIT the joint instead of turning about it.
         # The pointer is deliberately not part of this: it is a mark on the
         # rim, and the rim is what has to be concentric.
@@ -274,15 +274,15 @@ class LimitArcTest(unittest.TestCase):
     def test_the_arc_spans_exactly_the_limit(self):
         lo, hi = -0.4, 1.2
         verts, _edges, _faces = shapes.limit_arc(lo, hi, radius=1.0, width=0.09)
-        # The inner rim belongs to the band alone — the rest rib stands off
-        # the outer one — so it says where the band starts and stops.
+        # The inner rim belongs to the band alone: the rest rib stands off
+        # the outer one, so it says where the band starts and stops.
         angles = [angle_of(v) for v in at_radius(verts, 1.0 - 0.09)]
         self.assertAlmostEqual(lo, min(angles), places=6)
         self.assertAlmostEqual(hi, max(angles), places=6)
 
     def test_the_band_is_all_there_is(self):
         # Live ClampRig: a clamp runs [-0.0014, +1.5665]. Nothing may stand off
-        # the band — an end mark reads as a stray box stuck to the arc.
+        # the band: an end mark reads as a stray box stuck to the arc.
         w = 0.1125
         verts, _edges, _faces = shapes.limit_arc(-0.0014, 1.5665, radius=1.0,
                                                  width=w)
@@ -340,7 +340,7 @@ class StrokeBarTest(unittest.TestCase):
 
 
 class SlideShapeTest(unittest.TestCase):
-    """A round section may spin about the axis it slides along; a square one
+    """A round section may spin about the axis it slides along. A square one
     may not. That is the whole distinction being drawn."""
 
     def test_a_cylinder_is_round_and_a_cuboid_is_not(self):

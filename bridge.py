@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """SW ⇄ Blender bridge: a localhost HTTP endpoint the SolidWorks add-in
-drives directly — export in SW, geometry + rig appear in Blender with no
+drives directly: export in SW, geometry + rig appear in Blender with no
 file dialogs in between.
 
 Threading contract: the HTTP server lives on a daemon thread and NEVER
-touches bpy. It enqueues jobs; a bpy.app.timers pump executes them on the
+touches bpy. It enqueues jobs. A bpy.app.timers pump executes them on the
 main thread and signals the waiting handler, which then writes the HTTP
 response. Everything bpy happens on the main thread, always.
 
@@ -12,14 +12,14 @@ Discovery: on start the server binds 127.0.0.1 on an ephemeral port and
 writes %LOCALAPPDATA%/PeakDesign/SwToBlender/bridge/<pid>.json with the
 port and a random token. The SolidWorks side lists that directory, pings
 each entry, and prunes the corpses. Every request must carry the token in
-X-SWTB-Token — the file is user-readable only, so possession proves the
+X-SWTB-Token: the file is user-readable only, so possession proves the
 caller is the same desktop user.
 
 Endpoints:
   GET  /swtb/ping    -> instance info (fast, main thread not involved)
   POST /swtb/import  -> full pipeline job, synchronous (import STEP, load
                         manifest, match, snap poses, build rig, parent,
-                        tidy leftovers — each stage optional)
+                        tidy leftovers: each stage optional)
 """
 
 import atexit
@@ -88,7 +88,7 @@ def _instance_info() -> dict:
     if bpy is not None:
         info["blender_version"] = ".".join(str(v) for v in bpy.app.version)
         # During addon registration bpy.data is a _RestrictData without
-        # .filepath; the ping recomputes this later with full access.
+        # .filepath. The ping recomputes this later with full access.
         try:
             info["blend_file"] = bpy.data.filepath or ""
         except AttributeError:
@@ -104,7 +104,7 @@ class _Job:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # Default handler logs every request to stderr; one line per poll would
+    # Default handler logs every request to stderr. One line per poll would
     # drown the console.
     def log_message(self, fmt, *args):
         pass
@@ -112,7 +112,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _reply(self, code, body: dict):
         data = json.dumps(body).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", "application/json. charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         try:
@@ -149,7 +149,7 @@ class _Handler(BaseHTTPRequestHandler):
         _state["queue"].put(job)
         if not job.done.wait(_JOB_TIMEOUT_S):
             self._reply(504, {"ok": False,
-                              "error": "job timed out after %ds; Blender may "
+                              "error": "job timed out after %ds. Blender may "
                                        "still be working" % _JOB_TIMEOUT_S})
             return
         self._reply(200 if job.result.get("ok") else 500, job.result)
@@ -158,7 +158,7 @@ class _Handler(BaseHTTPRequestHandler):
 # ── Main-thread job execution ───────────────────────────────────────────
 
 def _ops_context():
-    """bpy.ops inside a timer callback sees a window-less context; borrow
+    """bpy.ops inside a timer callback sees a window-less context. Borrow
     the first real window so operator poll()/report() behave."""
     wm = bpy.context.window_manager
     win = wm.windows[0] if wm.windows else None
@@ -170,7 +170,7 @@ def _ops_context():
 def _remove_previous_import(step_path: str, stages: dict):
     """Re-sending the same assembly must REPLACE the last send, not stack a
     copy next to it: leftover objects carry stale RIG_* tags that hijack
-    matching and the frame vote (found live 2026-08-23 — six re-sends of one
+    matching and the frame vote (found live 2026-08-23: six re-sends of one
     hinge left the rig built against a previous send's rotated leaf).
     Removes every object imported from this STEP file, the import
     collections it left behind, and the importer's cache entry for it."""
@@ -193,7 +193,7 @@ def _remove_previous_import(step_path: str, stages: dict):
         except ReferenceError:
             continue
     # Import collections ("<name>.flat/.hierarchy/.components" and their
-    # per-part children) die once emptied — bottom-up, and never a
+    # per-part children) die once emptied: bottom-up, and never a
     # collection that still holds anything.
     stem = os.path.splitext(want_base)[0]
 
@@ -226,7 +226,7 @@ def _remove_previous_import(step_path: str, stages: dict):
 
 
 def _cleanup_leftover_empties(stages: dict):
-    """After relink the matched parts hang from the rig; the import's
+    """After relink the matched parts hang from the rig. The import's
     occurrence empties are dead weight. Childless STEP empties are removed
     repeatedly until stable (parents become childless as leaves go)."""
     removed = 0
@@ -256,8 +256,8 @@ def _cleanup_leftover_empties(stages: dict):
 def _leave_object_modes():
     """Every object out of pose/edit sculpt/etc. before the job touches the
     scene. context.mode reports only the ACTIVE object's mode, and object
-    mode is per-object since 2.8 — live hang (2026-08-23): a send while the
-    previous rig's armature sat in Pose mode; the import re-pointed the
+    mode is per-object since 2.8. Live hang (2026-08-23): a send while the
+    previous rig's armature sat in Pose mode. The import re-pointed the
     active object so every context.mode guard read OBJECT, and the rig
     rebuild then deleted the armature that still owned the session's pose
     state, freezing Blender. So the sweep reads each object's own mode.
@@ -326,7 +326,7 @@ def _run_job(payload: dict) -> dict:
                                          m.step_file)
 
         # The DIRECT link. Geometry the add-in tessellated itself, already
-        # tagged with the component ids the manifest uses — so it replaces
+        # tagged with the component ids the manifest uses, so it replaces
         # both the STEP import and the matching pass that follows it, and
         # the report it hands back is exact rather than inferred.
         if mesh_path:
@@ -363,7 +363,7 @@ def _run_job(payload: dict) -> dict:
                 log.append("ignored import options: %s" % ", ".join(ignored))
             kwargs.setdefault("up_as", "ZPOS")
             kwargs.setdefault("fw_as", "YPOS")
-            # override_file forces the synchronous path — the background
+            # override_file forces the synchronous path: the background
             # worker returns FINISHED before geometry exists, and every
             # stage after this one would run against an empty scene.
             result = bpy.ops.import_scene.occ_import_step(
@@ -388,7 +388,7 @@ def _run_job(payload: dict) -> dict:
             }
 
         # A skipped earlier stage can fail a later operator's poll(), and a
-        # failed poll RAISES instead of returning CANCELLED — every optional
+        # failed poll RAISES instead of returning CANCELLED: every optional
         # stage below runs only when its precondition actually holds.
         if have_manifest and want("sync_poses") \
                 and rig_ui._STATE.get("match_report") is not None:
@@ -435,7 +435,7 @@ def _run_job(payload: dict) -> dict:
     ok = True
     match = stages.get("match")
     if match and (match["unmatched"] or match["ambiguous"]):
-        log.append("some components did not match — see the SW To Blender "
+        log.append("some components did not match: see the SW To Blender "
                    "panel in Blender")
     return {"ok": ok, "stages": stages, "log": log}
 
@@ -451,7 +451,7 @@ def _pump():
         return _PUMP_INTERVAL_S
     # BaseException, and the hand-off in a finally: a single escaped
     # exception would unregister the timer while the HTTP server keeps
-    # listening — a bridge that looks alive but stalls every send for the
+    # listening, leaving a bridge that looks alive but stalls every send for the
     # full 30-minute timeout, surviving until Blender restarts.
     try:
         job.result = _run_job(job.payload)
@@ -505,7 +505,7 @@ def start():
     if _state["server"] is not None or bpy is None:
         return
     if bpy.app.background:
-        # A -b session has no timer-pumping event loop; the smoke test
+        # A -b session has no timer-pumping event loop. The smoke test
         # pumps by hand instead of starting the timer.
         pass
     _state["token"] = secrets.token_hex(16)
@@ -518,7 +518,7 @@ def start():
                               name="swtb-bridge", daemon=True)
     thread.start()
     _state["thread"] = thread
-    # The pump comes up before anything that can fail — a bridge that
+    # The pump comes up before anything that can fail: a bridge that
     # listens but never executes its jobs is worse than no bridge.
     if not bpy.app.background and not _state["timer_running"]:
         bpy.app.timers.register(_pump, first_interval=_PUMP_INTERVAL_S,

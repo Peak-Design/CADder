@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene-frame estimation tests: a STEP import with another up axis rotates
-the geometry; matching must detect that frame from its own matches and the
+the geometry. Matching must detect that frame from its own matches and the
 rig must be built through it. Found live 2026-08-22: a Y-up STEPper import
 left the rig lying in the manifest's Z-up frame, nowhere near the parts.
 
-No bpy — matching.py degrades to plain Python and the fake objects below
+No bpy: matching.py degrades to plain Python and the fake objects below
 provide the tiny surface it reads (get/keys/type/name/matrix_world)."""
 
 import math
@@ -101,7 +101,7 @@ def two_part_manifest(with_paths=True):
 
 
 def duplicate_name_manifest():
-    """Two components that share one step_name, no occurrence paths — the
+    """Two components that share one step_name, no occurrence paths: the
     scene where neither path anchors nor unique-name anchors exist."""
     def comp(cid, transform):
         return {
@@ -180,7 +180,7 @@ class TestFrameEstimation(unittest.TestCase):
 
     def test_rotated_translated_scene_without_paths_uses_name_anchors(self):
         # The exporter's occurrence matcher refused (paths null), so no
-        # path anchors exist — uniquely-named components must anchor the
+        # path anchors exist: uniquely-named components must anchor the
         # FULL frame. Rotation AND translation: the old candidate loop knew
         # only zero-translation up-axis swaps, so a Y-up import dropped at
         # the 3D cursor could never be found (live 2026-08-22).
@@ -195,7 +195,7 @@ class TestFrameEstimation(unittest.TestCase):
 
     def test_cursor_offset_import_is_carried_in_the_frame(self):
         # STEPper places imports at the 3D cursor (main.py transform_to_up
-        # bakes the offset into matrix_world); the frame must carry that
+        # bakes the offset into matrix_world). The frame must carry that
         # translation so the rig lands on the geometry, not at the origin.
         frame = rot_frame([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                           t=(0.3, -0.2, 0.15))
@@ -209,7 +209,7 @@ class TestFrameEstimation(unittest.TestCase):
 
     def test_duplicate_names_fall_back_to_candidate_up_axes(self):
         # Every name duplicated: neither path nor unique-name anchors
-        # exist, so the canonical up-axis conversions compete — transform
+        # exist, so the canonical up-axis conversions compete: transform
         # agreement under the winner is the only thing telling twins apart.
         frame = rot_frame(ROT_X_POS90)
         m = duplicate_name_manifest()

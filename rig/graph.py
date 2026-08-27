@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Joint-graph planning: manifest -> RigPlan.
 
-No bpy import — this module runs under plain Python in CI. Everything that
+No bpy import: this module runs under plain Python in CI. Everything that
 can make the generated rig wrong is decided and validated here, before a
 single Blender datablock exists. A muted or zero-influence constraint still
 counts as a depsgraph dependency in Blender, so a dependency cycle found
@@ -18,8 +18,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from .manifest import Joint, Loop, Manifest, ManifestError, RigidGroup
 
-# Blender truncates datablock names at 63 bytes and dedups with ".001";
-# names are display labels only, so plans keep them short and every module
+# Blender truncates datablock names at 63 bytes and dedups with ".001". Names are display labels only, so plans keep them short and every module
 # addresses bones through the RigPlan / build maps, never by parsing names.
 _MAX_NAME = 55
 
@@ -28,10 +27,10 @@ _MAX_NAME = 55
 class CollapsedContact:
     """A carrier chain folded into ONE posable bone. The exporter decomposes
     a tangent/contact mate into carrier joint + spin joint through a
-    component-less group; posing that chain means driving the CARRIER, which
+    component-less group. Posing that chain means driving the CARRIER, which
     nobody thinks in ("rotate the helper to slide the puck"). The collapse
-    gives the child bone the chain's combined freedom directly — locks in a
-    contact-aligned frame, plus a Limit Distance for orbit contacts — so the
+    gives the child bone the chain's combined freedom directly: locks in a
+    contact-aligned frame, plus a Limit Distance for orbit contacts, so the
     puck is grabbed and moved like in SolidWorks (Oscar's ask, 2026-08-23).
 
     kinds: planar_spin (cylinder on plane: slide in plane, yaw about the
@@ -39,7 +38,7 @@ class CollapsedContact:
     the base at the tangency radius, spin free), planar_ball (sphere/vertex
     on plane), slide_ball (vertex on line), cone_spin (cone tangent on a
     plane: like planar_spin but the spin axis is TILTED out of the plane by
-    the cone's half-angle, so channel locks cannot hold it — the ball
+    the cone's half-angle, so channel locks cannot hold it: the ball
     template's chord clamp pins the axis to its fixed-tilt ring instead,
     live corpus 15 cone3, 2026-08-23)."""
     kind: str
@@ -69,7 +68,7 @@ class BonePlan:
     # assembly origin. A grounded group's own frame is whichever member the
     # exporter happened to anchor it to (live 2026-08-23: the flexible-sub
     # "baseplate" bone landed on the hinge), and static geometry needs no
-    # per-group placement — the origin is the WYSIWYG spot.
+    # per-group placement: the origin is the WYSIWYG spot.
     root: bool = False
     # Swing-cone ball template (joint.axis = cone axis, secondary = the
     # child direction the limit band constrains): bone_name is the user
@@ -83,7 +82,7 @@ class BonePlan:
     ball_goal_name: str = ""
     # Mirror pairs (coupling kind "mirror"): BOTH bones of the pair rest
     # with the SAME plane-aligned orientation (local +Y = this normal) at
-    # their own positions — equal rest axes reduce the reflection to
+    # their own positions: equal rest axes reduce the reflection to
     # per-channel sign flips, which is what makes the six drivers exact.
     mirror_normal: Optional[List[float]] = None
     # Half of a slider-crank aim pair: the point in the OTHER half's frame
@@ -99,8 +98,8 @@ class LoopPlan:
     closure_joint: Joint
     helper_name: str
     # The helper bone rides the driver-side chain so the closure point moves
-    # with the posed side; the IK chain on the driven side follows it. The
-    # effector bone is the same closure point rigid on the driven tip — the
+    # with the posed side. The IK chain on the driven side follows it. The
+    # effector bone is the same closure point rigid on the driven tip: the
     # IK constraint lives on it because the tip bone's own tail is NOT the
     # closure point (live corpus 06: bones point along the hinge axes, so
     # tails cannot even move in the mechanism plane and the solve went dead).
@@ -116,7 +115,7 @@ class LoopPlan:
 class SliderPlan:
     """A loop closed by an AIM PAIR rather than IK.
 
-    A slider-crank — a hydraulic ram working a clamp — has no rotational
+    A slider-crank (a hydraulic ram working a clamp) has no rotational
     solve: Blender's IK only rotates, so a sliding joint inside a chain can
     only be locked, and the mechanism freezes. The exporter therefore cuts
     the loop AT the slide, and the two bodies either side of it each hang off
@@ -125,7 +124,7 @@ class SliderPlan:
     Which is how a ram is rigged by hand (Oscar, 2026-08-24): the rod parents
     to the clamp at the rod pin, the barrel to the body at the bore pivot,
     and each gets a Damped Track at the other. Blender will not take that
-    directly — the two constraints depend on each other — so each aims at a
+    directly (the two constraints depend on each other), so each aims at a
     DUPLICATE bone carrying the other's pivot, parented to the other's PARENT
     instead of to the other. Those parents are the posed clamp and the ground,
     neither of which is aimed at anything, so the graph stays acyclic.
@@ -238,9 +237,9 @@ def _unit(a):
 def swing_cone(joint: Optional[Joint]) -> bool:
     """A ball whose limit is a swing cone about a mate-defined axis. The
     exporter ships the cone frame in axis (parent-fixed cone axis, sign
-    meaningful — it says which way the cone opens) and secondary_axis (the
+    meaningful: it says which way the cone opens) and secondary_axis (the
     child-fixed direction the [min, max] band constrains). A limited ball
-    WITHOUT an axis is a legacy manifest; it falls back to the Euler box."""
+    WITHOUT an axis is a legacy manifest. It falls back to the Euler box."""
     return (joint is not None and joint.type == "ball"
             and joint.axis is not None and joint.secondary_axis is not None
             and joint.rotation_limit is not None)
@@ -257,9 +256,9 @@ _COLLAPSE_KINDS = {
 def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedContact]:
     """Folds P -> carrier -> K chains into P -> K where the carrier is a
     component-less contact link matching a known pattern. Mutates parent_of
-    and joint_group; returns child group id -> collapse spec. Anything with
+    and joint_group. Returns child group id -> collapse spec. Anything with
     limits, couplings, loop membership, or geometry the patterns cannot
-    absorb keeps its carrier bone — correct beats convenient."""
+    absorb keeps its carrier bone: correct beats convenient."""
     children_of = {}
     for child, (parent, _) in parent_of.items():
         children_of.setdefault(parent, []).append(child)
@@ -322,11 +321,11 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
             radial = _v_sub(d, [n[0] * along, n[1] * along, n[2] * along])
             radius = _v_norm(radial)
             if radius < 1e-6:
-                continue   # concentric, not tangent — not this pattern
+                continue   # concentric, not tangent, not this pattern
             # The Limit Distance target must sit IN the child's orbit plane:
             # the constraint clamps to a SPHERE, and only with zero axial
             # offset does sphere ∩ plane-lock equal the tangency circle at
-            # the radial distance. So the centre is the orbit-axis point at
+            # the radial distance. So the center is the orbit-axis point at
             # the child's height, not the carrier origin itself.
             spec.orbit_center = [j1.origin[0] + n[0] * along,
                                  j1.origin[1] + n[1] * along,
@@ -345,10 +344,10 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
                 #
                 # One bone provably cannot hold this. The motion is
                 # {Rn(yaw) . Ra(spin)} about two axes at the cone's
-                # half-angle to each other; one bone with a channel locked
+                # half-angle to each other. One bone with a channel locked
                 # reaches {Rc . Rb} about two PERPENDICULAR rest axes, and
                 # matching both slices forces b parallel to a and c parallel
-                # to n, hence n perpendicular to a — half-angle zero, which
+                # to n, hence n perpendicular to a: half-angle zero, which
                 # is the cylinder. That is exactly why planar_spin IS exact
                 # and why this cannot be.
                 #
@@ -364,7 +363,7 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
                 #
                 # Declining a collapse is always safe: it is a posing
                 # convenience, never a correctness requirement. The cost is
-                # one extra grabbable bone — which is what the motion has:
+                # one extra grabbable bone, which is what the motion has:
                 # one bone precesses about the vertical, the other spins
                 # about the cone's own axis.
                 continue
@@ -381,7 +380,7 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
 
 
 def _assert_acyclic(edges: Dict[str, Set[str]], labels: Dict[str, str]):
-    """Raises on the first directed cycle. Iterative DFS — assembly trees can
+    """Raises on the first directed cycle. Iterative DFS: assembly trees can
     be deep enough to hit the interpreter recursion limit."""
     state = {}  # node -> 1 while on stack, 2 when finished
     for start in sorted(edges):
@@ -413,7 +412,7 @@ def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
                  parent_of) -> Optional[SliderPlan]:
     """Turns a cut slide into an aim pair, or explains why it cannot.
 
-    Both bodies either side of the slide must hang off a pin of their own —
+    Both bodies either side of the slide must hang off a pin of their own,
     that pin's origin is the point the other half aims at. Without one there
     is nothing to aim from, and the loop falls back to the IK plan."""
     a_gid, c_gid = cj.parent_group, cj.child_group
@@ -421,14 +420,14 @@ def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
         if gid not in parent_of:
             plan.warnings.append(
                 "loop {}: {} has no mount of its own, so the slide cannot be "
-                "closed by aiming; falling back to IK".format(lp.id, gid))
+                "closed by aiming. Falling back to IK".format(lp.id, gid))
             return None
     a_parent, a_joint = parent_of[a_gid]
     c_parent, c_joint = parent_of[c_gid]
     if a_joint.origin is None or c_joint.origin is None:
         plan.warnings.append(
             "loop {}: a mount of the slide has no origin, so there is no "
-            "point to aim at; falling back to IK".format(lp.id))
+            "point to aim at. Falling back to IK".format(lp.id))
         return None
     if a_parent == a_gid or c_parent == c_gid:
         return None
@@ -456,9 +455,9 @@ def build(manifest: Manifest) -> RigPlan:
     for lp in manifest.loops:
         closure_ids.add(lp.closure_joint)
 
-    # Free joints mark under-mated pairs; SCHEMA.md says leave them
+    # Free joints mark under-mated pairs. SCHEMA.md says leave them
     # unparented rather than silently fixing them, so they are not tree
-    # edges — EXCEPT the two halves of a mirror pair: a free joint that
+    # edges, EXCEPT the two halves of a mirror pair: a free joint that
     # carries or drives a mirror coupling is deliberately ground-rooted
     # (the whole relation is the reflection, live corpus 14 sym4,
     # 2026-08-23), so both parent like any tree edge.
@@ -488,11 +487,11 @@ def build(manifest: Manifest) -> RigPlan:
                 "joint {}: parent and child are both {}".format(j.id, j.parent_group))
         if groups[j.child_group].grounded:
             raise ManifestError(
-                "joint {}: child {} is grounded; the exporter's spanning tree "
+                "joint {}: child {} is grounded. The exporter's spanning tree "
                 "roots at grounded groups".format(j.id, j.child_group))
         if j.child_group in parent_of:
             raise ManifestError(
-                "group {} has two tree parents (joints {} and {}); the "
+                "group {} has two tree parents (joints {} and {}). The "
                 "exporter should have cut one as a loop".format(
                     j.child_group, parent_of[j.child_group][1].id, j.id))
         if not forest.union(j.child_group, j.parent_group):
@@ -502,14 +501,14 @@ def build(manifest: Manifest) -> RigPlan:
         parent_of[j.child_group] = (j.parent_group, j)
         plan.joint_group[j.id] = j.child_group
 
-    # Loop verification: a closure joint must be a genuine non-tree edge —
-    # its endpoints already connected through the tree — and the tree path
+    # Loop verification: a closure joint must be a genuine non-tree edge,
+    # its endpoints already connected through the tree, and the tree path
     # between them plus the closure must be exactly the declared members.
     for lp in manifest.loops:
         cj = joints[lp.closure_joint]
         if forest.find(cj.parent_group) != forest.find(cj.child_group):
             raise ManifestError(
-                "loop {}: closure joint {} bridges two disconnected trees — "
+                "loop {}: closure joint {} bridges two disconnected trees: "
                 "it is a tree edge, not a loop closure".format(lp.id, cj.id))
         split = _branches(parent_of, cj.parent_group, cj.child_group)
         if split is None:
@@ -524,7 +523,7 @@ def build(manifest: Manifest) -> RigPlan:
                 "closure {}".format(lp.id, sorted(lp.member_joints), sorted(path_ids)))
 
         if lp.closure_kind == "none":
-            # The exporter cut this loop so the TREE carries the motion — two
+            # The exporter cut this loop so the TREE carries the motion: two
             # bodies sliding on the same ground, one now parented to the
             # other rather than sitting beside it. There is nothing left to
             # solve, and a solver here would rotate a body whose mates never
@@ -538,7 +537,7 @@ def build(manifest: Manifest) -> RigPlan:
             if slider is not None:
                 plan.sliders.append(slider)
                 continue
-            # _plan_slider recorded why; an IK plan is still better than none.
+            # _plan_slider recorded why. An IK plan is still better than none.
 
         driver_side = None
         if lp.suggested_driver_joint:
@@ -549,13 +548,13 @@ def build(manifest: Manifest) -> RigPlan:
             else:
                 plan.warnings.append(
                     "loop {}: suggested driver joint {} is not on the loop "
-                    "path; falling back to the closure orientation".format(
+                    "path. Falling back to the closure orientation".format(
                         lp.id, lp.suggested_driver_joint))
         if driver_side is None:
             # The exporter's closure orientation is the only stable default:
             # parent side drives, child side is IK-solved.
             driver_side = "p"
-        # The IK chain must contain at least one bone; when the chosen driven
+        # The IK chain must contain at least one bone. When the chosen driven
         # side is the ancestor itself, the sides swap regardless of the
         # suggestion.
         driven_groups = groups_c if driver_side == "p" else groups_p
@@ -563,7 +562,7 @@ def build(manifest: Manifest) -> RigPlan:
             driver_side = "c" if driver_side == "p" else "p"
             driven_groups = groups_c if driver_side == "p" else groups_p
             plan.warnings.append(
-                "loop {}: driven side was empty; driver/driven sides "
+                "loop {}: driven side was empty. Driver/driven sides "
                 "swapped".format(lp.id))
         if not driven_groups:
             raise ManifestError(
@@ -590,7 +589,7 @@ def build(manifest: Manifest) -> RigPlan:
         ))
 
     # Contact carrier chains fold into single posable bones AFTER loop
-    # verification (a carrier inside a loop keeps its bone — IK needs the
+    # verification (a carrier inside a loop keeps its bone: IK needs the
     # chain) and BEFORE the dependency pre-flight, which must model the rig
     # actually generated.
     collapse_specs = _collapse_carriers(plan, groups, parent_of)
@@ -639,17 +638,17 @@ def build(manifest: Manifest) -> RigPlan:
         driver_id = j.coupling.driver_joint
         if j.coupling.kind == "screw":
             # The screw self-driver reads its own bone's location to drive
-            # its rotation; distinct channels on one bone are acyclic at
+            # its rotation. Distinct channels on one bone are acyclic at
             # Blender's per-channel depsgraph granularity, so no edge.
             continue
         if driver_id is None:
             plan.warnings.append(
-                "joint {}: {} coupling without a driver joint; the driver "
+                "joint {}: {} coupling without a driver joint. The driver "
                 "will be skipped".format(j.id, j.coupling.kind))
             continue
         if driver_id not in plan.joint_group:
             plan.warnings.append(
-                "joint {}: coupling driver {} is not a tree joint; the "
+                "joint {}: coupling driver {} is not a tree joint. The "
                 "driver will be skipped".format(j.id, driver_id))
             continue
         edges[bone_node(plan.joint_group[j.id])].add(
@@ -718,7 +717,7 @@ def build(manifest: Manifest) -> RigPlan:
     if len(plan.bones) != len(groups) - len(skipped):
         missing = sorted(set(groups) - set(plan.bone_by_group) - skipped)
         raise ManifestError(
-            "groups {} are unreachable from any root; the tree walk lost "
+            "groups {} are unreachable from any root. The tree walk lost "
             "them".format(missing))
 
     for lplan in plan.loops:

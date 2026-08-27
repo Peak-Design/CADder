@@ -109,7 +109,7 @@ def _demo_manifest():
                         "translation": None}},
             # Swing-cone ball: axis = the parent-fixed cone axis, secondary
             # = the child direction the band [min, max] constrains (equal to
-            # the axis here: resting at the cone centre).
+            # the axis here: resting at the cone center).
             {"id": "j009", "type": "ball", "parent_group": "g000",
              "child_group": "g008", "origin": [0.5, 0.0, 0.0],
              "axis": [0.0, 1.0, 0.0], "secondary_axis": [0.0, 1.0, 0.0],
@@ -120,7 +120,7 @@ def _demo_manifest():
             # Tangent cone on a plane, decomposed through a carrier: planar
             # on the plate normal, then a spin whose axis is TILTED out of
             # the plane by the half-angle (20 deg here: |dot| = sin(20) =
-            # 0.342) — collapses to the cone_spin ring template.
+            # 0.342): collapses to the cone_spin ring template.
             {"id": "j010", "type": "planar", "parent_group": "g000",
              "child_group": "g009", "origin": [0.6, 0.0, 0.0],
              "axis": [0.0, 0.0, 1.0], "secondary_axis": [1.0, 0.0, 0.0],
@@ -130,7 +130,7 @@ def _demo_manifest():
              "axis": [0.9397, 0.0, 0.342], "secondary_axis": [0.0, 1.0, 0.0],
              "limits": None},
             # Mirror pair: two otherwise-unmated bodies related only by a
-            # symmetric mate — ground-rooted free joints, the driven one
+            # symmetric mate: ground-rooted free joints, the driven one
             # reflecting the driver across the plane (y = 0 here).
             {"id": "j012", "type": "free", "parent_group": "g000",
              "child_group": "g011", "origin": None, "axis": None,
@@ -142,7 +142,7 @@ def _demo_manifest():
                           "mirror_scope": "plane",
                           "mirror_plane": {"point": [0.8, 0.0, 0.0],
                                            "normal": [0.0, 1.0, 0.0]}}},
-            # The other mirror flavour: an assembly MIRROR FEATURE. The
+            # The other mirror flavor: an assembly MIRROR FEATURE. The
             # instance is a full reflection of its source, so all six
             # channels follow and nothing on the driven bone is posable.
             {"id": "j014", "type": "free", "parent_group": "g000",
@@ -201,7 +201,7 @@ def run():
         fd, manifest_path = tempfile.mkstemp(suffix=".rig.json")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(_demo_manifest(), f)
-        print("No --manifest given; using built-in demo:", manifest_path)
+        print("No --manifest given. Using built-in demo:", manifest_path)
 
     sys.path.insert(0, _ADDON_DIR)
 
@@ -215,7 +215,7 @@ def run():
     def hidden_bones(armature):
         """Every bone in a collection the user cannot see. The rig sorts
         bones into controls, limits, mechanism and helpers, and more than one
-        of those is hidden — what matters to these checks is not WHICH
+        of those is hidden: what matters to these checks is not WHICH
         collection a bone landed in but whether it is out of the way."""
         out = set()
         for coll in armature.collections:
@@ -247,8 +247,8 @@ def run():
                len(plan.loops), len(coned), len(cone_spins), limits))
     _check(limits > 0, "no limit dial was built at all")
 
-    # 2) Every joint bone's local +Y parallel to the manifest axis — except a
-    # swing-cone ball, whose axis is the CONE axis; its bone points along the
+    # 2) Every joint bone's local +Y parallel to the manifest axis, except a
+    # swing-cone ball, whose axis is the CONE axis. Its bone points along the
     # child-side measured direction (secondary_axis).
     from mathutils import Vector
     for joint in m.joints:
@@ -266,7 +266,7 @@ def run():
 
     # 3) Constraint ranges are the limit DELTAS, never the absolute values.
     # Blender stores constraint channels as single-precision C floats, so a
-    # double like -0.5236 reads back as -0.52359998...; the tolerance must sit
+    # double like -0.5236 reads back as -0.52359998.... The tolerance must sit
     # above float32 rounding (~6e-8 at these magnitudes), not at double noise.
     tol = 1e-6
     for joint in m.joints:
@@ -345,8 +345,8 @@ def run():
                                          joint.translation_limit.delta_max))
 
     # 3b) Swing-cone balls: the ctrl/DEF/POLE/GOAL template, then the clamp
-    # behaviour itself — inside the cone DEF equals the handle exactly
-    # (twist included); beyond it DEF holds the max swing angle UNIFORMLY
+    # behavior itself: inside the cone DEF equals the handle exactly
+    # (twist included). Beyond it DEF holds the max swing angle UNIFORMLY
     # around the azimuth (the Euler box let ~1.27x the limit through at the
     # diagonals, live corpus 04, 2026-08-23).
     import math
@@ -417,8 +417,8 @@ def run():
         ctrl_pb.rotation_quaternion = Quaternion()
         bpy.context.view_layer.update()
 
-    # 3c) cone_spin collapses: the ring template — the handle slides ON the
-    # plane and rotates freely; DEF holds the spin axis at the fixed tilt
+    # 3c) cone_spin collapses to the ring template: the handle slides ON the
+    # plane and rotates freely. DEF holds the spin axis at the fixed tilt
     # from the plane normal at ANY handle pose, following position exactly.
     for bp in cone_spins:
         gid = bp.group.id
@@ -441,7 +441,7 @@ def run():
 
         rest_z = (arm_obj.matrix_world @ ctrl_pb.matrix).translation.z
         # Slide anywhere: the plane clamp holds the handle (and DEF) at the
-        # contact plane's height; DEF follows the position exactly.
+        # contact plane's height. DEF follows the position exactly.
         ctrl_pb.location = (0.05, 0.02, -0.03)
         bpy.context.view_layer.update()
         head = (arm_obj.matrix_world @ ctrl_pb.matrix).translation
@@ -479,7 +479,7 @@ def run():
     # freedom: the translation along the mirror normal and the two
     # rotations that tilt it. Those three are also exactly the channels
     # that negate under the reflection, which is why the drivers are three
-    # sign flips. The other three must stay independent — SolidWorks lets
+    # sign flips. The other three must stay independent: SolidWorks lets
     # one block be raised without the other (live corpus 14 sym4).
     from mathutils import Matrix as _Mx
     mirror_joints = [j for j in m.joints
@@ -505,7 +505,7 @@ def run():
         p = Vector(joint.coupling.mirror_plane_point)
         n = Vector(joint.coupling.mirror_plane_normal).normalized()
         # Affine world reflection S (linear I - 2nn^T, translated so the
-        # plane is fixed) on the LEFT; the material correspondence between
+        # plane is fixed) on the LEFT. The material correspondence between
         # the twin bodies on the RIGHT is the translation-free linear part.
         S = _Mx.Identity(4)
         S_lin = _Mx.Identity(4)
@@ -523,7 +523,7 @@ def run():
 
         # The driven body is the exact reflection of the driver. For the
         # "plane" scope only the three COUPLED channels are posed here, since
-        # the other three are deliberately independent; for "rigid" every
+        # the other three are deliberately independent. For "rigid" every
         # channel is posed, because every channel follows.
         poses = (((0.0, 0.05, 0.0), (0.4, 0.0, 0.2)),
                  ((0.0, -0.03, 0.0), (-0.6, 0.0, 1.1)))
@@ -558,7 +558,7 @@ def run():
         err = max(abs(rest[r][cc] - got[r][cc])
                   for r in range(3) for cc in range(4))
         _check(err < 1e-6,
-               "mirror {}: the twin followed a FREE channel by {} — the two "
+               "mirror {}: the twin followed a FREE channel by {}, so the two "
                "bodies are welded".format(joint.id, err))
 
         # And the twin can be posed in those channels on its own.
@@ -612,14 +612,14 @@ def run():
         _check(pb.custom_shape is not None,
                "control {} has no widget".format(name))
         _check(pb.color.palette == "THEME01",
-               "control {} is not the control colour".format(name))
+               "control {} is not the control color".format(name))
         _check(not (all(pb.lock_location) and all(pb.lock_rotation)),
                "control {} has nothing unlocked to pose".format(name))
 
-    # Being DRIVEN does not by itself make a bone mechanism — what decides
+    # Being DRIVEN does not by itself make a bone mechanism: what decides
     # is whether anything of its own is left to pose. A gear follower and a
     # mirror-FEATURE instance have every channel written by their driver and
-    # are mechanism; a plane-symmetry follower still slides in its plane and
+    # are mechanism. A plane-symmetry follower still slides in its plane and
     # spins about the normal on its own, and hiding that would take away a
     # freedom SolidWorks allows (live corpus 14 sym4, 2026-08-25).
     for bp in plan.bones:
@@ -646,7 +646,7 @@ def run():
                    "driven bone {} is not in the mechanism".format(driven))
 
     # A bone the IK of a loop closure places is not posable either: dragging
-    # it only fights the solver back (live corpus 06, 2026-08-25 — the
+    # it only fights the solver back (live corpus 06, 2026-08-25: the
     # four-bar showed two red bones and the second one did nothing).
     for lplan in plan.loops:
         for gid in list(lplan.driven_chain or []) + [lplan.ik_tip_group]:
@@ -660,7 +660,7 @@ def run():
     from mathutils import Matrix as _WidgetMx
 
     # A widget is drawn with its OWN origin at the bone's head. Give the
-    # object a transform of its own and the shape is drawn off the bone —
+    # object a transform of its own and the shape is drawn off the bone:
     # a dial that orbits the joint instead of turning about it.
     for pb in arm_obj.pose.bones:
         shape = pb.custom_shape
@@ -671,16 +671,16 @@ def run():
         _check(tuple(pb.custom_shape_translation) == (0.0, 0.0, 0.0),
                "{}: its widget is offset from the bone".format(pb.name))
 
-    # Every limit dial is fixed, coloured as a limit, and carries a widget
+    # Every limit dial is fixed, colored as a limit, and carries a widget
     # built from the joint's own numbers.
     for gid, lname in result.limit_names.items():
         lb = arm_obj.pose.bones[lname]
         _check(lb.name in {b.name for b in limits.bones},
                "{} is not in SW_limits".format(lname))
         _check(lb.color.palette == "THEME09",
-               "{} is not the limit colour".format(lname))
+               "{} is not the limit color".format(lname))
         _check(all(lb.lock_location) and all(lb.lock_rotation),
-               "{} can be posed; a dial must stay put".format(lname))
+               "{} can be posed. A dial must stay put".format(lname))
         _check(lb.custom_shape is not None, "{} has no dial".format(lname))
         joint = plan.bone_by_group[gid].joint
         if joint.translation_limit is not None and joint.rotation_limit is None:
@@ -742,7 +742,7 @@ def run():
         _check(ik.subtarget == helper_name and ik.target == arm_obj,
                "loop {}: IK target wrong".format(lplan.loop.id))
         _check(ik.use_tail,
-               "loop {}: use_tail off re-targets the tip parent's tail; the "
+               "loop {}: use_tail off re-targets the tip parent's tail. The "
                "effector TAIL is the closure point".format(lplan.loop.id))
         eff_bone = arm.bones[effector_name]
         helper_bone = arm.bones[helper_name]

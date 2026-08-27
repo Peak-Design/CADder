@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Headless smoke for collapsed contact rigs (tangent decomposition, SW-To-
 Blender corpus 11): the component-less carrier chain must fold into ONE
-posable puck bone — no carrier bone, a hidden centre target riding the
-base, a Limit Distance holding the tangency radius — and DRAGGING the puck
+posable puck bone: no carrier bone, a hidden center target riding the
+base, a Limit Distance holding the tangency radius, and DRAGGING the puck
 bone anywhere must land it back on the orbit circle at the exact radius.
 
 Run:  blender -b --factory-startup -P rig_carrier_smoke.py
@@ -83,13 +83,13 @@ def main():
     assert "g002" not in res.bone_names, "carrier must not get a bone"
     assert puck.parent.name == base.name, "puck must parent straight to base"
 
-    # The hidden centre target rides the base.
+    # The hidden center target rides the base.
     target = pose.bones[res.tangent_helper_names["g001"]]
     assert target.parent.name == base.name
     assert target.name.startswith("TGT_")
 
     # One bone, natural channels: drag in the orbit plane, spin about own
-    # axis; no lifting off, no tilting.
+    # axis. No lifting off, no tilting.
     assert list(puck.lock_location) == [False, True, False]
     assert list(puck.lock_rotation) == [True, False, True]
     cons = [c for c in puck.constraints if c.type == "LIMIT_DISTANCE"]
@@ -98,8 +98,8 @@ def main():
     assert abs(cons[0].distance - want) < 1e-9
     assert cons[0].limit_mode == "LIMITDIST_ONSURFACE"
 
-    # DRAG the puck somewhere wild in its free channels; the constraint must
-    # put it back on the circle around the centre, radius exact.
+    # DRAG the puck somewhere wild in its free channels. The constraint must
+    # put it back on the circle around the center, radius exact.
     puck.location = (0.08, 0.0, -0.12)   # local X (in-plane), Z (in-plane)
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
@@ -109,7 +109,7 @@ def main():
     assert abs(got - want) < 1e-6, (want, got)
     assert abs(head.z - centre.z) < 1e-6, "puck left the orbit plane"
 
-    print("rig_carrier_smoke: OK — dragged puck held at radius %.6f on the "
+    print("rig_carrier_smoke: OK: dragged puck held at radius %.6f on the "
           "orbit circle by one bone" % want)
 
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Headless smoke for the direct link: a .swmesh must become real Blender
-objects — instanced, placed, coloured and tagged — without a STEP file or
+objects (instanced, placed, colored and tagged) without a STEP file or
 a matching pass anywhere in sight.
 
 The scene is written here rather than by the add-in, so the test runs with
@@ -30,7 +30,7 @@ def _text(s):
 
 
 def write_scene(path):
-    """A .swmesh built by hand — byte for byte what MeshWriter.cs emits."""
+    """A .swmesh built by hand: byte for byte what MeshWriter.cs emits."""
     # One unit square (2 triangles) and one triangle, so the two definitions
     # are told apart by counts alone.
     square_v = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]
@@ -66,7 +66,7 @@ def write_scene(path):
         return struct.pack("<i", did) + _text(cid) + _text(name) \
             + struct.pack("<16d", *rows)
 
-    # c001 and c002 SHARE definition 10 — the instancing case.
+    # c001 and c002 SHARE definition 10: the instancing case.
     body += instance(10, "c001", "plate-1", 0.0, 0.0, 0.0)
     body += instance(10, "c002", "plate-2", 5.0, 0.0, 0.0)
     body += instance(11, "c003", "wedge-1", 0.0, 3.0, 1.0)
@@ -117,7 +117,7 @@ def main():
     assert len(a.data.uv_layers[0].data) == len(a.data.loops)
 
     # 6. A re-send REPLACES rather than accumulating, and takes its orphaned
-    #    meshes with it — an unreferenced million-triangle datablock is
+    #    meshes with it: an unreferenced million-triangle datablock is
     #    invisible in the outliner and very much present in the .blend.
     meshes_before = len(bpy.data.meshes)
     objects2, _ = native_import.build(bpy.context, path)
@@ -127,7 +127,7 @@ def main():
         % (len(bpy.data.meshes) - meshes_before))
     assert len([o for o in bpy.data.objects if o.get("RIG_component_id")]) == 3
 
-    print("native_smoke: OK — %d objects from %d mesh datablocks, instanced, "
+    print("native_smoke: OK: %d objects from %d mesh datablocks, instanced, "
           "placed, per-triangle materials, replaceable"
           % (len(objects2), len({o.data.name for o in objects2})))
 

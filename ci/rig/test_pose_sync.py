@@ -2,11 +2,11 @@
 """Pose-sync tests: matched geometry snaps onto the manifest's SolidWorks
 transforms. Born from the flexible-twin STEP limitation (2026-08-23): a
 flexed flexible subassembly and a rigid twin of the same document share ONE
-internal layout in the STEP file, so the twin imports mis-posed — the
+internal layout in the STEP file, so the twin imports mis-posed: the
 matcher still finds it (fuzzy step), and pose_sync moves it to where
 SolidWorks actually had it.
 
-No bpy — pose_sync degrades to plain Python like matching does."""
+No bpy: pose_sync degrades to plain Python like matching does."""
 
 import math
 import os
@@ -34,7 +34,7 @@ class PoseObj(FakeObj):
         self.parent = parent
         self.parent_type = "OBJECT"
         self.matrix_parent_inverse = identity4()
-        self.matrix_basis = None   # written by sync; world NOT recomputed
+        self.matrix_basis = None   # written by sync. World NOT recomputed
 
     def __hash__(self):
         return id(self)
@@ -61,7 +61,7 @@ class MisPosedTwinTest(unittest.TestCase):
         good = PoseObj("leaf", {"STEP_name": "leaf", "STEP_uuid": 1,
                                 "STEP_parent": 10, "STEP_file": "asm.step"},
                        healthy_t)
-        # The twin imported at the flexible instance's internal layout —
+        # The twin imported at the flexible instance's internal layout:
         # wrong spot AND wrong rotation.
         bad = PoseObj("leaf.001", {"STEP_name": "leaf", "STEP_uuid": 2,
                                    "STEP_parent": 10, "STEP_file": "asm.step"},
@@ -133,7 +133,7 @@ class ParentedChildTest(unittest.TestCase):
 
 
 class ScalePreservationTest(unittest.TestCase):
-    """STEPper bakes STEP_applied_scale into the object matrix; snapping to
+    """STEPper bakes STEP_applied_scale into the object matrix. Snapping to
     the manifest's rigid transform must keep those column norms or the
     geometry shrinks by the import scale."""
 

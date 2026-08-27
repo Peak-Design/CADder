@@ -23,7 +23,7 @@ def plan_of(data):
 
 
 class TestImportGuards(unittest.TestCase):
-    """Every module must import under plain Python; the bpy guard pattern is
+    """Every module must import under plain Python. The bpy guard pattern is
     what keeps CI able to run manifest.py and graph.py at all."""
 
     def test_package_imports_without_bpy(self):
@@ -56,7 +56,7 @@ class TestHingePlan(unittest.TestCase):
 
     def test_grounded_root_is_named_after_the_assembly(self):
         # The first grounded root is THE root: assembly-stem name, root
-        # flag set (rig_build rests it at the origin — a grounded group's
+        # flag set (rig_build rests it at the origin: a grounded group's
         # manifest frame follows an arbitrary member and wandered onto the
         # hinge boss live, 2026-08-23). Other bones keep group names.
         plan = plan_of(hinge_manifest())
@@ -119,7 +119,7 @@ class TestHingePlan(unittest.TestCase):
 
     def test_swing_cone_ball_allocates_the_template_names(self):
         # A ball with a cone frame gets the DEF/POLE/GOAL bones planned
-        # (bone_name stays the user handle); a legacy limited ball without
+        # (bone_name stays the user handle). A legacy limited ball without
         # the frame keeps a single bone and the Euler-box fallback.
         data = hinge_manifest()
         data["joints"][0]["type"] = "ball"
@@ -206,7 +206,7 @@ class TestHingePlan(unittest.TestCase):
 
     def test_orbit_carrier_collapses_to_one_posable_bone(self):
         """Rim-tangent discs: the carrier chain folds into ONE bone with a
-        Limit Distance spec — the puck is dragged directly instead of
+        Limit Distance spec: the puck is dragged directly instead of
         rotating a helper (2026-08-23)."""
         plan = plan_of(self._carrier_data())
         self.assertEqual(plan.collapsed_carriers, ["g002"])
@@ -216,7 +216,7 @@ class TestHingePlan(unittest.TestCase):
         self.assertEqual(bp.joint.id, "j003")
         spec = bp.collapsed
         self.assertEqual(spec.kind, "orbit_spin")
-        # Centre projected into the child's plane (j1 origin z=0.01, axis -Z,
+        # Center projected into the child's plane (j1 origin z=0.01, axis -Z,
         # child at z=0): the Limit Distance sphere must be axial-offset-free.
         self.assertEqual(spec.orbit_center, [0.0, 0.0, 0.0])
         self.assertAlmostEqual(
@@ -243,7 +243,7 @@ class TestHingePlan(unittest.TestCase):
         The motion is a yaw about the plane normal composed with a spin
         about the cone axis, two axes a half-angle apart. A single bone with
         a channel locked turns about two PERPENDICULAR rest axes, and
-        matching both slices forces the half-angle to zero — the cylinder,
+        matching both slices forces the half-angle to zero: the cylinder,
         which is why planar_spin is exact and this is not. So the collapse
         is declined and the exporter's own two-bone chain stands: the
         carrier yaws in the plane, the child spins on its axis, and the dip
@@ -261,7 +261,7 @@ class TestHingePlan(unittest.TestCase):
 
     def test_limits_on_the_chain_keep_the_carrier_bone(self):
         """Anything the collapse patterns cannot absorb keeps the explicit
-        chain — correct beats convenient."""
+        chain: correct beats convenient."""
         plan = plan_of(self._carrier_data(
             j2_limits={"rotation": {"min": -0.5, "max": 0.5,
                                     "value_at_rest": 0.0},
@@ -281,7 +281,7 @@ class TestHingePlan(unittest.TestCase):
         self.assertIn("g002", plan.bone_by_group)
 
     def test_path_joint_parents_like_any_tree_edge(self):
-        """A path joint carries its child in the tree — the curve constrains
+        """A path joint carries its child in the tree: the curve constrains
         position at pose time, not the parenting."""
         data = hinge_manifest()
         data["joints"][0] = {
@@ -474,7 +474,7 @@ class TestDependencyPreflight(unittest.TestCase):
     def test_non_tree_driver_warns_and_skips(self):
         data = four_bar_manifest()
         # j003 is the loop closure, so it is not a tree edge and cannot
-        # source a driver; the plan warns instead of dying.
+        # source a driver. The plan warns instead of dying.
         data["joints"][1]["coupling"] = {"kind": "gear", "driver_joint": "j003",
                                          "ratio": 1.0}
         plan = plan_of(data)
@@ -485,7 +485,7 @@ class TestDependencyPreflight(unittest.TestCase):
 class TestSliderCrank(unittest.TestCase):
     """A loop cut at its slide is closed by aiming, not by IK. Blender's IK
     only rotates, so a slide inside a solved chain can only be locked and the
-    mechanism freezes — which is what a hydraulic ram did before this."""
+    mechanism freezes, which is what a hydraulic ram did before this."""
 
     def test_aim_pair_replaces_the_ik_plan(self):
         plan = plan_of(ram_manifest())
@@ -499,7 +499,7 @@ class TestSliderCrank(unittest.TestCase):
     def test_each_half_aims_at_the_others_parent(self):
         """The whole reason the duplicates exist: aiming the two halves
         straight at each other is a dependency cycle, and Blender would
-        refuse the rig. Each target rides the other half's PARENT — the posed
+        refuse the rig. Each target rides the other half's PARENT: the posed
         clamp and the ground, neither of which is aimed at anything."""
         sp = plan_of(ram_manifest()).sliders[0]
         self.assertEqual(sp.a_aim_parent, "g001")   # the clamp carries the rod
@@ -575,7 +575,7 @@ class TestSliderCrank(unittest.TestCase):
         plan = plan_of(data)
         self.assertEqual(plan.sliders, [])
         self.assertEqual(len(plan.loops), 1)
-        self.assertTrue(any("falling back to IK" in w for w in plan.warnings),
+        self.assertTrue(any("Falling back to IK" in w for w in plan.warnings),
                         plan.warnings)
 
 
@@ -584,7 +584,7 @@ class TestChainedClosure(unittest.TestCase):
     """closure_kind "none": the exporter cut the loop so the TREE carries the
     motion, and the consumer must not solve it. Live ClampRig's cutting
     head and lead screw rod both slide along the machine with the head mated
-    to the rod; cutting between them left both hanging off ground as siblings
+    to the rod. Cutting between them left both hanging off ground as siblings
     and driving the lead screw left the head behind."""
 
     @staticmethod

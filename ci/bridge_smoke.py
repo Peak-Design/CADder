@@ -159,7 +159,7 @@ def main():
     assert not stuck, "objects left in non-object mode: %s" % stuck
 
     # An exception that escapes _run_job entirely (even a BaseException)
-    # must come back as an HTTP error, not kill the pump — a dead pump
+    # must come back as an HTTP error, not kill the pump: a dead pump
     # leaves the server listening while every send stalls for 30 minutes.
     orig_run_job = bridge._run_job
     bridge._run_job = lambda payload: (_ for _ in ()).throw(
@@ -188,7 +188,7 @@ def main():
 
     check_option_parity()
 
-    print("bridge_smoke: OK — ping, auth, a full pipeline job over "
+    print("bridge_smoke: OK: ping, auth, a full pipeline job over "
           "HTTP on port %d, and import-option parity" % port)
 
 
@@ -225,7 +225,7 @@ def check_option_parity():
     assert not dropped, (
         "the SolidWorks add-in sends import options the bridge would drop: %s"
         % dropped)
-    print("  option parity: %d accepted, all real; %d sent by the add-in, "
+    print("  option parity: %d accepted, all real, %d sent by the add-in, "
           "all accepted" % (len(allowed), len(sent_by_addin)))
 
 

@@ -3,23 +3,23 @@
 
 The rig has to attach to what the user actually SEES, and leave everything
 else exactly as they arranged it. Four import modes lay the same assembly
-out four different ways — parts parented to empties, parts sorted into a
+out four different ways: parts parented to empties, parts sorted into a
 tree of collections, parts flat in one collection each, and one copy of
-each part in a hidden collection with empties instancing it — so a
+each part in a hidden collection with empties instancing it, so a
 parenting rule that only holds in one of them is no rule at all.
 
 What is checked, per mode:
 
   * collection membership is untouched: parenting is not a move, and a user
-    who imported into a collection still has everything in it;
+    who imported into a collection still has everything in it.
   * the rig lands INSIDE that collection, so one switch hides the whole
-    machine — bones and parts together (live complaint, 2026-08-25: the rig
-    sat at the scene root, and hiding the assembly left the bones behind);
+    machine: bones and parts together (live complaint, 2026-08-25, when the rig
+    sat at the scene root, and hiding the assembly left the bones behind).
   * nothing is stranded: every imported object either rides a bone of its
     own or hangs from something that does, so moving the rig moves the
-    assembly whole;
-  * posing a bone moves the geometry the user sees — read off the
-    depsgraph, so an instanced part counts only if the INSTANCE moved;
+    assembly whole.
+  * posing a bone moves the geometry the user sees: read off the
+    depsgraph, so an instanced part counts only if the INSTANCE moved.
   * a second relink changes nothing (it is the operator a user clicks
     twice).
 
@@ -72,7 +72,7 @@ def membership():
 
 def prototype_names():
     """Objects that are a template for an instance rather than scene
-    geometry — the instance mode's hidden originals."""
+    geometry: the instance mode's hidden originals."""
     cols = set()
     for obj in bpy.data.objects:
         if obj.instance_collection is not None:
@@ -252,7 +252,7 @@ def run(htypes, wrapper, bystander=False):
         if obj.get("STEP_file") != STEP or obj.name in prototype_names():
             continue
         check(ancestors_parented(obj),
-              "%s: %s rides nothing — moving the rig would leave it behind"
+              "%s: %s rides nothing, so moving the rig would leave it behind"
               % (label, obj.name))
 
     # 4) Posing a bone moves what the user sees, and only that.
@@ -309,7 +309,7 @@ def main():
     for htypes in MODES:
         run(htypes, wrapper=True)
     # The wrapper is optional, and without it there may be nothing to nest
-    # the rig inside — that must degrade to the scene root, not break.
+    # the rig inside, that must degrade to the scene root, not break.
     run("EMPTIES", wrapper=False)
     run("TREE", wrapper=False)
     # A scene with two assemblies in it: neither rig may reach into the

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Headless smoke for the direct link driving the WHOLE pipeline: manifest,
-native geometry, rig, and — the part that broke live on 2026-08-24 — the
+native geometry, rig, and (the part that broke live on 2026-08-24) the
 re-link that attaches parts to bones.
 
 That bug is the reason this exists. The native importer tagged its objects
 RIG_rig, which means "part of the rig's own scaffolding", so re-linking
-skipped every one of them; and it never wrote RIG_group, which is what
+skipped every one of them, and it never wrote RIG_group, which is what
 re-linking attaches BY. The parts arrived in exactly the right place and
 were attached to nothing, which looks completely correct until you move a
 bone.
@@ -132,7 +132,7 @@ def main():
         assert drift < 1e-6, "%s moved %.3g m while being parented" % (cid, drift)
 
     # And the rig actually drives them: pose the child bone, the arm follows.
-    # Measured as ROTATION, not position — the joint origin and the part's
+    # Measured as ROTATION, not position: the joint origin and the part's
     # origin coincide here, so spinning about the pivot leaves the object's
     # location exactly where it was.
     child_bone = result.bone_names["g001"]
@@ -145,7 +145,7 @@ def main():
         part.matrix_world.to_quaternion()).angle)
     assert abs(turned - 0.5) < 1e-4,         "posing the bone turned the part it owns by %.4f rad, not 0.5" % turned
 
-    print("native_rig_smoke: OK — %d parts bone-parented with no drift, "
+    print("native_rig_smoke: OK: %d parts bone-parented with no drift, "
           "and a %.2f rad bone pose turns its part by the same"
           % (parent_report.bone_parented, turned))
 

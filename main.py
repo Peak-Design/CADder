@@ -47,7 +47,7 @@ from . import updater as updater_mod
 from .formats import classes as formats_classes
 
 # The rig subpackage (SW To Blender: armature from a .rig.json manifest) is
-# developed in-tree but must never take the importer down with it — a broken
+# developed in-tree but must never take the importer down with it. A broken
 # rig module costs the rig panel, not STEP import.
 try:
     from . import rig as rig_mod
@@ -64,7 +64,7 @@ except Exception as _bridge_exc:
     print("STEPper NEXT: bridge module failed to load:", _bridge_exc)
 
 # Active UV options for the current import (set by load_step)
-# Per-import UV generation state (a single "UVMap" layer; the booleans are
+# Per-import UV generation state (a single "UVMap" layer. The booleans are
 # derived from the operator's uv_mode enum in load_step)
 _uv_options = {"surface": True, "unwrap": False, "box": False,
                "box_scale": 1.0}
@@ -212,7 +212,7 @@ def _material_base_color(mat, fallback=(0.8, 0.8, 0.8)):
 
     add_material writes the CAD color to the Principled BSDF's Base Color
     input and never touches mat.diffuse_color (the viewport swatch), so
-    reading diffuse_color would always return Blender's default grey.
+    reading diffuse_color would always return Blender's default gray.
     Materials the addon did not build (e.g. a Material Database
     replacement using some other shader) fall back to diffuse_color.
     """
@@ -222,7 +222,7 @@ def _material_base_color(mat, fallback=(0.8, 0.8, 0.8)):
         for node in mat.node_tree.nodes:
             if node.type != "BSDF_PRINCIPLED":
                 continue
-            # Named lookup can fail under some UI translations; input 0 of
+            # Named lookup can fail under some UI translations. Input 0 of
             # a Principled BSDF is Base Color either way.
             inp = node.inputs.get("Base Color")
             if inp is None and len(node.inputs):
@@ -609,7 +609,7 @@ def _assign_engineering_material(obj, mat_info):
     after the CAD engineering material (e.g. "AISI 304 Steel").
 
     The part's imported color is kept as the material's base color when the
-    material is first created; density/description are stored as custom
+    material is first created. Density/description are stored as custom
     properties on the material. Slots live on the mesh datablock, so linked
     copies pick this up automatically.
     """
@@ -640,13 +640,13 @@ def _unwrap_uv_objects(objs, world_scale=None):
 
     Runs Blender's unwrap operator once over all given objects in
     multi-object edit mode. The imported seams (marked at sharp normal
-    discontinuities between CAD faces) define the islands; the unwrap
+    discontinuities between CAD faces) define the islands. The unwrap
     operator packs them into the 0-1 square per mesh.
 
     world_scale: None keeps the packed 0-1 layout (Normalize UVs on).
     Otherwise the packed islands are uniformly rescaled so 1 UV unit
     matches 1 scene unit as closely as possible (median of the per-triangle
-    3D/UV area ratios); the value is the mesh-unit -> scene-unit factor
+    3D/UV area ratios). The value is the mesh-unit -> scene-unit factor
     (file-unit meshes at import time, 1.0 for already-scaled meshes).
     """
     targets = []
@@ -958,8 +958,8 @@ def _compute_edge_attributes(mesh):
     # --- Parametric closure seams (closed cylinders/cones/tori/splines) ---
     # A closed face has NO sharp edge along its parametric seam, so unwrap
     # has nowhere to cut and produces a degenerate result. Detection: OCC
-    # duplicates the seam vertices in parameter space (u=0 and u=period);
-    # the position-based vertex fuse welds them, but the per-corner UV
+    # duplicates the seam vertices in parameter space (u=0 and u=period).
+    # The position-based vertex fuse welds them, but the per-corner UV
     # snapshot still disagrees across the edge. So an interior edge WITHIN
     # one OCC face whose corner UVs differ at BOTH endpoints lies on the
     # closure (the both-endpoints rule keeps collapsed poles, where every
@@ -1208,7 +1208,7 @@ def _get_matdb_dir():
     if custom:
         d = bpy.path.abspath(custom)
         # A path that is not there yet is created, the same as the built-in
-        # one; a path that cannot be made is reported once and falls back,
+        # one. A path that cannot be made is reported once and falls back,
         # because losing the databases is worse than ignoring the setting.
         try:
             os.makedirs(d, exist_ok=True)
@@ -1218,14 +1218,14 @@ def _get_matdb_dir():
             if _matdb_dir_warned != d:
                 _matdb_dir_warned = d
                 print("STEPper NEXT: material database folder %r is "
-                      "unusable (%s); using the addon's own folder" % (d, exc))
+                      "unusable (%s). Using the addon's own folder" % (d, exc))
 
     d = os.path.join(_ADDON_DIR, "MaterialDB")
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:
         # Read-only install (system-wide): callers treat a missing dir as
-        # "no databases"; raising here would crash the enum callback
+        # "no databases". Raising here would crash the enum callback
         pass
     return d
 
@@ -1257,8 +1257,8 @@ def _matdb_enum_items(self, context):
     items = [("NONE", "None", "Do not use a material database")]
     for name, path in _list_matdb_files():
         items.append((name, name, f"Use material database: {name}"))
-    # Blender requires the returned strings to stay referenced from Python;
-    # module-level cache prevents garbage values in the dropdown
+    # Blender requires the returned strings to stay referenced from Python.
+    # The module-level cache prevents garbage values in the dropdown
     _matdb_enum_cache = items
     return items
 
@@ -1486,7 +1486,7 @@ def _cleanup_unused_step_materials(known_names=None):
     """Remove zero-user materials that were generated by STEP import.
 
     known_names: additional material names known to come from the import
-    (e.g. the original-name keys of the active matdb mappings); CAD color
+    (e.g. the original-name keys of the active matdb mappings). CAD color
     names like "GRAY" don't carry the STEP_ prefix.
     """
     removed = 0
@@ -1547,7 +1547,7 @@ def _split_solids(entries, step_reader):
     the importer builds one object with every body merged into it. This
     hands each body back as its own entry so it becomes its own object.
 
-    Only a shape holding two or more bodies is touched; a single-body shape
+    Only a shape holding two or more bodies is touched. A single-body shape
     keeps its sub-index of None and is byte-for-byte the same import as
     before. Solids are preferred, and free shells are used only where a
     shape has no solids at all, which is the surface-body case (the option's
@@ -1561,8 +1561,8 @@ def _split_solids(entries, step_reader):
     from .ocp_utils import ShapeKey
 
     def inherit_colour(parent, body):
-        """A body carries its product's colour. Its FACES are the same OCC
-        faces the whole shape had, so per-face colour resolves unchanged; it
+        """A body carries its product's color. Its FACES are the same OCC
+        faces the whole shape had, so per-face color resolves unchanged. It
         is only the shape-level fallback that has to be carried across."""
         pkey, bkey = ShapeKey(parent), ShapeKey(body)
         if pkey in step_reader.face_colors:
@@ -1633,7 +1633,7 @@ def load_step(
     global _debug_timing
     _debug_timing = _get_addon_prefs().debug_timing
 
-    # One "UVMap" layer; its content is chosen by uv_mode. UNWRAP writes
+    # One "UVMap" layer. Its content is chosen by uv_mode. UNWRAP writes
     # the surface UVs first (fallback content) and unwraps in place.
     _uv_options["mode"] = uv_mode
     _uv_options["surface"] = uv_mode in ("SURFACE", "UNWRAP")
@@ -1735,7 +1735,7 @@ def load_step(
     scale /= context.scene.unit_settings.scale_length
     print("Current Blender scale set at:", context.scene.unit_settings.scale_length)
 
-    # BoxUV tile size is specified in world units; meshes are built in file
+    # BoxUV tile size is specified in world units. Meshes are built in file
     # units, so the apply path needs the conversion factor.
     _uv_options["unit_scale"] = scale
 
@@ -1896,8 +1896,8 @@ def load_step(
                     print("[Link]", end="", flush=True)
 
                 if hierarchy_instances:
-                    # Occurrence becomes a collection-instance empty later;
-                    # just record which prototype it instances.
+                    # Occurrence becomes a collection-instance empty later.
+                    # Just record which prototype it instances.
                     obj = bpy.data.objects.new(name, None)
                     obj.empty_display_size = 0.0001
                     obj["STEP_instance_of"] = shape_name
@@ -1943,7 +1943,7 @@ def load_step(
                             obj, getattr(node, "material", None))
                     if hierarchy_instances:
                         # First occurrence: keep the mesh object as a hidden
-                        # prototype; this occurrence becomes an instance empty.
+                        # prototype. This occurrence becomes an instance empty.
                         proto = obj
                         proto["STEP_tag"] = tag
                         proto["STEP_file"] = filepath
@@ -2041,7 +2041,7 @@ def load_step(
         _print_phase2_times()
     print("\n" + repr(step_reader.import_problems))
 
-    # Optional packed angle-based unwrap (unique meshes only; linked
+    # Optional packed angle-based unwrap (unique meshes only. linked
     # copies share the datablock and get it for free). Meshes are still in
     # file units here, so real-world mode converts through unit_scale.
     if _uv_options.get("unwrap"):
@@ -2134,7 +2134,7 @@ def load_step(
                 obj.matrix_parent_inverse = parent.matrix_world.inverted()
 
     # build collection-instance hierarchy: prototypes live in a hidden
-    # ".components" collection; every occurrence is an instancing empty
+    # ".components" collection. Every occurrence is an instancing empty
     # parented like the EMPTIES mode.
     if hierarchy_instances:
         components_col = _own_collection(
@@ -2498,7 +2498,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
              "One island per CAD face from the parametric surface "
              "coordinates (fast)", 1),
             ("UNWRAP", "Unwrap",
-             "Blender's angle-based unwrap with packed islands; sharp CAD "
+             "Blender's angle-based unwrap with packed islands. Sharp CAD "
              "edges act as seams. Slower on large assemblies", 2),
             ("BOX", "Box Project",
              "Triplanar box projection with a world-unit tile size", 3),
@@ -2884,7 +2884,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         curname = ""
         build_tags = set()
         rebuilt_meshes = set()
-        # Only mesh objects that carry STEP metadata can be rebuilt; a
+        # Only mesh objects that carry STEP metadata can be rebuilt. a
         # box-select of an imported assembly also contains hierarchy empties
         my_selection = [o for o in context.selected_objects
                         if o.data is not None
@@ -3194,7 +3194,7 @@ class STEP_OT_MatDBApply(bpy.types.Operator):
     def execute(self, context):
         stepper = context.scene.stepper
 
-        # invoke() prepares _mappings; a direct execute call (redo panel,
+        # invoke() prepares _mappings. A direct execute call (redo panel,
         # scripts) must load them itself
         mappings = getattr(self, "_mappings", None)
         if mappings is None:
@@ -3668,7 +3668,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         col.label(text="Import dialog defaults:")
         col.prop(self, "remember_import_settings")
         sub = col.column(align=True)
-        # Last-used settings override these three, so grey them out
+        # Last-used settings override these three, so gray them out
         sub.active = not self.remember_import_settings
         sub.prop(self, "preferred_up_axis")
         sub.prop(self, "preferred_hierarchy")

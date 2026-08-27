@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """N-panel and operators. All state lives in a module dict, not in scene
-properties — Manifest/RigPlan/MatchReport are Python objects that cannot
+properties: Manifest/RigPlan/MatchReport are Python objects that cannot
 survive a .blend round-trip, and pretending otherwise (pickling into an ID
 property) breaks undo. Re-link works from scene tags alone, so a reopened
 file only needs Load Manifest again.
 
 Operators report through self.report and return CANCELLED on a bad
-manifest; the panel itself only ever draws already-validated state, so a
+manifest. The panel itself only ever draws already-validated state, so a
 broken file can never take the UI down with it.
 """
 
@@ -64,7 +64,7 @@ def _sw_integration_enabled(context):
     """
     if bpy is None:
         return False
-    # __package__ is "<addon>.rig" here; the preferences live on the addon.
+    # __package__ is "<addon>.rig" here. The preferences live on the addon.
     addon = __package__.rpartition(".")[0] or __package__
     try:
         prefs = context.preferences.addons[addon].preferences
@@ -95,7 +95,7 @@ if bpy is not None:
         bl_description = "Pick a .rig.json manifest and load it"
 
         filepath: bpy.props.StringProperty(subtype="FILE_PATH")
-        # The plain FILE_PATH property offers no filtering; this operator's
+        # The plain FILE_PATH property offers no filtering. This operator's
         # file browser shows only rig manifests (plus bare .json for
         # hand-renamed ones).
         filter_glob: bpy.props.StringProperty(
@@ -158,11 +158,11 @@ if bpy is not None:
                 return {"CANCELLED"}
             if not _stepper_available():
                 self.report({"WARNING"},
-                            "STEPper NEXT is not installed; import {} "
+                            "STEPper NEXT is not installed. Import {} "
                             "manually with any STEP importer, then run Match "
                             "Geometry".format(step_path))
                 return {"CANCELLED"}
-            # The manifest frame is Z-up; STEPper's default up axis is Y
+            # The manifest frame is Z-up. STEPper's default up axis is Y
             # (generic CAD), which would rotate the geometry out of the
             # manifest frame.
             bpy.ops.import_scene.occ_import_step(
@@ -184,27 +184,29 @@ if bpy is not None:
             _STATE["match_report"] = report
             level = ("WARNING" if report.unmatched or report.notes
                      else "INFO")
-            message = "Matched {}, ambiguous {}, unmatched {}; frame: {}".format(
+            message = "Matched {}, ambiguous {}, unmatched {}. Frame: {}".format(
                 len(report.matched), len(report.ambiguous),
                 len(report.unmatched),
                 matching.describe_frame(report.frame_rows))
             if report.hint:
-                message += " — " + report.hint
+                message += ": " + report.hint
             # What the matcher had to decide on thin evidence. Written only
             # when it could not check its own answer, so it belongs where the
             # answer is read and not only in the system console.
             for note in report.notes:
-                message += " — " + note
+                message += ": " + note
             self.report({level}, message)
             return {"FINISHED"}
 
     class SWTB_OT_sync_poses(bpy.types.Operator):
         bl_idname = "swtb.sync_poses"
         bl_label = "Snap to SW Poses"
-        bl_description = ("Move matched geometry onto the manifest's "
-                          "SolidWorks transforms — fixes instances the STEP "
-                          "file could only store at a shared pose (flexed "
-                          "flexible subassembly next to its rigid twin)")
+        bl_description = ((
+            "Move matched geometry onto the SolidWorks transforms in the "
+            "manifest. This fixes instances that the STEP file could only store"
+            " at one shared pose. An example is a flexed subassembly beside its"
+            " rigid twin"
+        ))
 
         @classmethod
         def poll(cls, context):
@@ -219,12 +221,12 @@ if bpy is not None:
                 worst = max(d for _, d in report.moved)
                 self.report({"INFO"},
                             "Moved {} object(s) onto their SW poses (largest "
-                            "correction {:.1f} mm); {} already in place".format(
+                            "correction {:.1f} mm). {} already in place".format(
                                 len(report.moved), worst * 1000.0,
                                 report.already_ok))
             elif report.skipped:
                 self.report({"WARNING"},
-                            "Nothing moved; {} skipped (see console)".format(
+                            "Nothing moved. {} skipped (see console)".format(
                                 len(report.skipped)))
             else:
                 self.report({"INFO"}, "All {} matched objects already sit at "
@@ -242,9 +244,9 @@ if bpy is not None:
 
         def execute(self, context):
             m = _STATE["manifest"]
-            # The scene frame comes from the last match — but only when at
+            # The scene frame comes from the last match, but only when at
             # least one anchor agreed with it. An unanchored frame is just
-            # identity-by-default; passing it through would pin the rig to
+            # identity-by-default. Passing it through would pin the rig to
             # the world origin, where rig_build's own fallback (the 3D
             # cursor, same place the STEP import lands) is the better guess.
             mreport = _STATE.get("match_report")
@@ -287,13 +289,13 @@ if bpy is not None:
                             "(see panel)".format(len(report.violations)))
             elif report.posed_bones:
                 self.report({"WARNING"},
-                            "{} bone(s) sit off rest while relinking — a "
-                            "constraint rejects the rest pose; check that "
+                            "{} bone(s) sit off rest while relinking: a "
+                            "constraint rejects the rest pose. Check that "
                             "joint's limits (console has names)".format(
                                 len(report.posed_bones)))
             elif report.grounded:
                 self.report({"INFO"},
-                            "Parented {} objects to bones; {} more had no "
+                            "Parented {} objects to bones. {} more had no "
                             "bone of their own and now ride the ground, so "
                             "the assembly stays together".format(
                                 report.bone_parented - len(report.grounded),
@@ -306,9 +308,11 @@ if bpy is not None:
     class SWTB_OT_refine_selected(bpy.types.Operator):
         bl_idname = "swtb.refine_selected"
         bl_label = "Refine in SolidWorks"
-        bl_description = ("Ask SolidWorks to tessellate the selected parts "
-                          "again at a finer tolerance and swap the geometry "
-                          "in, keeping their pose and rig")
+        bl_description = ((
+            "Ask SolidWorks to tessellate the selected parts again at a finer "
+            "tolerance. The addon swaps the new geometry in and keeps the pose "
+            "and the rig"
+        ))
         bl_options = {"REGISTER", "UNDO"}
 
         quality: bpy.props.FloatProperty(
@@ -479,8 +483,8 @@ if bpy is not None:
                 box.alert = True
                 box.label(text="{} bone(s) off rest at re-link".format(
                     len(preport.posed_bones)), icon="ERROR")
-                box.label(text="A constraint rejects the rest pose —")
-                box.label(text="check that joint's limits vs value_at_rest.")
+                box.label(text="A constraint rejects the rest pose.")
+                box.label(text="Check the limits of that joint against value_at_rest.")
                 for name, off in preport.posed_bones[:5]:
                     box.label(text="{}: {:.4f}".format(name, off))
 

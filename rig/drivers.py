@@ -3,12 +3,12 @@
 
 Every driver reads exactly one TRANSFORMS variable targeting the armature
 object with bone_target set, transform_space LOCAL_SPACE. The ratio is
-baked into the expression as a literal — use_self would be the alternative
+baked into the expression as a literal: use_self would be the alternative
 and it is blocked whenever Auto Run Python Scripts is off, which is the
 default on every machine the rig gets shared to.
 
 The screw self-driver (rotation from own location) is safe because the
-depsgraph resolves per channel; location never reads rotation back.
+depsgraph resolves per channel. Location never reads rotation back.
 """
 
 import math
@@ -78,7 +78,7 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
                 warnings.append(
                     "joint {}: screw coupling without lead_m_per_rev".format(joint.id))
                 continue
-            # rotation [rad] = location [m] * 2*pi / lead; location arrives
+            # rotation [rad] = location [m] * 2*pi / lead. Location arrives
             # in Blender units, hence the divide by unit_scale.
             constant = (2.0 * math.pi) / (c.lead_m_per_rev * unit_scale)
             _add_driver(arm_obj, own_pb, "rotation_euler",
@@ -105,17 +105,17 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
             #
             # How many of the six get drivers is what mirror_scope says.
             #
-            # "plane" — a symmetric MATE between two planar faces. That is a
+            # "plane": a symmetric MATE between two planar faces. That is a
             # plane-to-plane relation and it constrains exactly three degrees
             # of freedom: the translation along the normal and the two
             # rotations that tilt it, which are precisely the three that
             # negate. The other three are what the relation leaves free and
-            # they must stay INDEPENDENT — driving them would weld the pair
+            # they must stay INDEPENDENT: driving them would weld the pair
             # into one rigid mirror image, so one block could not be raised
             # without the other (live corpus 14 sym4, 2026-08-24: SolidWorks
             # allows exactly that independence).
             #
-            # "rigid" — an assembly MIRROR FEATURE. There the instance IS a
+            # "rigid": an assembly MIRROR FEATURE. There the instance IS a
             # full reflection of its source, so all six follow and the pair
             # really is one rigid mirror image.
             specs = (
@@ -164,7 +164,7 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
                 "joint {}: unknown coupling kind {!r}".format(joint.id, c.kind))
 
     # Fresh drivers do not evaluate until the armature is tagged and the
-    # view layer re-evaluates; without this the rig looks dead until the
+    # view layer re-evaluates. Without this the rig looks dead until the
     # first user interaction.
     if count:
         arm_obj.data.update_tag()

@@ -1,16 +1,16 @@
 """Regression test: an engineering material must inherit the part's
-imported CAD colour.
+imported CAD color.
 
-add_material writes the CAD colour to the Principled BSDF's Base Color
+add_material writes the CAD color to the Principled BSDF's Base Color
 input and never to mat.diffuse_color (the viewport swatch), so reading
-diffuse_color back returned Blender's default grey and every engineering
-material came out grey regardless of the part colour.
+diffuse_color back returned Blender's default gray and every engineering
+material came out gray regardless of the part color.
 
 Run:
   blender -b --factory-startup --python ci/test_eng_material_color.py
 
 Uses ci/baselines/mat_color_ap242.step, which carries both per-part
-colours and engineering materials, as a real CATIA/NX export does.
+colors and engineering materials, as a real CATIA/NX export does.
 """
 import os
 import sys
@@ -29,7 +29,7 @@ def fresh():
 
 def base_color(mat):
     """Read Base Color without using addon helpers, so this test stays a
-    check on behaviour rather than on its own implementation."""
+    check on behavior rather than on its own implementation."""
     if mat.use_nodes and mat.node_tree is not None:
         for node in mat.node_tree.nodes:
             if node.type == "BSDF_PRINCIPLED":
@@ -52,7 +52,7 @@ def main():
         return 1
     failures = 0
 
-    # Colour materials only, so we know what each part's CAD colour is.
+    # Color materials only, so we know what each part's CAD color is.
     fresh()
     bpy.ops.import_scene.occ_import_step(
         filepath=FIXTURE, override_file=os.path.basename(FIXTURE),
@@ -65,10 +65,10 @@ def main():
     if not cad:
         print("FAIL: fixture produced no materials")
         return 1
-    # The fixture must have real colours, or this test cannot tell the bug
-    # (everything grey) apart from correct behaviour.
+    # The fixture must have real colors, or this test cannot tell the bug
+    # (everything gray) apart from correct behavior.
     if not [c for c in cad.values() if not close(c, GREY)]:
-        print("FAIL: fixture has no non-grey colours, test is vacuous")
+        print("FAIL: fixture has no non-gray colors, test is vacuous")
         return 1
 
     # Same import with engineering materials on.
@@ -90,7 +90,7 @@ def main():
             failures += 1
             print(f"FAIL: {obj.name} -> {mats[0].name!r} is "
                   f"{tuple(round(c, 3) for c in got)}, "
-                  f"expected CAD colour {tuple(round(c, 3) for c in want)}")
+                  f"expected CAD color {tuple(round(c, 3) for c in want)}")
     if not checked:
         print("FAIL: no parts were checked")
         return 1

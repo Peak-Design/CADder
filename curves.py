@@ -1,6 +1,6 @@
 # Free-edge (sketch / construction curve) import for STEPper NEXT.
 #
-# Edges that belong to no face are invisible in the mesh pipeline; this
+# Edges that belong to no face are invisible in the mesh pipeline. this
 # module samples them into polyline data that main.py turns into Blender
 # curve objects.
 #

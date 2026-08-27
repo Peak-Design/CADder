@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Snap matched geometry to the manifest's SolidWorks poses.
 
-The manifest transform is the authoritative per-instance world pose; the
+The manifest transform is the authoritative per-instance world pose. The
 STEP file is not. STEP stores ONE internal layout per subassembly product,
 so a flexed flexible instance and a rigid twin of the same document cannot
-both import correctly — the twin lands at the flexible pose. Rather than
+both import correctly: the twin lands at the flexible pose. Rather than
 rewriting the STEP (a de-instancing surgery the importer would then undo),
 this module moves the already-imported objects: every matched object that
 does not sit where its component says (under the estimated scene frame)
@@ -12,7 +12,7 @@ gets its world transform rewritten to the manifest pose, preserving the
 import's own scale.
 
 Runs after matching, before parenting. Objects already bone-parented to a
-rig are skipped — unlink first.
+rig are skipped: unlink first.
 """
 
 import math
@@ -39,8 +39,8 @@ class PoseSyncReport:
     skipped: List[Tuple[str, str]] = field(default_factory=list)   # name, reason
     # Rigid subassemblies that resolved to a COLLECTION. These are not
     # declined corrections: no object carries the occurrence's own pose, so
-    # there is nothing to compare and — where the STEP and the manifest agree,
-    # which the matcher has already checked — nothing to do. Kept out of
+    # there is nothing to compare and: where the STEP and the manifest agree,
+    # which the matcher has already checked: nothing to do. Kept out of
     # `skipped` so a healthy TREE-mode sync does not report as a warning.
     collections: List[Tuple[str, str]] = field(default_factory=list)
 
@@ -52,7 +52,7 @@ def _det3(rows) -> float:
 
 
 def _invert_affine(rows):
-    """Inverse of a 4x4 with [0,0,0,1] bottom row via 3x3 adjugate — the
+    """Inverse of a 4x4 with [0,0,0,1] bottom row via 3x3 adjugate: the
     parent chain can carry non-uniform import scale, so no rigid shortcut."""
     d = _det3(rows)
     if abs(d) < 1e-15:
@@ -140,11 +140,11 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
             # matcher only accepts such a pairing after checking that the
             # parts sit where the manifest's frame says, which is the same
             # comparison this stage makes. What IS lost is the case pose
-            # sync exists for — a flexible subassembly inserted twice, whose
+            # sync exists for: a flexible subassembly inserted twice, whose
             # STEP layout can only be one of the two poses. That one needs
             # an import with Parented empties.
             out.collections.append((entry.collection_name,
-                                    "a subassembly resolved to a collection — "
+                                    "a subassembly resolved to a collection: "
                                     "no object carries its occurrence pose"))
             continue
         obj = by_name.get(entry.object_name)
@@ -158,10 +158,10 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
             continue
         if getattr(obj, "parent", None) is not None \
                 and getattr(obj, "parent_type", "OBJECT") != "OBJECT":
-            out.skipped.append((obj.name, "parented to the rig — unlink first"))
+            out.skipped.append((obj.name, "parented to the rig: unlink first"))
             continue
         if _det3(cur) < 0.0:
-            out.skipped.append((obj.name, "mirrored instance — cannot repose "
+            out.skipped.append((obj.name, "mirrored instance: cannot repose "
                                 "without flipping the geometry"))
             continue
         target = _retarget_rows(apply_frame(frame, crows), cur)
@@ -174,7 +174,7 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
         pending.append((obj, target, dist))
 
     # Parents before children, and every parent's FINAL pose taken from the
-    # target map — no depsgraph round-trips between assignments.
+    # target map: no depsgraph round-trips between assignments.
     pending.sort(key=lambda item: _depth(item[0]))
     for obj, target, dist in pending:
         parent = getattr(obj, "parent", None)

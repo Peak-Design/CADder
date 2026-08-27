@@ -2,11 +2,10 @@
 """Joint type -> pose-bone locks and Limit constraints.
 
 The bone's local +Y axis is the joint DOF axis, so every rule below speaks
-in bone-local channels. Limits in the manifest are absolute mate values;
-the bone rest pose is the as-mated configuration, so the constraints get
+in bone-local channels. Limits in the manifest are absolute mate values. The bone rest pose is the as-mated configuration, so the constraints get
 the deltas (Limit.delta_min/delta_max), never the raw values.
 
-owner_space is set to LOCAL explicitly on every constraint — the Blender
+owner_space is set to LOCAL explicitly on every constraint: the Blender
 default is WORLD and a world-space limit on a child bone is silently wrong.
 """
 
@@ -49,7 +48,7 @@ def _new_limit_rotation(pose_bone, transform_limit):
     con.name = _PREFIX + "Limit Rotation"
     con.owner_space = "LOCAL"
     con.use_transform_limit = transform_limit
-    # The constraint decomposes with its own euler order; anything but the
+    # The constraint decomposes with its own euler order. Anything but the
     # bone's rotation_mode limits different angles than the ones posed.
     con.euler_order = pose_bone.rotation_mode
     con.use_legacy_behavior = False
@@ -73,13 +72,13 @@ def _limit_rotation_y(pose_bone, limit, transform_limit):
 
 
 def _limit_rotation_cone(pose_bone, limit, transform_limit):
-    # Ball limits: the mate dimension is an UNSIGNED swing angle — the stud
+    # Ball limits: the mate dimension is an UNSIGNED swing angle. The stud
     # may lean up to the max in ANY direction around the socket axis, so the
     # limit must be symmetric. Applying the raw deltas per axis pinned the
     # swing into one quadrant (live corpus 04, 2026-08-22: a 0..45 deg limit
     # resting at 0 could only reach one world-space quadrant and jittered
     # against the one-sided clamps). The symmetric amplitude on both swing
-    # axes is the box approximation of the cone; twist about Y stays free.
+    # axes is the box approximation of the cone. Twist about Y stays free.
     amp = max(abs(limit.delta_min), abs(limit.delta_max))
     con = _new_limit_rotation(pose_bone, transform_limit)
     con.use_limit_x = True
@@ -143,9 +142,9 @@ def _limit_location_zero(pose_bone):
 def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
                 aimed=False):
     """Configures one tree joint's bone. The caller has already set
-    rotation_mode — the euler_order copy above depends on it. unit_scale is
-    Blender units per metre; angles need no conversion. contact_mesh is the
-    geometry a path or surface joint's bone rides — a ribbon along the curve
+    rotation_mode: the euler_order copy above depends on it. unit_scale is
+    Blender units per metre. Angles need no conversion. contact_mesh is the
+    geometry a path or surface joint's bone rides: a ribbon along the curve
     or the face's own triangles (rig_build creates it).
 
     Transform locks stop the user, not drivers: a driven channel still
@@ -167,7 +166,7 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
 
     elif joint.type == "revolute":
         lock_loc = [True, True, True]
-        # The DOF is local Y — unless a driver owns it, in which case the
+        # The DOF is local Y, unless a driver owns it, in which case the
         # lock is what stops a user posing a channel that will be written
         # back over on the next depsgraph pass.
         lock_rot = [True, not rot_free, True]
@@ -189,7 +188,7 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
             _limit_location_y(pose_bone, joint.translation_limit, loc_free, unit_scale)
 
     elif joint.type == "screw":
-        # As prismatic; the rotation is owned by the self-driver in
+        # As prismatic. The rotation is owned by the self-driver in
         # drivers.py, so no rotation Limit constraint here at all.
         lock_rot = [True, True, True]
         lock_loc = [True, False, True]
@@ -198,14 +197,14 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
 
     elif joint.type == "ball":
         # A ball with a cone frame (axis + secondary set) never reaches
-        # here — rig_build routes it to apply_ball_cone. The Euler box
+        # here: rig_build routes it to apply_ball_cone. The Euler box
         # below survives only for legacy manifests without the frame.
         lock_loc = [True, True, True]
         if joint.rotation_limit is not None:
             _limit_rotation_cone(pose_bone, joint.rotation_limit, rot_free)
 
     elif joint.type == "pin_slot":
-        # Bone Y is the rotation axis; bone Z is built from secondary_axis,
+        # Bone Y is the rotation axis. Bone Z is built from secondary_axis,
         # which for this type IS the slide direction (SCHEMA.md): spin about
         # Y, slide along Z, everything else locked.
         lock_loc = [True, True, False]
@@ -230,8 +229,8 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
         # patch) owns the position: wherever the user drags the bone, it
         # lands on the geometry, and a bone already on it stays put (see
         # _make_path_rail for why Clamp To cannot). Location must stay
-        # unlocked for the drag to reach the constraint; rotation stays free
-        # — for a path because the mate's pitch/yaw/roll options are not
+        # unlocked for the drag to reach the constraint. Rotation stays free
+        # for a path because the mate's pitch/yaw/roll options are not
         # readable from the API, for a surface because a point on a face
         # genuinely constrains no rotation at all.
         lock_loc = [False, False, False]
@@ -251,12 +250,12 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
         # Half of a slider-crank. Its orientation belongs entirely to the aim
         # constraint sliders.py puts on it, which turns it about its own pin
         # and nothing else, so every rotation channel left open here is only a
-        # way to break that by hand — a free one about local Y would ROLL the
+        # way to break that by hand: a free one about local Y would ROLL the
         # ram along its own length, which no pin permits.
         #
         # A rotation Limit would clamp the wrong axis too: an aimed bone rests
         # with local Y along the RAM and its pin on local Z, where every other
-        # joint measures its rotation about local Y. Nothing is lost with it —
+        # joint measures its rotation about local Y. Nothing is lost with it:
         # this pin is stopped by the ram's own stroke at the far end of the
         # loop, which the slide still carries.
         for con in list(pose_bone.constraints):
@@ -272,10 +271,10 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
 def _swing_band_chain(arm_obj, goal_pb, ctrl_pb, pole_pb, length,
                       band_min, band_max, rounds=3):
     """The GOAL clamp of the swing template: follow the handle's TAIL, then
-    iterate chord clamps against POLE — a point on the sphere of radius L
+    iterate chord clamps against POLE: a point on the sphere of radius L
     about the handle's head sits within swing alpha of the pole axis
-    exactly when its CHORD distance to the pole is at most 2L*sin(alpha/2)
-    — with a re-sphere between rounds. band_min == band_max degenerates the
+    exactly when its CHORD distance to the pole is at most 2L*sin(alpha/2),
+    with a re-sphere between rounds. band_min == band_max degenerates the
     band to a fixed-tilt RING (the tangent cone's precession circle).
     Every distance is between points that all ride the handle, so the
     clamp is translation-invariant and the handle may move freely."""
@@ -287,8 +286,8 @@ def _swing_band_chain(arm_obj, goal_pb, ctrl_pb, pole_pb, length,
     con.subtarget = ctrl_pb.name
     con.head_tail = 1.0
     # Each chord+resphere pair cuts the violation by ~0.15x near a 45 deg
-    # band; wider bands (a steep cone ring) converge slower and ask for
-    # more rounds — but every round also stacks float32 constraint noise
+    # band. Wider bands (a steep cone ring) converge slower and ask for
+    # more rounds, but every round also stacks float32 constraint noise
     # onto the REST pose (five rounds drifted a resting ball 0.0005 rad),
     # so callers pick: 3 for the ball's band, 5 for the cone_spin ring.
     for i in range(rounds):
@@ -309,7 +308,7 @@ def _swing_band_chain(arm_obj, goal_pb, ctrl_pb, pole_pb, length,
         con.name = _PREFIX + "Resphere {}".format(i + 1)
         con.target = arm_obj
         con.subtarget = ctrl_pb.name
-        con.head_tail = 0.0    # the swing centre: the ctrl's own head
+        con.head_tail = 0.0    # the swing center: the ctrl's own head
         con.distance = length
         con.limit_mode = "LIMITDIST_ONSURFACE"
 
@@ -322,10 +321,10 @@ def apply_cone_spin(arm_obj, def_pb, ctrl_pb, goal_pb, pole_pb, frame_pb,
     half-angle, so precession about the plane normal is not a lockable
     euler channel. Instead the ball template runs with a DEGENERATE band:
 
-      handle  (ctrl_pb, visible): slides on the plane — Limit Location in
-              the CUSTOM space of FRM (the static plane frame; a follower
+      handle  (ctrl_pb, visible): slides on the plane, with Limit Location in
+              the CUSTOM space of FRM (the static plane frame. A follower
               frame would cycle the depsgraph) clamps the plane-normal
-              channel to its rest value — and rotates freely.
+              channel to its rest value, and rotates freely.
       POLE    rides the handle at head + L*normal: a LOCAL->LOCAL location
               copy, exact because rig_build gave both bones the same rest
               orientation, so the local channels map 1:1.
@@ -333,7 +332,7 @@ def apply_cone_spin(arm_obj, def_pb, ctrl_pb, goal_pb, pole_pb, frame_pb,
               pinned onto the fixed-tilt ring around the moving pole.
       DEF     copies the handle's position and rotation, then Damped
               Tracks GOAL: equal to the handle wherever its axis sits on
-              the ring, minimally corrected onto it elsewhere — spin
+              the ring, minimally corrected onto it elsewhere: spin
               preserved. Geometry and child bones ride DEF.
     """
     length = ctrl_pb.bone.length
@@ -401,27 +400,28 @@ def apply_cone_spin(arm_obj, def_pb, ctrl_pb, goal_pb, pole_pb, frame_pb,
 def apply_ball_cone(arm_obj, def_pb, ctrl_pb, goal_pb, pole_pb, joint: Joint):
     """The exact swing-cone limit for a ball joint (SW To Blender live
     corpus 04, 2026-08-23: per-axis Euler limits made a constant-angle sweep
-    'bounce' — the box lets ~1.27x the limit through at diagonal azimuths —
-    and centred the cone on the REST pose instead of the socket axis).
+    'bounce', since the box lets ~1.27x the limit through at diagonal
+    azimuths, and centered the cone on the REST pose instead of the
+    socket axis).
 
     Frame: joint.axis = cone axis A (parent-fixed), joint.secondary_axis =
-    the child direction u the mate measures; the limit values are the
+    the child direction u the mate measures. The limit values are the
     UNSIGNED angle band angle(u, A) in [min, max]. Bones (rig_build):
-      ctrl  visible handle, rest +Y = u, head at the ball centre; rotation
+      ctrl  visible handle, rest +Y = u, head at the ball center. Rotation
             free, location locked. Its TAIL is the live u direction.
-      POLE  static child of the parent bone at centre + L*A.
+      POLE  static child of the parent bone at center + L*A.
       GOAL  copies ctrl's tail, then is clamped into the cone band: a point
             ON the sphere of radius L lies within swing alpha of A exactly
             when its CHORD distance to the pole is at most 2L*sin(alpha/2),
             so Limit Distance INSIDE/OUTSIDE against POLE is the band and
-            Limit Distance ONSURFACE against the centre re-spheres it. One
-            pair is exact for small violations; three pairs bound the error
+            Limit Distance ONSURFACE against the center re-spheres it. One
+            pair is exact for small violations. Three pairs bound the error
             below ~0.1 deg even a quarter-turn past the limit, uniform in
-            azimuth — the clamp direction only ever moves along the
+            azimuth: the clamp direction only ever moves along the
             violation, never around it.
       DEF   carries geometry and child bones: Copy Rotation from ctrl
             (identical rest, so inside the cone DEF == ctrl exactly, twist
-            included), then Damped Track +Y at GOAL — the minimal rotation
+            included), then Damped Track +Y at GOAL: the minimal rotation
             onto the clamped direction, twist preserved, like a stud
             sliding on the socket rim.
     """
@@ -467,17 +467,17 @@ def apply_ball_cone(arm_obj, def_pb, ctrl_pb, goal_pb, pole_pb, joint: Joint):
 
 def apply_collapsed_contact(pose_bone, collapsed, unit_scale=1.0,
                             orbit_target=None, orbit_subtarget=None):
-    """A folded carrier chain on ONE bone — the puck is grabbed and moved
+    """A folded carrier chain on ONE bone: the puck is grabbed and moved
     directly instead of through a helper bone (2026-08-23).
 
     Frames are set by rig_build per kind:
       planar_spin: Y = spin axis, Z = plane normal. Slide in-plane (X/Y
         free, Z locked), spin about Y, yaw about Z, no tilt (X locked).
-        rotation_mode YXZ composes Rz@Rx@Ry — with X locked that is
+        rotation_mode YXZ composes Rz@Rx@Ry, with X locked that is
         yaw-outside-spin, exactly the tangent-preserving set.
       orbit_spin: Y = spin axis (parallel to the orbit axis). Drag in the
-        orbit plane (X/Z free, Y locked); the Limit Distance against the
-        hidden centre bone holds the tangency radius; spin about Y free.
+        orbit plane (X/Z free, Y locked). The Limit Distance against the
+        hidden center bone holds the tangency radius. Spin about Y free.
       planar_ball: Y = plane normal. Slide in-plane, all rotations free.
       slide_ball: Y = slide axis. Slide along Y only, all rotations free.
     """
@@ -496,7 +496,7 @@ def apply_collapsed_contact(pose_bone, collapsed, unit_scale=1.0,
             con.target = orbit_target
             con.subtarget = orbit_subtarget
             con.distance = collapsed.orbit_radius * unit_scale
-            # ONSURFACE: the bone must sit exactly at the tangency radius —
+            # ONSURFACE: the bone must sit exactly at the tangency radius.
             # inside is interference, outside breaks contact.
             con.limit_mode = "LIMITDIST_ONSURFACE"
     elif kind == "planar_ball":
@@ -524,7 +524,7 @@ def lock_all(pose_bone):
 
 
 def unlock_all(pose_bone):
-    """Free/unmatched groups stay posable on every channel — under-mated in
+    """Free/unmatched groups stay posable on every channel: under-mated in
     CAD means undecided, not fixed."""
     remove_rig_constraints(pose_bone)
     pose_bone.lock_location = [False, False, False]

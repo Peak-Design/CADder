@@ -1,6 +1,6 @@
 # Additional CAD format readers for STEPper NEXT: IGES and BREP.
 #
-# Both subclass ReadSTEP and override only the document-transfer stage; the
+# Both subclass ReadSTEP and override only the document-transfer stage. the
 # shared tree walk, tessellation, healing and native handoff run unchanged.
 # STEP-entity recovery is a STEP-only feature (guarded by _xcaf_reader).
 
@@ -88,7 +88,7 @@ class ReadBREP(ReadSTEP):
         TDataStd_Name.Set_s(lab, TCollection_ExtendedString(name))
         st.UpdateAssemblies()
 
-        self.scale = 0.001  # BREP is unitless; assume millimeters like STEP
+        self.scale = 0.001  # BREP is unitless. Assume millimeters like STEP
         self.doc = doc
         self._xcaf_reader = None
 

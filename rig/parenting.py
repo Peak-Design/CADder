@@ -5,7 +5,7 @@ An earlier design put one GRP_ empty per rigid group between the bone and
 the geometry. Dropped 2026-08-22: the empties bought nothing the RIG_*
 object tags do not already provide (identity survives on the objects, not
 on the middleman) and they cluttered the outliner. Legacy GRP_ empties are
-still recognised and cleaned up by the rig rebuild (they carry RIG_rig).
+still recognized and cleaned up by the rig rebuild (they carry RIG_rig).
 
 BONE parenting evaluates at the bone TAIL, not the head, and against the
 POSE matrix, so the parent matrix is computed deterministically as
@@ -15,17 +15,17 @@ byte-for-byte preserved. Guessing with ops or leaving Blender to compute
 the inverse gives a rig where every part jumps by one bone length.
 
 pose_bone.matrix, NOT bone.matrix_local: the two only agree at rest, and a
-freshly built rig is not guaranteed to BE at rest — a limit constraint
+freshly built rig is not guaranteed to BE at rest: a limit constraint
 whose range excludes the current pose clamps the bone the moment it
 evaluates (live corpus 07, 2026-08-23: a mis-signed manifest limit shoved
 the leaf bone 40° and the rest-matrix formula dragged the geometry with
 it). The rest-matrix formula silently bakes any such clamp into the
-geometry; the pose-matrix formula preserves the geometry no matter what
+geometry. The pose-matrix formula preserves the geometry no matter what
 the constraints did, and report.posed_bones says loudly that a bone was
 off rest while relinking.
 
 Big-scene pattern: set ALL parents first, ONE view_layer.update(), then set
-all matrices — the per-object update Blender does implicitly otherwise is
+all matrices: the per-object update Blender does implicitly otherwise is
 quadratic in scene size.
 """
 
@@ -46,16 +46,16 @@ _DRIFT_TOL = 1e-6
 class ParentReport:
     bone_parented: int = 0
     missing_groups: List[str] = field(default_factory=list)
-    # (object name, drift in Blender units); collected, never raised —
+    # (object name, drift in Blender units). Collected, never raised:
     # aborting mid-scene would leave half the assembly re-parented.
     violations: List[Tuple[str, float]] = field(default_factory=list)
     # Objects the rig drives nothing of, hung off the ground bone so the
     # assembly stays whole when the rig is moved.
     grounded: List[str] = field(default_factory=list)
     # (bone name, metres its head sits from rest at relink time). A bone off
-    # rest before anyone posed it means a constraint rejects the rest pose —
+    # rest before anyone posed it means a constraint rejects the rest pose:
     # almost always a manifest limit whose value_at_rest lies outside its
-    # own min/max. Geometry is preserved regardless; this is the tell.
+    # own min/max. Geometry is preserved regardless. This is the tell.
     posed_bones: List[Tuple[str, float]] = field(default_factory=list)
 
 
@@ -75,7 +75,7 @@ def _rig_maps(arm_obj):
             bone_by_group[gid] = pb.name
     # Group ids are per-manifest and start at g000 every time, so a scene
     # holding two rigged assemblies has two of everything. An object says
-    # which manifest tagged it; one that predates the tag (or came from a
+    # which manifest tagged it. One that predates the tag (or came from a
     # foreign importer) is still taken, because there is nothing better to
     # go on and one rig in a scene is the common case.
     source = arm_obj.get("RIG_source") or None
@@ -125,13 +125,13 @@ def _home_subtree(arm_obj):
 
 def _leftovers(arm_obj, plan_objects, files):
     """Imported objects this rig drives nothing of, and that hang from
-    nothing — the empties an import made, and any part matching could not
+    nothing: the empties an import made, and any part matching could not
     place.
 
     They are the reason a rig looked like it half-worked: bone-parented
     geometry follows the armature and everything else stays behind in world
     space, so moving the rig tore the assembly in two. Hanging them off the
-    ground bone keeps the machine whole; they simply do not articulate.
+    ground bone keeps the machine whole. They simply do not articulate.
 
     Only objects from the same STEP file(s) as the geometry this rig drives,
     so a second import sitting in the same scene is never adopted.
@@ -161,8 +161,8 @@ def _leftovers(arm_obj, plan_objects, files):
 
 def relink(context, arm_obj) -> ParentReport:
     """(Re-)parents everything the scene tags point at. Works from custom
-    properties only — bone and object names are display labels that Blender
-    rewrites on collision — so it runs identically after a file round-trip
+    properties only: bone and object names are display labels that Blender
+    rewrites on collision, so it runs identically after a file round-trip
     with no session state. Intended to run at rest pose: the parent matrix
     uses the bone's rest position, so a posed rig would record drift."""
     report = ParentReport()
@@ -186,15 +186,15 @@ def relink(context, arm_obj) -> ParentReport:
         rest = arm_obj.data.bones[bone_name].matrix_local
         delta = rest.inverted() @ pb.matrix
         # A limit clamp usually rotates about the bone head, so the head
-        # barely moves — the rotation angle is the sensitive measure.
+        # barely moves: the rotation angle is the sensitive measure.
         off = max((pb.matrix.translation - rest.translation).length,
                   abs(delta.to_quaternion().angle))
         if off >= 1e-5:
             report.posed_bones.append((bone_name, off))
             print("[SWTB relink] bone %s sits off its rest pose while "
-                  "relinking (%.4f rad/m) — a constraint rejects the rest "
-                  "pose (check that joint's limits vs value_at_rest); "
-                  "geometry keeps its place regardless" % (bone_name, off))
+                  "relinking (%.4f rad/m): a constraint rejects the rest "
+                  "pose (check that joint's limits against value_at_rest). "
+                  "Geometry keeps its place regardless" % (bone_name, off))
 
     # Whatever the import left over rides the ground bone: the assembly
     # stays one object when the rig is moved, instead of half of it walking

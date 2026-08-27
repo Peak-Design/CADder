@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "stepper_next"
-version = "2.4.6"
+version = "2.4.7"
 name = "STEPper NEXT"
 tagline = "STEP CAD importer"
 maintainer = "Peak-Design"

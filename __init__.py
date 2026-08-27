@@ -74,12 +74,21 @@
 #     swatch), which the addon never writes, so it always came back as
 #     Blender's default 0.8 gray. It now reads the Principled BSDF's Base
 #     Color input, which is where add_material puts the CAD color
+#   - v2.4.7: Imported files panel, listing every STEP file the .blend has
+#     imported and refreshing one from disk. A refresh keeps the objects
+#     and moves only the mesh, the material slots and the CAD placement on
+#     to them, so modifiers, constraints, animation, collections,
+#     parenting, vertex groups, materials you assigned and the placement
+#     you gave them all survive. It can no longer change the size either:
+#     a file imported in the background, or at a custom scale, came back a
+#     thousand times smaller, because the settings it was imported with
+#     were recorded on a worker scene that is deleted after the append
+#     (refresh.py)
+#   - The object color now carries the CAD color, so a Solid viewport
+#     set to Object color matches the file without a material preview
 #   - Import options: "Group in a collection" puts everything one file
 #     creates under a collection named after it, and "Separate solids"
 #     gives every body of a multibody part its own object
-#   - Imported files panel: lists every STEP file the .blend has imported
-#     and refreshes one from disk, keeping the collections, parenting and
-#     visibility arranged around it (refresh.py)
 #   - The file cache now checks the size and modification time on disk, so
 #     re-exporting over the same path no longer imports yesterday's
 #     geometry
@@ -96,7 +105,7 @@ bl_info = {
     "author": "ambi, Peak-Design",
     "description": "STEP OpenCASCADE import",
     "blender": (5, 1, 0),
-    "version": (2, 4, 6),
+    "version": (2, 4, 7),
     "location": "3D View > Tools panel > STEPper NEXT",
     "category": "Import",
 }

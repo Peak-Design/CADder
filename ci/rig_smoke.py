@@ -753,7 +753,7 @@ def run():
                "loop {}: chain_count {} != {} + effector".format(
                    lplan.loop.id, ik.chain_count, lplan.chain_count))
         _check(ik.pole_target is None,
-               "loop {}: pole target set â€” T28313 disables IK limits".format(
+               "loop {}: pole target set. T28313 disables IK limits".format(
                    lplan.loop.id))
         _check(not ik.use_stretch, "loop {}: use_stretch on".format(lplan.loop.id))
 
@@ -762,7 +762,7 @@ def run():
         _check(arm_obj.pose.bones[name].rotation_mode == "YXZ",
                "bone {} rotation_mode is not YXZ".format(name))
 
-    print("blender_smoke: OK â€” {} bones, {} helpers, {} drivers, {} loops".format(
+    print("blender_smoke: OK: {} bones, {} helpers, {} drivers, {} loops".format(
         len(result.bone_names), len(result.helper_names), len(coupled),
         len(plan.loops)))
 

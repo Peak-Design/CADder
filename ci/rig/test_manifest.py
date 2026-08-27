@@ -1,5 +1,5 @@
 ﻿# SPDX-License-Identifier: GPL-3.0-or-later
-"""Manifest parse/validation tests. No bpy â€” the parser must behave
+"""Manifest parse/validation tests. No bpy. The parser must behave
 identically under plain Python and inside Blender."""
 
 import copy

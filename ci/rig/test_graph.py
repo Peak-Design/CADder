@@ -1,6 +1,6 @@
 ﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """RigPlan tests: ordering, loop verification, dependency pre-flight. No
-bpy â€” graph.py must plan the whole rig before Blender is ever involved."""
+bpy. graph.py must plan the whole rig before Blender is ever involved."""
 
 import importlib
 import math

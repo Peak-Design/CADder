@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 from STEPper_NEXT.rig import graph, manifest  # noqa: E402
 from STEPper_NEXT.rig.manifest import ManifestError  # noqa: E402
 
-from test_manifest import base_manifest, component, four_bar_manifest, hinge_manifest  # noqa: E402
+from test_manifest import base_manifest, component, four_bar_manifest, hinge_manifest, identity4, ram_manifest  # noqa: E402
 
 
 def plan_of(data):
@@ -236,23 +236,28 @@ class TestHingePlan(unittest.TestCase):
         self.assertEqual(bp.collapsed.helper_name, "")
         self.assertEqual(bp.parent_group_id, "g001")
 
-    def test_tilted_spin_axis_collapses_to_cone_spin(self):
-        """Tangent cone on a plane (live corpus 15 cone3, 2026-08-23): the
-        spin axis leaves the plane by the half-angle, so channel locks
-        cannot hold the precession — the ball-template ring clamp takes
-        over, with its DEF/POLE/GOAL/FRM bones planned here."""
+    def test_a_tilted_spin_axis_is_left_as_a_chain(self):
+        """Tangent cone on a plane (live corpus 15 cone3): the spin axis
+        leaves the plane by the half-angle, and no ONE bone can hold that.
+
+        The motion is a yaw about the plane normal composed with a spin
+        about the cone axis, two axes a half-angle apart. A single bone with
+        a channel locked turns about two PERPENDICULAR rest axes, and
+        matching both slices forces the half-angle to zero — the cylinder,
+        which is why planar_spin is exact and this is not. So the collapse
+        is declined and the exporter's own two-bone chain stands: the
+        carrier yaws in the plane, the child spins on its axis, and the dip
+        is held by construction rather than by an iterated clamp that
+        measured 61 degrees of leak on the live export (2026-08-25)."""
         plan = plan_of(self._carrier_data(
             j1_type="planar", j1_axis=(0.0, 0.0, 1.0),
             j2_axis=(0.9397, 0.0, 0.342)))
         bp = plan.bone_by_group["g003"]
-        spec = bp.collapsed
-        self.assertEqual(spec.kind, "cone_spin")
-        self.assertAlmostEqual(spec.tilt, math.acos(0.342), places=4)
-        self.assertEqual(spec.def_name, "DEF_" + bp.bone_name)
-        self.assertEqual(spec.pole_name, "POLE_" + bp.bone_name)
-        self.assertEqual(spec.goal_name, "GOAL_" + bp.bone_name)
-        self.assertEqual(spec.frame_name, "FRM_" + bp.bone_name)
-        self.assertEqual(plan.collapsed_carriers, ["g002"])
+        self.assertIsNone(bp.collapsed)
+        self.assertEqual(plan.collapsed_carriers, [])
+        # The carrier keeps its bone, and the child hangs off it.
+        self.assertIn("g002", plan.bone_by_group)
+        self.assertEqual(bp.parent_group_id, "g002")
 
     def test_limits_on_the_chain_keep_the_carrier_bone(self):
         """Anything the collapse patterns cannot absorb keeps the explicit
@@ -474,6 +479,179 @@ class TestDependencyPreflight(unittest.TestCase):
                                          "ratio": 1.0}
         plan = plan_of(data)
         self.assertTrue(any("j003" in w for w in plan.warnings))
+
+
+
+class TestSliderCrank(unittest.TestCase):
+    """A loop cut at its slide is closed by aiming, not by IK. Blender's IK
+    only rotates, so a slide inside a solved chain can only be locked and the
+    mechanism freezes — which is what a hydraulic ram did before this."""
+
+    def test_aim_pair_replaces_the_ik_plan(self):
+        plan = plan_of(ram_manifest())
+        self.assertEqual(len(plan.sliders), 1)
+        self.assertEqual(plan.loops, [])
+        sp = plan.sliders[0]
+        self.assertEqual((sp.a_group, sp.c_group), ("g002", "g003"))
+        self.assertEqual(sp.a_pivot, [1.0, 0.0, 0.0])
+        self.assertEqual(sp.c_pivot, [0.0, 1.0, 0.0])
+
+    def test_each_half_aims_at_the_others_parent(self):
+        """The whole reason the duplicates exist: aiming the two halves
+        straight at each other is a dependency cycle, and Blender would
+        refuse the rig. Each target rides the other half's PARENT — the posed
+        clamp and the ground, neither of which is aimed at anything."""
+        sp = plan_of(ram_manifest()).sliders[0]
+        self.assertEqual(sp.a_aim_parent, "g001")   # the clamp carries the rod
+        self.assertEqual(sp.c_aim_parent, "g000")   # the body carries the barrel
+        self.assertNotEqual(sp.a_aim_parent, sp.c_group)
+        self.assertNotEqual(sp.c_aim_parent, sp.a_group)
+
+    def test_both_halves_rest_pointing_at_each_other(self):
+        """Damped Track aims a NAMED local axis, so the halves can only track
+        each other if their rest +Y already lies along the ram. Resting along
+        the joint axis instead pointed the ram bones at the ceiling (live
+        ClampRig, 2026-08-24)."""
+        plan = plan_of(ram_manifest())
+        self.assertEqual(plan.bone_by_group["g002"].aim_at, [0.0, 1.0, 0.0])
+        self.assertEqual(plan.bone_by_group["g003"].aim_at, [1.0, 0.0, 0.0])
+        # Everything else keeps the ordinary joint-axis frame.
+        self.assertIsNone(plan.bone_by_group["g001"].aim_at)
+
+    def test_the_slide_is_not_a_tree_edge(self):
+        plan = plan_of(ram_manifest())
+        self.assertNotIn("j003", plan.joint_group)
+        self.assertEqual(plan.bone_by_group["g003"].parent_group_id, "g001")
+        self.assertEqual(plan.bone_by_group["g002"].parent_group_id, "g000")
+
+    def test_an_ik_closure_kind_still_plans_ik(self):
+        plan = plan_of(ram_manifest(closure_kind="ik"))
+        self.assertEqual(plan.sliders, [])
+        self.assertEqual(len(plan.loops), 1)
+
+    def test_a_half_with_no_mount_falls_back_to_ik(self):
+        """Aiming needs a pivot to aim FROM, and the grounded root has no
+        mount of its own. A slide straight to ground therefore keeps the IK
+        plan, and the manifest records why rather than silently dropping the
+        closure."""
+        data = base_manifest()
+        data["components"] = [component("c%03d" % i, n) for i, n in
+                              enumerate(["Body", "Slider", "Link"], 1)]
+        data["rigid_groups"] = [
+            {"id": "g000", "name": "body", "components": ["c001"],
+             "grounded": True, "frame": identity4(), "bbox_diag": 1.0},
+            {"id": "g001", "name": "slider", "components": ["c002"],
+             "grounded": False, "frame": None, "bbox_diag": 0.3},
+            {"id": "g002", "name": "link", "components": ["c003"],
+             "grounded": False, "frame": None, "bbox_diag": 0.3},
+        ]
+        pin = [0.0, 0.0, 1.0]
+
+        def rev(jid, parent, child, origin):
+            return {"id": jid, "type": "revolute", "parent_group": parent,
+                    "child_group": child, "origin": origin, "axis": pin,
+                    "secondary_axis": [1.0, 0.0, 0.0], "limits": None}
+
+        data["joints"] = [
+            # The slide runs straight to ground, so its parent side is the
+            # root and has no mount joint.
+            {"id": "j001", "type": "prismatic",
+             "parent_group": "g000", "child_group": "g001",
+             "origin": [0.0, 0.0, 0.0], "axis": [1.0, 0.0, 0.0],
+             "secondary_axis": [0.0, 0.0, 1.0], "limits": None},
+            rev("j002", "g000", "g002", [0.0, 0.5, 0.0]),
+            rev("j003", "g002", "g001", [0.5, 0.5, 0.0]),
+        ]
+        data["loops"] = [{
+            "id": "L1",
+            "member_joints": ["j001", "j002", "j003"],
+            "closure_joint": "j001",
+            "closure_kind": "aim_pair",
+            "suggested_driver_joint": "j002",
+            "planar": True,
+            "plane_normal": pin,
+        }]
+
+        plan = plan_of(data)
+        self.assertEqual(plan.sliders, [])
+        self.assertEqual(len(plan.loops), 1)
+        self.assertTrue(any("falling back to IK" in w for w in plan.warnings),
+                        plan.warnings)
+
+
+
+class TestChainedClosure(unittest.TestCase):
+    """closure_kind "none": the exporter cut the loop so the TREE carries the
+    motion, and the consumer must not solve it. Live ClampRig's cutting
+    head and lead screw rod both slide along the machine with the head mated
+    to the rod; cutting between them left both hanging off ground as siblings
+    and driving the lead screw left the head behind."""
+
+    @staticmethod
+    def _data():
+        data = base_manifest()
+        data["components"] = [component("c%03d" % i, n) for i, n in
+                              enumerate(["Body", "Rod", "Head"], 1)]
+        data["rigid_groups"] = [
+            {"id": "g000", "name": "body", "components": ["c001"],
+             "grounded": True, "frame": identity4(), "bbox_diag": 1.0},
+            {"id": "g001", "name": "rod", "components": ["c002"],
+             "grounded": False, "frame": None, "bbox_diag": 0.5},
+            {"id": "g002", "name": "head", "components": ["c003"],
+             "grounded": False, "frame": None, "bbox_diag": 0.3},
+        ]
+        along = [0.0, 0.0, 1.0]
+        data["joints"] = [
+            {"id": "j001", "type": "prismatic",
+             "parent_group": "g000", "child_group": "g001",
+             "origin": [0.0, 0.0, 0.0], "axis": along,
+             "secondary_axis": [1.0, 0.0, 0.0],
+             "limits": {"rotation": None,
+                        "translation": {"min": 0.0, "max": 0.85,
+                                        "value_at_rest": 0.0}}},
+            {"id": "j003", "type": "planar",
+             "parent_group": "g001", "child_group": "g002",
+             "origin": [0.0, 0.0, 0.1], "axis": along,
+             "secondary_axis": [1.0, 0.0, 0.0], "limits": None},
+            {"id": "j002", "type": "prismatic",
+             "parent_group": "g000", "child_group": "g002",
+             "origin": [0.0, 0.0, 0.1], "axis": along,
+             "secondary_axis": [1.0, 0.0, 0.0], "limits": None},
+        ]
+        data["loops"] = [{
+            "id": "L1",
+            "member_joints": ["j001", "j002", "j003"],
+            "closure_joint": "j002",
+            "closure_kind": "none",
+            "suggested_driver_joint": "j001",
+            "planar": False,
+            "plane_normal": None,
+        }]
+        return data
+
+    def test_the_head_parents_under_the_rod(self):
+        plan = plan_of(self._data())
+        self.assertEqual(plan.bone_by_group["g001"].parent_group_id, "g000")
+        self.assertEqual(plan.bone_by_group["g002"].parent_group_id, "g001")
+
+    def test_nothing_is_solved_but_the_loop_is_still_verified(self):
+        plan = plan_of(self._data())
+        self.assertEqual(plan.loops, [])
+        self.assertEqual(plan.sliders, [])
+        self.assertEqual([lp.id for lp in plan.open_loops], ["L1"])
+
+    def test_a_bad_member_list_is_still_rejected(self):
+        """Leaving the closure unsolved must not mean leaving it unchecked."""
+        data = self._data()
+        data["loops"][0]["member_joints"] = ["j001", "j002"]
+        with self.assertRaises(ManifestError):
+            plan_of(data)
+
+    def test_an_unknown_closure_kind_is_rejected(self):
+        data = self._data()
+        data["loops"][0]["closure_kind"] = "magic"
+        with self.assertRaises(ManifestError):
+            plan_of(data)
 
 
 if __name__ == "__main__":

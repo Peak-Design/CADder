@@ -86,6 +86,11 @@ class BonePlan:
     # their own positions — equal rest axes reduce the reflection to
     # per-channel sign flips, which is what makes the six drivers exact.
     mirror_normal: Optional[List[float]] = None
+    # Half of a slider-crank aim pair: the point in the OTHER half's frame
+    # this bone rests pointing at (metres, manifest frame). Damped Track aims
+    # a named local axis, so the two halves of a ram can only track each
+    # other if their rest +Y already lies along the ram.
+    aim_at: Optional[List[float]] = None
 
 
 @dataclass
@@ -108,12 +113,47 @@ class LoopPlan:
 
 
 @dataclass
+class SliderPlan:
+    """A loop closed by an AIM PAIR rather than IK.
+
+    A slider-crank — a hydraulic ram working a clamp — has no rotational
+    solve: Blender's IK only rotates, so a sliding joint inside a chain can
+    only be locked, and the mechanism freezes. The exporter therefore cuts
+    the loop AT the slide, and the two bodies either side of it each hang off
+    their own pin. All that is left is to point them at each other.
+
+    Which is how a ram is rigged by hand (Oscar, 2026-08-24): the rod parents
+    to the clamp at the rod pin, the barrel to the body at the bore pivot,
+    and each gets a Damped Track at the other. Blender will not take that
+    directly — the two constraints depend on each other — so each aims at a
+    DUPLICATE bone carrying the other's pivot, parented to the other's PARENT
+    instead of to the other. Those parents are the posed clamp and the ground,
+    neither of which is aimed at anything, so the graph stays acyclic.
+    """
+    loop: Loop
+    closure_joint: Joint            # the slide that was cut
+    a_group: str                    # body on the slide's parent side
+    c_group: str                    # body on the slide's child side
+    a_pivot: List[float]            # where a_group swings (metres)
+    c_pivot: List[float]
+    # Each half's target rides the OTHER half's parent, never the other half.
+    a_aim_parent: str               # = c_group's tree parent
+    c_aim_parent: str               # = a_group's tree parent
+    a_aim_name: str = ""            # bone at c_pivot, tracked by a_group
+    c_aim_name: str = ""            # bone at a_pivot, tracked by c_group
+
+
+@dataclass
 class RigPlan:
     manifest: Manifest
     bones: List[BonePlan] = field(default_factory=list)     # parents always before children
     bone_by_group: Dict[str, BonePlan] = field(default_factory=dict)
     joint_group: Dict[str, str] = field(default_factory=dict)  # tree joint id -> articulating group id
     loops: List[LoopPlan] = field(default_factory=list)
+    sliders: List[SliderPlan] = field(default_factory=list)
+    # Loops the exporter cut so the tree already carries them: verified like
+    # any other, then deliberately left unsolved.
+    open_loops: List[Loop] = field(default_factory=list)
     grounded_groups: List[str] = field(default_factory=list)
     free_groups: List[str] = field(default_factory=list)    # unparented, not grounded
     collapsed_carriers: List[str] = field(default_factory=list)  # groups with no bone
@@ -232,6 +272,12 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
         in_loops.add(lplan.ik_tip_group)
         in_loops.add(lplan.closure_joint.parent_group)
         in_loops.add(lplan.closure_joint.child_group)
+    for splan in plan.sliders:
+        in_loops.update((splan.a_group, splan.c_group,
+                         splan.a_aim_parent, splan.c_aim_parent))
+    for lp in plan.open_loops:
+        cj = plan.manifest.joint_by_id()[lp.closure_joint]
+        in_loops.update((cj.parent_group, cj.child_group))
 
     coupling_drivers = set()
     for j in plan.manifest.joints:
@@ -294,14 +340,34 @@ def _collapse_carriers(plan: RigPlan, groups, parent_of) -> Dict[str, CollapsedC
                 continue
             if abs(_v_dot(n, a)) > 0.1:
                 # The spin axis is tilted OUT of the plane: a tangent CONE
-                # (live corpus 15 cone3, 2026-08-23). Channel locks cannot
-                # hold a tilted precession, so this collapses through the
-                # ball template instead — the DEF axis pinned to its
-                # fixed-tilt ring around the plane normal.
-                kind = "cone_spin"
-                spec.kind = kind
-                dot = max(-1.0, min(1.0, _v_dot(n, a)))
-                spec.tilt = math.acos(dot)
+                # (live corpus 15 cone3). DECLINE the collapse and let the
+                # exporter's own two-bone chain stand.
+                #
+                # One bone provably cannot hold this. The motion is
+                # {Rn(yaw) . Ra(spin)} about two axes at the cone's
+                # half-angle to each other; one bone with a channel locked
+                # reaches {Rc . Rb} about two PERPENDICULAR rest axes, and
+                # matching both slices forces b parallel to a and c parallel
+                # to n, hence n perpendicular to a — half-angle zero, which
+                # is the cylinder. That is exactly why planar_spin IS exact
+                # and why this cannot be.
+                #
+                # It was collapsed anyway through the ball template with a
+                # degenerate band, and that band is an iterated attractor
+                # rather than a constraint: measured 2026-08-25 on the live
+                # cone3 export it converges about 0.13x per round and leaks
+                # up to 61 degrees of dip, putting the cone 17.8 mm through
+                # the plate. The plain chain holds the dip to 4e-6 degrees
+                # and the apex to 2e-9 m over 300 random poses, because the
+                # child's only free channel IS its own axis, so the dip is
+                # held by construction rather than by iteration.
+                #
+                # Declining a collapse is always safe: it is a posing
+                # convenience, never a correctness requirement. The cost is
+                # one extra grabbable bone — which is what the motion has:
+                # one bone precesses about the vertical, the other spins
+                # about the cone's own axis.
+                continue
 
         # Rewire: the child hangs from the carrier's parent on the SPIN
         # joint (its axis and origin are the child's own), the carrier
@@ -341,6 +407,41 @@ def _assert_acyclic(edges: Dict[str, Set[str]], labels: Dict[str, str]):
             if not advanced:
                 state[node] = 2
                 stack.pop()
+
+
+def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
+                 parent_of) -> Optional[SliderPlan]:
+    """Turns a cut slide into an aim pair, or explains why it cannot.
+
+    Both bodies either side of the slide must hang off a pin of their own —
+    that pin's origin is the point the other half aims at. Without one there
+    is nothing to aim from, and the loop falls back to the IK plan."""
+    a_gid, c_gid = cj.parent_group, cj.child_group
+    for gid in (a_gid, c_gid):
+        if gid not in parent_of:
+            plan.warnings.append(
+                "loop {}: {} has no mount of its own, so the slide cannot be "
+                "closed by aiming; falling back to IK".format(lp.id, gid))
+            return None
+    a_parent, a_joint = parent_of[a_gid]
+    c_parent, c_joint = parent_of[c_gid]
+    if a_joint.origin is None or c_joint.origin is None:
+        plan.warnings.append(
+            "loop {}: a mount of the slide has no origin, so there is no "
+            "point to aim at; falling back to IK".format(lp.id))
+        return None
+    if a_parent == a_gid or c_parent == c_gid:
+        return None
+    return SliderPlan(
+        loop=lp,
+        closure_joint=cj,
+        a_group=a_gid,
+        c_group=c_gid,
+        a_pivot=list(a_joint.origin),
+        c_pivot=list(c_joint.origin),
+        a_aim_parent=c_parent,
+        c_aim_parent=a_parent,
+    )
 
 
 def build(manifest: Manifest) -> RigPlan:
@@ -421,6 +522,23 @@ def build(manifest: Manifest) -> RigPlan:
             raise ManifestError(
                 "loop {}: member_joints {} do not match the tree path plus "
                 "closure {}".format(lp.id, sorted(lp.member_joints), sorted(path_ids)))
+
+        if lp.closure_kind == "none":
+            # The exporter cut this loop so the TREE carries the motion — two
+            # bodies sliding on the same ground, one now parented to the
+            # other rather than sitting beside it. There is nothing left to
+            # solve, and a solver here would rotate a body whose mates never
+            # let it rotate (live ClampRig, 2026-08-24: the cutting head
+            # on the lead screw rod).
+            plan.open_loops.append(lp)
+            continue
+
+        if lp.closure_kind == "aim_pair":
+            slider = _plan_slider(plan, lp, cj, parent_of)
+            if slider is not None:
+                plan.sliders.append(slider)
+                continue
+            # _plan_slider recorded why; an IK plan is still better than none.
 
         driver_side = None
         if lp.suggested_driver_joint:
@@ -506,6 +624,15 @@ def build(manifest: Manifest) -> RigPlan:
         edges[enode].add(hnode)                           # its IK target
         for gid in lplan.driven_chain:
             edges[bone_node(gid)].add(hnode)
+    for splan in plan.sliders:
+        for tag, group, aim_parent in (
+                ("a", splan.a_group, splan.a_aim_parent),
+                ("c", splan.c_group, splan.c_aim_parent)):
+            anode = "aim:" + splan.loop.id + ":" + tag
+            labels[anode] = "aim target {} for loop {}".format(tag, splan.loop.id)
+            edges.setdefault(anode, set())
+            edges[anode].add(bone_node(aim_parent))
+            edges[bone_node(group)].add(anode)
     for j in manifest.joints:
         if j.coupling is None or j.id not in plan.joint_group:
             continue
@@ -547,6 +674,11 @@ def build(manifest: Manifest) -> RigPlan:
     for kids in children.values():
         kids.sort()
 
+    aim_of = {}
+    for splan in plan.sliders:
+        aim_of[splan.a_group] = list(splan.c_pivot)
+        aim_of[splan.c_group] = list(splan.a_pivot)
+
     taken_names = set()
     order = list(plan.grounded_groups) + list(plan.free_groups)
     stack = list(reversed(order))
@@ -572,6 +704,7 @@ def build(manifest: Manifest) -> RigPlan:
             collapsed=collapse_specs.get(gid),
             root=is_root,
             mirror_normal=mirror_normal_of.get(gid),
+            aim_at=aim_of.get(gid),
         )
         if swing_cone(joint):
             bp.ball_def_name = _unique_name("DEF_" + bp.bone_name, taken_names, gid)
@@ -593,6 +726,11 @@ def build(manifest: Manifest) -> RigPlan:
             "HLP_" + lplan.loop.id, taken_names, lplan.loop.id)
         lplan.effector_name = _unique_name(
             "EFF_" + lplan.loop.id, taken_names, lplan.loop.id)
+    for splan in plan.sliders:
+        splan.a_aim_name = _unique_name(
+            "AIM_" + splan.loop.id + "_a", taken_names, splan.loop.id)
+        splan.c_aim_name = _unique_name(
+            "AIM_" + splan.loop.id + "_c", taken_names, splan.loop.id)
     for gid in sorted(collapse_specs):
         spec = collapse_specs[gid]
         if spec.kind == "orbit_spin":

@@ -37,6 +37,12 @@ class PoseSyncReport:
     moved: List[Tuple[str, float]] = field(default_factory=list)   # name, metres
     already_ok: int = 0
     skipped: List[Tuple[str, str]] = field(default_factory=list)   # name, reason
+    # Rigid subassemblies that resolved to a COLLECTION. These are not
+    # declined corrections: no object carries the occurrence's own pose, so
+    # there is nothing to compare and — where the STEP and the manifest agree,
+    # which the matcher has already checked — nothing to do. Kept out of
+    # `skipped` so a healthy TREE-mode sync does not report as a warning.
+    collections: List[Tuple[str, str]] = field(default_factory=list)
 
 
 def _det3(rows) -> float:
@@ -123,6 +129,24 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
     targets: Dict[str, List[List[float]]] = {}
     pending = []
     for entry in report.matched:
+        if entry.collection_name is not None:
+            # A rigid subassembly that resolved to a COLLECTION has no
+            # object carrying the occurrence's own pose, so there is nothing
+            # to measure the manifest pose against and no rigid delta to
+            # apply. Moving its parts onto the component transform one by
+            # one would collapse the subassembly onto a point.
+            #
+            # Nothing is lost where the STEP and the manifest agree: the
+            # matcher only accepts such a pairing after checking that the
+            # parts sit where the manifest's frame says, which is the same
+            # comparison this stage makes. What IS lost is the case pose
+            # sync exists for — a flexible subassembly inserted twice, whose
+            # STEP layout can only be one of the two poses. That one needs
+            # an import with Parented empties.
+            out.collections.append((entry.collection_name,
+                                    "a subassembly resolved to a collection — "
+                                    "no object carries its occurrence pose"))
+            continue
         obj = by_name.get(entry.object_name)
         comp = comps.get(entry.component_id)
         if obj is None or comp is None:
@@ -172,4 +196,6 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
               % (name, dist))
     for name, reason in out.skipped:
         print("[SWTB pose] skipped %s: %s" % (name, reason))
+    for name, reason in out.collections:
+        print("[SWTB pose] %s: %s" % (name, reason))
     return out

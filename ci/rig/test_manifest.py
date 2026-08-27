@@ -3,6 +3,7 @@
 identically under plain Python and inside Blender."""
 
 import copy
+import math
 import os
 import sys
 import tempfile
@@ -103,6 +104,57 @@ def four_bar_manifest():
         "suggested_driver_joint": "j001",
         "planar": True,
         "plane_normal": [0.0, 0.0, 1.0],
+    }]
+    return data
+
+
+def ram_manifest(closure_kind="aim_pair"):
+    """A hydraulic ram working a clamp — the shape live ClampRig has
+    twice over. Down the pin axis: the clamp pivots at the origin, the ram's
+    bore at (1,0,0) and the rod's pin at (0,1,0), so the ram is sqrt(2) long
+    and the corner at the clamp pivot is square."""
+    data = base_manifest()
+    data["components"] = [component("c%03d" % i, n) for i, n in
+                          enumerate(["Body", "Clamp", "Barrel", "Rod"], 1)]
+    data["rigid_groups"] = [
+        {"id": "g000", "name": "body", "components": ["c001"],
+         "grounded": True, "frame": identity4(), "bbox_diag": 1.0},
+        {"id": "g001", "name": "clamp", "components": ["c002"],
+         "grounded": False, "frame": None, "bbox_diag": 0.4},
+        {"id": "g002", "name": "barrel", "components": ["c003"],
+         "grounded": False, "frame": None, "bbox_diag": 0.4},
+        {"id": "g003", "name": "rod", "components": ["c004"],
+         "grounded": False, "frame": None, "bbox_diag": 0.3},
+    ]
+    pin = [0.0, 0.0, 1.0]
+
+    def rev(jid, parent, child, origin, jtype="revolute"):
+        return {"id": jid, "type": jtype, "parent_group": parent,
+                "child_group": child, "origin": origin, "axis": pin,
+                "secondary_axis": [1.0, 0.0, 0.0], "limits": None}
+
+    root2 = math.sqrt(2.0)
+    data["joints"] = [
+        rev("j001", "g000", "g001", [0.0, 0.0, 0.0]),
+        rev("j002", "g000", "g002", [1.0, 0.0, 0.0]),
+        {"id": "j003", "type": "prismatic",
+         "parent_group": "g002", "child_group": "g003",
+         "origin": [0.5, 0.5, 0.0],
+         "axis": [-1.0 / root2, 1.0 / root2, 0.0],
+         "secondary_axis": [0.0, 0.0, 1.0],
+         "limits": {"rotation": None,
+                    "translation": {"min": 0.3, "max": 0.8,
+                                    "value_at_rest": 0.5}}},
+        rev("j004", "g001", "g003", [0.0, 1.0, 0.0], jtype="cylindrical"),
+    ]
+    data["loops"] = [{
+        "id": "L1",
+        "member_joints": ["j001", "j002", "j003", "j004"],
+        "closure_joint": "j003",
+        "closure_kind": closure_kind,
+        "suggested_driver_joint": "j001",
+        "planar": True,
+        "plane_normal": pin,
     }]
     return data
 
@@ -225,6 +277,33 @@ class TestParse(unittest.TestCase):
         data["components"].append(copy.deepcopy(data["components"][0]))
         with self.assertRaisesRegex(ManifestError, "duplicate"):
             manifest.parse(data)
+
+    def _mirror_manifest(self, scope=None):
+        data = hinge_manifest()
+        coupling = {"kind": "mirror", "driver_joint": "j001",
+                    "mirror_plane": {"point": [0.0, 0.0, 0.0],
+                                     "normal": [0.0, 1.0, 0.0]}}
+        if scope is not None:
+            coupling["mirror_scope"] = scope
+        data["joints"][0]["coupling"] = coupling
+        data["joints"][0]["id"] = "j002"
+        data["joints"].insert(0, dict(data["joints"][0], id="j001",
+                                      coupling=None))
+        return data
+
+    def test_mirror_scope_defaults_to_plane(self):
+        """A manifest written before mirror features existed carries no
+        scope, and the reading it was written under is the plane one."""
+        m = manifest.parse(self._mirror_manifest())
+        self.assertEqual(m.joints[1].coupling.mirror_scope, "plane")
+
+    def test_mirror_scope_rigid_is_kept(self):
+        m = manifest.parse(self._mirror_manifest("rigid"))
+        self.assertEqual(m.joints[1].coupling.mirror_scope, "rigid")
+
+    def test_unknown_mirror_scope_is_rejected(self):
+        with self.assertRaisesRegex(ManifestError, "mirror_scope"):
+            manifest.parse(self._mirror_manifest("halfway"))
 
     def test_load_rejects_bad_json(self):
         fd, path = tempfile.mkstemp(suffix=".rig.json")

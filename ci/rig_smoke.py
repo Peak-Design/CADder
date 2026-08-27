@@ -61,7 +61,8 @@ def _demo_manifest():
                         "occurrence_matching": None},
         "components": [comp("c%03d" % i, n) for i, n in enumerate(
             ["Ground", "Crank", "Rocker", "Coupler", "Nut", "Wheel", "Stud",
-             "Slider", "Stud2", "Cone", "MirrorA", "MirrorB"], 1)],
+             "Slider", "Stud2", "Cone", "MirrorA", "MirrorB",
+             "MirrorC", "MirrorD"], 1)],
         "rigid_groups": [
             group("g000", "ground", "c001", True, 0.5),
             group("g001", "crank", "c002", False, 0.1),
@@ -77,6 +78,8 @@ def _demo_manifest():
             group("g010", "cone", "c010", False, 0.05),
             group("g011", "mirror_a", "c011", False, 0.05),
             group("g012", "mirror_b", "c012", False, 0.05),
+            group("g013", "mirror_c", "c013", False, 0.05),
+            group("g014", "mirror_d", "c014", False, 0.05),
         ],
         "joints": [
             rev("j001", "g000", "g001", [0.0, 0.0, 0.0],
@@ -136,7 +139,21 @@ def _demo_manifest():
              "child_group": "g012", "origin": None, "axis": None,
              "secondary_axis": None, "limits": None,
              "coupling": {"kind": "mirror", "driver_joint": "j012",
+                          "mirror_scope": "plane",
                           "mirror_plane": {"point": [0.8, 0.0, 0.0],
+                                           "normal": [0.0, 1.0, 0.0]}}},
+            # The other mirror flavour: an assembly MIRROR FEATURE. The
+            # instance is a full reflection of its source, so all six
+            # channels follow and nothing on the driven bone is posable.
+            {"id": "j014", "type": "free", "parent_group": "g000",
+             "child_group": "g013", "origin": None, "axis": None,
+             "secondary_axis": None, "limits": None},
+            {"id": "j015", "type": "free", "parent_group": "g000",
+             "child_group": "g014", "origin": None, "axis": None,
+             "secondary_axis": None, "limits": None,
+             "coupling": {"kind": "mirror", "driver_joint": "j014",
+                          "mirror_scope": "rigid",
+                          "mirror_plane": {"point": [1.2, 0.0, 0.0],
                                            "normal": [0.0, 1.0, 0.0]}}},
             {"id": "j008", "type": "pin_slot", "parent_group": "g000",
              "child_group": "g007", "origin": [0.4, 0.0, 0.0],
@@ -195,6 +212,17 @@ def run():
 
     from STEPper_NEXT.rig import graph, manifest as manifest_mod, rig_build
 
+    def hidden_bones(armature):
+        """Every bone in a collection the user cannot see. The rig sorts
+        bones into controls, limits, mechanism and helpers, and more than one
+        of those is hidden — what matters to these checks is not WHICH
+        collection a bone landed in but whether it is out of the way."""
+        out = set()
+        for coll in armature.collections:
+            if not coll.is_visible:
+                out.update(b.name for b in coll.bones)
+        return out
+
     m = manifest_mod.load(manifest_path)
     plan = graph.build(m)
     result = rig_build.build(bpy.context, m, plan)
@@ -203,17 +231,21 @@ def run():
 
     # 1) One bone per rigid group (collapsed carriers get none) plus a
     # helper and an effector per loop, DEF/POLE/GOAL for every swing-cone
-    # ball, and DEF/POLE/GOAL/FRM for every cone_spin collapse.
+    # ball, DEF/POLE/GOAL/FRM for every cone_spin collapse, and one limit
+    # dial for every control that has a limit to show.
     coned = [bp for bp in plan.bones if bp.ball_def_name]
     cone_spins = [bp for bp in plan.bones
                   if bp.collapsed is not None and bp.collapsed.kind == "cone_spin"]
+    limits = len(result.limit_names)
     expected = (len(m.rigid_groups) - len(plan.collapsed_carriers)
-                + 2 * len(plan.loops) + 3 * len(coned) + 4 * len(cone_spins))
+                + 2 * len(plan.loops) + 3 * len(coned) + 4 * len(cone_spins)
+                + limits)
     _check(len(arm.bones) == expected,
            "bone count {} != groups {} - carriers {} + 2x loops {} + 3x "
-           "coned balls {} + 4x cone spins {}".format(
+           "coned balls {} + 4x cone spins {} + limit dials {}".format(
                len(arm.bones), len(m.rigid_groups), len(plan.collapsed_carriers),
-               len(plan.loops), len(coned), len(cone_spins)))
+               len(plan.loops), len(coned), len(cone_spins), limits))
+    _check(limits > 0, "no limit dial was built at all")
 
     # 2) Every joint bone's local +Y parallel to the manifest axis — except a
     # swing-cone ball, whose axis is the CONE axis; its bone points along the
@@ -324,15 +356,13 @@ def run():
         joint = bp.joint
         ctrl_name = result.ball_ctrl_names[gid]
         def_name = result.bone_names[gid]
-        coll = arm.collections.get("SW_helpers")
-        _check(coll is not None, "SW_helpers missing with a coned ball present")
-        in_helpers = {b.name for b in coll.bones}
-        _check(ctrl_name not in in_helpers,
+        out_of_sight = hidden_bones(arm)
+        _check(ctrl_name not in out_of_sight,
                "ball {}: the user handle is hidden".format(joint.id))
         for name in (def_name, result.ball_pole_names[gid],
                      result.ball_goal_names[gid]):
-            _check(name in in_helpers,
-                   "ball {}: {} not in SW_helpers".format(joint.id, name))
+            _check(name in out_of_sight,
+                   "ball {}: {} is not hidden".format(joint.id, name))
         def_pb = arm_obj.pose.bones[def_name]
         _check(def_pb.get("RIG_group") == gid,
                "ball {}: RIG_group is not on DEF".format(joint.id))
@@ -395,14 +425,13 @@ def run():
         spec = bp.collapsed
         ctrl_pb = arm_obj.pose.bones[result.ball_ctrl_names[gid]]
         def_pb = arm_obj.pose.bones[result.bone_names[gid]]
-        coll = arm.collections.get("SW_helpers")
-        in_helpers = {b.name for b in coll.bones}
-        _check(ctrl_pb.name not in in_helpers,
+        out_of_sight = hidden_bones(arm)
+        _check(ctrl_pb.name not in out_of_sight,
                "cone {}: the handle is hidden".format(gid))
         for name in (result.bone_names[gid], result.ball_pole_names[gid],
                      result.ball_goal_names[gid], result.cone_frame_names[gid]):
-            _check(name in in_helpers,
-                   "cone {}: {} not in SW_helpers".format(gid, name))
+            _check(name in out_of_sight,
+                   "cone {}: {} is not hidden".format(gid, name))
         normal_world = Vector(spec.carrier_joint.axis).normalized()
 
         def def_tilt():
@@ -445,21 +474,30 @@ def run():
         ctrl_pb.location = (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
 
-    # 3d) Mirror pair: the driven bone is the EXACT reflection of the
-    # driver across the plane at every pose. Both rest frames are
-    # plane-aligned, so the check is against the true affine reflection
-    # S @ M @ S, not the sign-flip shortcut that implements it.
+    # 3d) Mirror pair. A symmetric mate between two planar faces is a
+    # plane-to-plane relation, so it couples exactly THREE degrees of
+    # freedom: the translation along the mirror normal and the two
+    # rotations that tilt it. Those three are also exactly the channels
+    # that negate under the reflection, which is why the drivers are three
+    # sign flips. The other three must stay independent — SolidWorks lets
+    # one block be raised without the other (live corpus 14 sym4).
     from mathutils import Matrix as _Mx
     mirror_joints = [j for j in m.joints
                      if j.coupling is not None and j.coupling.kind == "mirror"]
     for joint in mirror_joints:
+        rigid = joint.coupling.mirror_scope == "rigid"
         drv_gid = plan.joint_group[joint.coupling.driver_joint]
         dvn_gid = plan.joint_group[joint.id]
         drv_pb = arm_obj.pose.bones[result.bone_names[drv_gid]]
         dvn_pb = arm_obj.pose.bones[result.bone_names[dvn_gid]]
-        _check(list(dvn_pb.lock_location) == [True, True, True]
-               and list(dvn_pb.lock_rotation) == [True, True, True],
-               "mirror {}: driven bone is not locked".format(joint.id))
+        want_loc = [True] * 3 if rigid else [False, True, False]
+        want_rot = [True] * 3 if rigid else [True, False, True]
+        _check(list(dvn_pb.lock_location) == want_loc
+               and list(dvn_pb.lock_rotation) == want_rot,
+               "mirror {} ({}): driven bone locks {} {}, wanted {} {}".format(
+                   joint.id, joint.coupling.mirror_scope,
+                   list(dvn_pb.lock_location), list(dvn_pb.lock_rotation),
+                   want_loc, want_rot))
         _check(list(drv_pb.lock_location) == [False, False, False]
                and list(drv_pb.lock_rotation) == [False, False, False],
                "mirror {}: driver bone is not free".format(joint.id))
@@ -477,9 +515,22 @@ def run():
                 S_lin[r][cc] = S[r][cc]
             S[r][3] = 2.0 * p.dot(n) * n[r]
 
-        drv_pb.rotation_mode = "YXZ"
-        for loc, rot in (((0.03, 0.05, -0.02), (0.4, -0.7, 0.2)),
-                         ((-0.06, 0.01, 0.04), (1.2, 0.3, -0.9))):
+        # Both bones must decompose with the SAME euler order or the
+        # per-channel sign flips stop being the reflection.
+        drv_pb.rotation_mode = dvn_pb.rotation_mode = "YXZ"
+        rest = (arm_obj.matrix_world
+                @ arm_obj.data.bones[dvn_pb.name].matrix_local)
+
+        # The driven body is the exact reflection of the driver. For the
+        # "plane" scope only the three COUPLED channels are posed here, since
+        # the other three are deliberately independent; for "rigid" every
+        # channel is posed, because every channel follows.
+        poses = (((0.0, 0.05, 0.0), (0.4, 0.0, 0.2)),
+                 ((0.0, -0.03, 0.0), (-0.6, 0.0, 1.1)))
+        if rigid:
+            poses = (((0.03, 0.05, -0.02), (0.4, 0.7, 0.2)),
+                     ((-0.01, -0.03, 0.04), (-0.6, -0.3, 1.1)))
+        for loc, rot in poses:
             drv_pb.location = loc
             drv_pb.rotation_euler = rot
             bpy.context.view_layer.update()
@@ -489,6 +540,35 @@ def run():
                       for r in range(3) for cc in range(4))
             _check(err < 1e-5,
                    "mirror {}: driven off the reflection by {}".format(joint.id, err))
+
+        if rigid:
+            # A mirror feature leaves nothing independent, so the
+            # independence checks below do not apply. Reset and move on.
+            drv_pb.location = (0.0, 0.0, 0.0)
+            drv_pb.rotation_euler = (0.0, 0.0, 0.0)
+            bpy.context.view_layer.update()
+            continue
+
+        # FREE channels: sliding the driver within the plane, or spinning it
+        # about the normal, must leave the twin exactly where it was.
+        drv_pb.location = (0.04, 0.0, -0.05)
+        drv_pb.rotation_euler = (0.0, 0.8, 0.0)
+        bpy.context.view_layer.update()
+        got = arm_obj.matrix_world @ dvn_pb.matrix
+        err = max(abs(rest[r][cc] - got[r][cc])
+                  for r in range(3) for cc in range(4))
+        _check(err < 1e-6,
+               "mirror {}: the twin followed a FREE channel by {} — the two "
+               "bodies are welded".format(joint.id, err))
+
+        # And the twin can be posed in those channels on its own.
+        dvn_pb.location = (0.02, 0.0, 0.0)
+        bpy.context.view_layer.update()
+        moved = ((arm_obj.matrix_world @ dvn_pb.matrix).translation
+                 - rest.translation).length
+        _check(moved > 1e-4,
+               "mirror {}: the twin cannot be moved independently".format(joint.id))
+        dvn_pb.location = (0.0, 0.0, 0.0)
         drv_pb.location = (0.0, 0.0, 0.0)
         drv_pb.rotation_euler = (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
@@ -513,7 +593,131 @@ def run():
             _check(fc.driver.type == "SCRIPTED" and fc.driver.expression,
                    "joint {}: driver has no expression".format(joint.id))
 
-    # 5) Loop closures: helper and effector hidden in SW_helpers, IK on the
+    # 4b) The bone taxonomy. Only what a user can actually grab is visible,
+    # and everything visible says what it does.
+    controls = arm.collections.get("SW_controls")
+    limits = arm.collections.get("SW_limits")
+    mechanism = arm.collections.get("SW_mechanism")
+    _check(controls is not None and controls.is_visible,
+           "SW_controls missing or hidden")
+    _check(limits is not None and limits.is_visible,
+           "SW_limits missing or hidden")
+    _check(mechanism is not None and not mechanism.is_visible,
+           "SW_mechanism missing or visible")
+
+    control_names = {b.name for b in controls.bones}
+    _check(control_names, "no control bone at all")
+    for name in control_names:
+        pb = arm_obj.pose.bones[name]
+        _check(pb.custom_shape is not None,
+               "control {} has no widget".format(name))
+        _check(pb.color.palette == "THEME01",
+               "control {} is not the control colour".format(name))
+        _check(not (all(pb.lock_location) and all(pb.lock_rotation)),
+               "control {} has nothing unlocked to pose".format(name))
+
+    # Being DRIVEN does not by itself make a bone mechanism — what decides
+    # is whether anything of its own is left to pose. A gear follower and a
+    # mirror-FEATURE instance have every channel written by their driver and
+    # are mechanism; a plane-symmetry follower still slides in its plane and
+    # spins about the normal on its own, and hiding that would take away a
+    # freedom SolidWorks allows (live corpus 14 sym4, 2026-08-25).
+    for bp in plan.bones:
+        joint = bp.joint
+        if joint is None or joint.coupling is None:
+            continue
+        if not joint.coupling.driver_joint:
+            continue
+        driven = result.ball_ctrl_names.get(bp.group.id,
+                                            result.bone_names[bp.group.id])
+        pb = arm_obj.pose.bones[driven]
+        own_freedom = not (all(pb.lock_location) and all(pb.lock_rotation))
+        if own_freedom:
+            _check(driven in control_names,
+                   "driven bone {} keeps {} unlocked channel(s) of its own "
+                   "but is hidden away in the mechanism".format(
+                       driven,
+                       sum(1 for v in list(pb.lock_location)
+                           + list(pb.lock_rotation) if not v)))
+        else:
+            _check(driven not in control_names,
+                   "driven bone {} is offered as a control".format(driven))
+            _check(driven in {b.name for b in mechanism.bones},
+                   "driven bone {} is not in the mechanism".format(driven))
+
+    # A bone the IK of a loop closure places is not posable either: dragging
+    # it only fights the solver back (live corpus 06, 2026-08-25 — the
+    # four-bar showed two red bones and the second one did nothing).
+    for lplan in plan.loops:
+        for gid in list(lplan.driven_chain or []) + [lplan.ik_tip_group]:
+            if not gid or gid not in result.bone_names:
+                continue
+            name = result.ball_ctrl_names.get(gid, result.bone_names[gid])
+            _check(name not in control_names,
+                   "{} is solved by loop {} yet offered as a control".format(
+                       name, lplan.loop.id))
+
+    from mathutils import Matrix as _WidgetMx
+
+    # A widget is drawn with its OWN origin at the bone's head. Give the
+    # object a transform of its own and the shape is drawn off the bone —
+    # a dial that orbits the joint instead of turning about it.
+    for pb in arm_obj.pose.bones:
+        shape = pb.custom_shape
+        if shape is None:
+            continue
+        _check(shape.matrix_world == _WidgetMx.Identity(4),
+               "widget {} carries a transform of its own".format(shape.name))
+        _check(tuple(pb.custom_shape_translation) == (0.0, 0.0, 0.0),
+               "{}: its widget is offset from the bone".format(pb.name))
+
+    # Every limit dial is fixed, coloured as a limit, and carries a widget
+    # built from the joint's own numbers.
+    for gid, lname in result.limit_names.items():
+        lb = arm_obj.pose.bones[lname]
+        _check(lb.name in {b.name for b in limits.bones},
+               "{} is not in SW_limits".format(lname))
+        _check(lb.color.palette == "THEME09",
+               "{} is not the limit colour".format(lname))
+        _check(all(lb.lock_location) and all(lb.lock_rotation),
+               "{} can be posed; a dial must stay put".format(lname))
+        _check(lb.custom_shape is not None, "{} has no dial".format(lname))
+        joint = plan.bone_by_group[gid].joint
+        if joint.translation_limit is not None and joint.rotation_limit is None:
+            # A stroke rail is a MEASUREMENT: it must not be rescaled by the
+            # bone's length, and it must be as long as the travel.
+            _check(not lb.use_custom_shape_bone_size,
+                   "{}: a stroke rail must not scale with the bone".format(lname))
+            span = (joint.translation_limit.delta_max
+                    - joint.translation_limit.delta_min)
+            ys = [v.co[1] for v in lb.custom_shape.data.vertices]
+
+            # The limit clamps the slide's ORIGIN, and the slide widget
+            # sticks out half its length either side of that origin. So the
+            # rail runs half a slide past each stop: hard against the limit,
+            # the slide's end meets the rail's end. Unpadded, the slide hung
+            # half off the rail at exactly the pose that has to look right.
+            ctrl = arm_obj.pose.bones[
+                result.ball_ctrl_names.get(gid, result.bone_names[gid])]
+            _check(ctrl.custom_shape is not None and
+                   ctrl.use_custom_shape_bone_size,
+                   "{}: the slide it measures has no bone-sized widget"
+                   .format(lname))
+            slide_ys = [v.co[1] for v in ctrl.custom_shape.data.vertices]
+            half_slide = max(slide_ys) * ctrl.bone.length
+            _check(half_slide > 1e-9, "{}: the slide widget is flat"
+                   .format(lname))
+
+            want = span + 2.0 * half_slide
+            _check(abs((max(ys) - min(ys)) - want) < 1e-6,
+                   "{}: rail is {:.4f} long, travel + slide is {:.4f}".format(
+                       lname, max(ys) - min(ys), want))
+            at_stop = joint.translation_limit.delta_min - half_slide
+            _check(abs(min(ys) - at_stop) < 1e-6,
+                   "{}: rail ends at {:.4f}, the slide reaches {:.4f}".format(
+                       lname, min(ys), at_stop))
+
+    # 5) Loop closures: helper and effector out of sight, IK on the
     # effector aiming its HEAD (the closure point) at the helper.
     for lplan in plan.loops:
         helper_name = result.helper_names[lplan.loop.id]
@@ -521,9 +725,9 @@ def run():
         coll = arm.collections.get("SW_helpers")
         _check(coll is not None and not coll.is_visible,
                "SW_helpers bone collection missing or visible")
+        out_of_sight = hidden_bones(arm)
         for name in (helper_name, effector_name):
-            _check(any(b.name == name for b in coll.bones),
-                   "{} not in SW_helpers".format(name))
+            _check(name in out_of_sight, "{} is not hidden".format(name))
         tip_pb = arm_obj.pose.bones[result.bone_names[lplan.ik_tip_group]]
         _check(not any(c.type == "IK" for c in tip_pb.constraints),
                "loop {}: stray IK on the tip bone".format(lplan.loop.id))

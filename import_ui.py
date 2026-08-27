@@ -44,6 +44,7 @@ PERSISTED_PROPS = (
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
     "eng_materials", "uv_mode", "uv_normalize", "uv_split_closed",
     "box_uv_scale", "skip_construction", "import_curves",
+    "group_in_collection", "separate_solids",
 )
 
 
@@ -192,6 +193,7 @@ def draw_import_dialog(op, layout, prefs):
     if body:
         body.prop(op, "up_as", text="Up Axis")
         body.prop(op, "hierarchy_types", text="Hierarchy")
+        body.prop(op, "group_in_collection")
         body.prop(op, "custom_scale")
         sub = body.row()
         sub.active = op.custom_scale
@@ -217,6 +219,7 @@ def draw_import_dialog(op, layout, prefs):
     if body:
         body.prop(op, "skip_construction")
         body.prop(op, "import_curves")
+        body.prop(op, "separate_solids")
 
 
 class STEPPER_FH_step(bpy.types.FileHandler):
@@ -292,7 +295,8 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "apply_scale": True, "skip_construction": False,
                 "uv_mode": "SURFACE", "uv_normalize": False,
                 "uv_split_closed": True, "box_uv_scale": 1.0,
-                "import_curves": False, "eng_materials": True}
+                "import_curves": False, "eng_materials": True,
+                "group_in_collection": False, "separate_solids": False}
         if prefs.remember_import_settings and prefs.last_import_settings:
             try:
                 stored = json.loads(prefs.last_import_settings)
@@ -302,6 +306,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 for key in ("apply_scale", "skip_construction", "uv_mode",
                             "uv_normalize", "uv_split_closed",
                             "box_uv_scale", "import_curves",
+                            "group_in_collection", "separate_solids",
                             "eng_materials"):
                     if key in stored:
                         opts[key] = stored[key]
@@ -309,16 +314,18 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                     opts["up_as"] = stored["up_as"]
                 if "hierarchy_types" in stored:
                     opts["htypes"] = stored["hierarchy_types"]
+        # This operator has always grouped each file, and the importer now
+        # does it itself — accurately, from what it created, rather than by
+        # diffing the scene collection afterwards and sweeping up whatever
+        # else happened to be there.
+        opts["group_in_collection"] = True
 
-        scene_col = context.scene.collection
         wm = context.window_manager
         wm.progress_begin(0, len(files))
         n_ok = 0
         try:
             for i, path in enumerate(files):
                 wm.progress_update(i)
-                pre_children = set(scene_col.children)
-                pre_objects = set(scene_col.objects)
 
                 result = _main.load_step(
                     context, path,
@@ -330,20 +337,6 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                                 f"Could not import {os.path.basename(path)}")
                     continue
                 n_ok += 1
-
-                # Wrap everything the import linked at scene level into a
-                # per-file collection.
-                file_col = bpy.data.collections.new(
-                    os.path.splitext(os.path.basename(path))[0])
-                scene_col.children.link(file_col)
-                for col in [c for c in scene_col.children
-                            if c not in pre_children and c != file_col]:
-                    scene_col.children.unlink(col)
-                    file_col.children.link(col)
-                for obj in [o for o in scene_col.objects
-                            if o not in pre_objects]:
-                    scene_col.objects.unlink(obj)
-                    file_col.objects.link(obj)
         finally:
             wm.progress_end()
         self.report({"INFO"}, f"Imported {n_ok}/{len(files)} STEP files")

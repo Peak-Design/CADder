@@ -37,6 +37,7 @@ _METHOD_NAMES = {
     3: "transform",
     4: "bbox",
     5: "fuzzy",
+    6: "collection",
 }
 
 
@@ -56,6 +57,22 @@ class MatchEntry:
     object_name: str
     step: int
     confidence: str
+    # Every object this component owns. A plain part owns one; a rigid
+    # SUBASSEMBLY owns all of its parts, because the manifest treats the
+    # subassembly as one body and names the assembly occurrence rather than
+    # the parts inside it. Appended last and defaulted: the tests and
+    # native_import build MatchEntry positionally.
+    object_names: List[str] = field(default_factory=list)
+    # Set when the component was resolved to a collection subtree rather
+    # than to an object of its own — there is then no single object holding
+    # the occurrence's pose, which pose_sync has to know.
+    collection_name: Optional[str] = None
+
+    def __post_init__(self):
+        # Every other producer of this record (native_import, the tests)
+        # names one object; the list is the general form of the same thing.
+        if not self.object_names and self.collection_name is None:
+            self.object_names = [self.object_name]
 
 
 @dataclass
@@ -64,6 +81,12 @@ class MatchReport:
     ambiguous: List[Tuple[str, List[str]]] = field(default_factory=list)
     unmatched: List[str] = field(default_factory=list)
     unclaimed_objects: List[str] = field(default_factory=list)
+    # Set when the whole report has one cause worth saying out loud, e.g.
+    # the import mode left every subassembly occurrence without an object.
+    hint: Optional[str] = None
+    # Per-occurrence remarks from the subassembly step: what it could not
+    # resolve, and what it resolved on thinner evidence than usual.
+    notes: List[str] = field(default_factory=list)
     # The scene-frame transform: manifest coordinates (Blender units) ->
     # where the geometry actually sits. Identity when the import kept the
     # manifest's Z-up frame; a rotation when the user imported with another
@@ -115,6 +138,89 @@ def _fuzzy_label(text: str) -> str:
     return label.casefold()
 
 
+def _strip_dedup(name: str) -> str:
+    """Blender appends '.001' to a duplicate datablock name; the CAD node
+    name underneath it is what the manifest knows."""
+    label = str(name)
+    while True:
+        stripped = re.sub(r"\.\d+$", "", label)
+        if stripped == label:
+            return label
+        label = stripped
+
+
+def collect_collections(collections=None):
+    if collections is not None:
+        return list(collections)
+    if bpy is None:
+        return []
+    return list(bpy.data.collections)
+
+
+def _collection_paths(collections):
+    """name -> the CAD path of that collection, root first.
+
+    STEPper's "Tree collection" import builds one collection per assembly
+    node and links each object into the collection of the node that owns it
+    (main.py: hierarchy_collections[node.index], then
+    hierarchy_collections[obj["STEP_parent"]].objects.link(obj)). So the
+    collection nesting IS the assembly tree, and it is the only place a
+    subassembly occurrence exists at all in that mode — no object is made
+    for a node that carries no shape of its own.
+
+    bpy gives a collection its children and never its parent, so the parent
+    map is built by inversion.
+    """
+    parent = {}
+    for col in collections:
+        for child in col.children:
+            parent[child.name] = col.name
+    paths = {}
+    for col in collections:
+        segs, cur, seen = [], col.name, set()
+        while cur is not None and cur not in seen:
+            seen.add(cur)
+            segs.append(_strip_dedup(cur))
+            cur = parent.get(cur)
+        segs.reverse()
+        paths[col.name] = segs
+    return parent, paths
+
+
+def _container_depth(paths, wanted) -> int:
+    """How many leading segments of a collection path belong to the IMPORT
+    rather than to the STEP tree — "<file>.hierarchy", plus any collection
+    the user has since nested the import inside. Voted rather than assumed:
+    the offset that lines the most collection paths up with a path the
+    manifest actually names."""
+    best, best_score = 0, -1
+    for depth in range(0, 6):
+        score = 0
+        for segs in paths.values():
+            if len(segs) > depth and "/".join(segs[depth:]) in wanted:
+                score += 1
+        if score > best_score:
+            best, best_score = depth, score
+    return best if best_score > 0 else 0
+
+
+def _subtree_objects(col):
+    """Every object in a collection or below it, deterministically ordered.
+    Written out rather than using Collection.all_objects so the same code
+    runs against the fake collections in the tests."""
+    out, stack, seen = [], [col], set()
+    while stack:
+        cur = stack.pop()
+        key = cur.name
+        if key in seen:
+            continue
+        seen.add(key)
+        out.extend(list(cur.objects))
+        stack.extend(list(cur.children))
+    out.sort(key=lambda o: o.name)
+    return out
+
+
 def _occurrence_path(obj, by_uuid: Dict[Tuple[Optional[str], int], object]) -> Optional[str]:
     """Rebuilds the STEP occurrence path from STEP_uuid/STEP_parent chains.
     STEPper's artificial root node (parent -1, labelled '<file>.empties') is
@@ -139,6 +245,125 @@ def _occurrence_path(obj, by_uuid: Dict[Tuple[Optional[str], int], object]) -> O
         return None
     segments.reverse()
     return "/".join(segments)
+
+
+def _collection_occurrence_path(obj, col_of_object, paths, depth) -> Optional[str]:
+    """The object's occurrence path taken from its collection ancestry.
+
+    This is the TREE-mode counterpart of _occurrence_path: there the
+    STEP_uuid/STEP_parent chain dead-ends at the first assembly node,
+    because no object was made for it, and every leaf's rebuilt path
+    collapses to its own name."""
+    col = col_of_object.get(obj.name)
+    if col is None:
+        return None
+    segs = paths.get(col, [])
+    if len(segs) <= depth:
+        return None
+    name = get_step_key(obj).name or obj.name
+    return "/".join(list(segs[depth:]) + [_strip_dedup(name)])
+
+
+def _object_collections(collections, paths):
+    """object name -> the collection that places it deepest in the tree. An
+    object linked into several (a FLAT_AND_TREE import links it into both a
+    hierarchy collection and a by-name one) is read through the collection
+    that says most about where it sits."""
+    out = {}
+    for col in collections:
+        depth = len(paths.get(col.name, ()))
+        for obj in col.objects:
+            prev = out.get(obj.name)
+            if prev is None or depth > len(paths.get(prev, ())):
+                out[obj.name] = col.name
+    return out
+
+
+_LAYOUT_TOL = 1e-4          # metres
+
+
+def _mat_mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)]
+            for i in range(4)]
+
+
+def _invert_rows(rows):
+    """Inverse of a 4x4 with a [0,0,0,1] bottom row, via the 3x3 adjugate —
+    the import can bake a scale into the matrix, so no rigid shortcut."""
+    d = (rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+         - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+         + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0]))
+    if abs(d) < 1e-15:
+        return None
+    cof = [[0.0] * 3 for _ in range(3)]
+    for i in range(3):
+        for j in range(3):
+            m = [[rows[r][c] for c in range(3) if c != j]
+                 for r in range(3) if r != i]
+            cof[j][i] = ((-1) ** (i + j)) * (m[0][0] * m[1][1]
+                                             - m[0][1] * m[1][0]) / d
+    t = [rows[i][3] for i in range(3)]
+    it = [-(cof[i][0] * t[0] + cof[i][1] * t[1] + cof[i][2] * t[2])
+          for i in range(3)]
+    return [[cof[0][0], cof[0][1], cof[0][2], it[0]],
+            [cof[1][0], cof[1][1], cof[1][2], it[1]],
+            [cof[2][0], cof[2][1], cof[2][2], it[2]],
+            [0.0, 0.0, 0.0, 1.0]]
+
+
+def _internal_layout(objs, frame_rows, scene_scale):
+    """Where an occurrence's parts sit IN ITS OWN FRAME, if frame_rows is
+    that occurrence's frame: T^-1 applied to every part's world matrix.
+
+    This is what identifies an occurrence without ever knowing its frame.
+    STEP stores ONE internal layout per product, so every occurrence of that
+    product has the same one: under the right pairing of occurrences to
+    manifest components the layouts agree exactly, and under a wrong pairing
+    they do not."""
+    inv = _invert_rows(frame_rows)
+    if inv is None:
+        return None
+    # Ordered by STEP_uuid, which is the node's position in a pre-order walk
+    # of the tree. Two occurrences of one product are walked identically, so
+    # ordering by it puts corresponding parts opposite each other. Ordering
+    # by position instead would compare a part of one occurrence against a
+    # DIFFERENT part of the other wherever several parts share a name — and
+    # in an assembly of fasteners, most of them do (live ClampRig,
+    # 2026-08-24: a 98-part module read as laid out differently from its own
+    # twin).
+    ordered = sorted(objs, key=lambda o: (get_step_key(o).uuid is None,
+                                          get_step_key(o).uuid or 0, o.name))
+    rows = []
+    for obj in ordered:
+        local = _mat_mul(inv, _matrix_rows(obj))
+        name = get_step_key(obj).name or obj.name
+        rows.append((_strip_dedup(name),
+                     local[0][3] * scene_scale,
+                     local[1][3] * scene_scale,
+                     local[2][3] * scene_scale))
+    return rows
+
+
+def _layouts_agree(a, b) -> bool:
+    if a is None or b is None or len(a) != len(b):
+        return False
+    for ra, rb in zip(a, b):
+        if ra[0] != rb[0]:
+            return False
+        if max(abs(ra[i] - rb[i]) for i in (1, 2, 3)) >= _LAYOUT_TOL:
+            return False
+    return True
+
+
+def _centroid(objs, scene_scale):
+    if not objs:
+        return None
+    acc = [0.0, 0.0, 0.0]
+    for obj in objs:
+        rows = _matrix_rows(obj)
+        for i in range(3):
+            acc[i] += rows[i][3]
+    return [v / len(objs) * scene_scale for v in acc]
 
 
 def _matrix_rows(obj) -> List[List[float]]:
@@ -398,9 +623,10 @@ def _basename(path) -> str:
     return str(path).replace("\\", "/").rsplit("/", 1)[-1].casefold()
 
 
-def match(manifest: Manifest, objects=None) -> MatchReport:
+def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     report = MatchReport()
     candidates = collect_candidates(objects)
+    collections = collect_collections(collections)
     scene_scale = _scene_scale()
 
     # A long-lived test scene accumulates imports of OTHER step files; their
@@ -431,22 +657,97 @@ def match(manifest: Manifest, objects=None) -> MatchReport:
         if key.uuid is not None:
             by_uuid[(key.file, key.uuid)] = obj
 
+    # A component may BE a subassembly occurrence — a rigid subassembly is one
+    # body, so the manifest names the node, not its parts. That node carries no
+    # shape of its own, so it becomes an object only in the import modes that
+    # build empties. "Tree collection" and "Flat collection" build collections
+    # instead, and a collection is not something a bone can carry: every such
+    # component has nothing to match, and every leaf's rebuilt occurrence path
+    # collapses to its own name because the ancestors are missing too. Counting
+    # the objects whose parent is not in the pool identifies that at a glance.
+    # (Live ClampRig, 2026-08-24: imported as a tree collection, 53 of
+    # 122 components matched and only the loose parts moved with the rig; the
+    # same file and manifest under "Parented empties" matched 122 of 122.)
+    orphaned = 0
+    for obj in candidates:
+        key = get_step_key(obj)
+        if key.uuid is None or key.parent is None or key.parent == -1:
+            continue
+        if (key.file, key.parent) not in by_uuid:
+            orphaned += 1
+
     todo = dict(comps)
     pool = list(candidates)
     claimed = {}
 
-    def claim(component_id, obj, step):
-        obj["RIG_component_id"] = component_id
-        obj["RIG_group"] = group_of[component_id]
+    # The collection hierarchy, which in a "Tree collection" import is the
+    # ONLY place the assembly structure survives.
+    wanted_paths = {_norm_path(c.step_occurrence_path)
+                    for c in comps.values() if c.step_occurrence_path}
+    # Objects are already restricted to this manifest's own STEP file;
+    # collections must be too, or a scene holding two imports counts the
+    # other one's occurrences and no bucket ever balances.
+    if want_file:
+        mine = []
+        for col in collections:
+            objs = _subtree_objects(col)
+            if not objs:
+                mine.append(col)         # a pure container: judged by its kids
+                continue
+            if any(_basename(get_step_key(o).file) == want_file for o in objs):
+                mine.append(col)
+        collections = mine
+    col_parent, col_paths = _collection_paths(collections)
+    col_depth = _container_depth(col_paths, wanted_paths)
+    col_of_object = _object_collections(collections, col_paths)
+    occurrence_of_collection = {}
+    for name, segs in col_paths.items():
+        if len(segs) > col_depth:
+            occurrence_of_collection[name] = "/".join(segs[col_depth:])
+
+    def claim(component_id, obj, step, members=None, collection=None):
+        """One entry per COMPONENT, however many objects it owns.
+
+        `claimed` stays a 1:1 map of the objects that carry a component's own
+        pose — the scene-frame vote and the stale-tag sweep both index it —
+        so a component resolved to a subassembly's parts is not in it: no
+        member part sits at the assembly occurrence's transform, and letting
+        one vote would tilt the frame every bone is placed through.
+
+        Members carry RIG_group, which is all parenting needs (it attaches
+        by group, and _rig_maps is already many-objects-per-group), and
+        RIG_component_of rather than RIG_component_id: the retessellate path
+        keys on RIG_component_id and would hand each part of a subassembly
+        the whole subassembly's mesh."""
+        owned = list(members) if members is not None else [obj]
+        gid = group_of[component_id]
+        # An occurrence every one of whose parts belongs to a component
+        # NESTED inside it owns no geometry of its own. That is a real and
+        # correct outcome, not a failure: the parts are already attached,
+        # through the components that do own them.
+        for member in owned:
+            if member is obj and collection is None:
+                member["RIG_component_id"] = component_id
+            else:
+                member["RIG_component_of"] = component_id
+            member["RIG_group"] = gid
+            # Which manifest claimed it. Group ids restart at g000 for every
+            # assembly, so without this a second rig in the same scene
+            # parents the first one's parts to its own bones.
+            member["RIG_source"] = manifest.source_path or ""
+            if member in pool:
+                pool.remove(member)
         report.matched.append(MatchEntry(
             component_id=component_id,
-            object_name=obj.name,
+            object_name=collection.name if collection is not None else obj.name,
             step=step,
             confidence=_METHOD_NAMES[step],
+            object_names=[o.name for o in owned],
+            collection_name=None if collection is None else collection.name,
         ))
-        claimed[component_id] = obj
+        if collection is None:
+            claimed[component_id] = obj
         todo.pop(component_id, None)
-        pool.remove(obj)
 
     # Ambiguity is NOT terminal: identical occurrence paths (two instances of
     # the same subassembly rebuild the same product-name path) are routine,
@@ -467,10 +768,18 @@ def match(manifest: Manifest, objects=None) -> MatchReport:
         if tagged in todo:
             claim(tagged, obj, 0)
 
-    # Step 1: exact STEP_name plus rebuilt occurrence path.
+    # Step 1: exact STEP_name plus rebuilt occurrence path. The uuid chain
+    # is preferred; where it dead-ends because the ancestors were built as
+    # collections rather than objects, the collection ancestry supplies the
+    # same path.
     paths = {}
     for obj in pool:
         p = _occurrence_path(obj, by_uuid)
+        if p is None or "/" not in p:
+            via_collection = _collection_occurrence_path(
+                obj, col_of_object, col_paths, col_depth)
+            if via_collection is not None:
+                p = via_collection
         if p is not None:
             paths[id(obj)] = _norm_path(p)
     for cid in sorted(todo):
@@ -613,10 +922,225 @@ def match(manifest: Manifest, objects=None) -> MatchReport:
         if len(cids) == 1 and len(objs) == 1 and objs[0] in pool and cids[0] in todo:
             claim(cids[0], objs[0], 5)
 
+    # Step 6: components that ARE a subassembly occurrence.
+    #
+    # The exporter's rule is that a rigid subassembly is ONE body, so the
+    # manifest names the assembly occurrence and not the parts inside it.
+    # That occurrence node carries no shape of its own, so an import that
+    # builds collections rather than empties gives it no object to match —
+    # it is a COLLECTION, and the body it stands for is every part below it.
+    #
+    # Deepest first: the manifest nests components inside one another (live
+    # ClampRig, 2026-08-24: the ram rod sits inside the ram barrel and
+    # belongs to a different rigid group), so the inner component must take
+    # its parts out of the pool before the outer one sweeps up what is left.
+    collection_bodies = {}
+    for name, path in occurrence_of_collection.items():
+        collection_bodies.setdefault(path, []).append(name)
+    named_collections = {}
+    for col in collections:
+        named_collections.setdefault(_strip_dedup(col.name), []).append(col.name)
+
+    # Only a component that IS a subassembly occurrence belongs here, and the
+    # manifest says which those are: `subassembly_solving` is set for a
+    # subassembly and absent for a part. Without that gate a part sharing an
+    # occurrence path with a subassembly joins the same bucket and the counts
+    # never line up (live corpus 07 flexible-sub2, 2026-08-24: the baseplate
+    # sat in the hinge's bucket and neither hinge resolved).
+    by_collection_path = {}
+    for cid in todo:
+        comp = todo[cid]
+        if comp.subassembly_solving is None or not comp.step_occurrence_path:
+            continue
+        by_collection_path.setdefault(
+            _norm_path(comp.step_occurrence_path), []).append(cid)
+
+    # One bucket per set of occurrences that have to be told apart. Normally
+    # the occurrence path names them; where the STEP file carried no product
+    # names it does not — every component of live corpus 07 flexible-sub2
+    # reads "flexible-sub2/ " — and the occurrence's own name, which the
+    # collection still carries, is the only join left.
+    buckets = []
+    for path in by_collection_path:
+        cids = by_collection_path[path]
+        found = collection_bodies.get(path)
+        if found:
+            buckets.append((path, path.count("/"), sorted(cids), sorted(found)))
+            continue
+        by_step_name = {}
+        for cid in cids:
+            by_step_name.setdefault(todo[cid].step_name or "", []).append(cid)
+        for step_name, group in by_step_name.items():
+            named = named_collections.get(_strip_dedup(step_name))
+            if named:
+                buckets.append((path + " [by name]", path.count("/"),
+                                sorted(group), sorted(named)))
+
+    col_by_name = {c.name: c for c in collections}
+    spent = set()
+    for path, _, bucket_cids, names in sorted(
+            buckets, key=lambda b: (-b[1], b[0])):
+        cids = sorted(c for c in bucket_cids if c in todo)
+        names = [n for n in names if n not in spent]
+        # Pairing and verification look at the WHOLE occurrence, claiming
+        # looks at what is left: by the time an outer subassembly is
+        # reached, the components nested inside it have taken their parts,
+        # and different occurrences lose different parts to their own
+        # nested components. Comparing those leftovers would say two
+        # occurrences of one product are laid out differently when they
+        # are not.
+        remaining = set(pool)
+        bodies = []
+        for name in sorted(names):
+            col = col_by_name[name]
+            whole = _subtree_objects(col)
+            if whole:
+                bodies.append((col, whole))
+        if not cids or not bodies:
+            continue
+        if len(bodies) != len(cids):
+            report.notes.append(
+                "%s: the manifest has %d occurrence(s) of this subassembly "
+                "but the scene has %d collection(s) for it, so neither was "
+                "claimed" % (path, len(cids), len(bodies)))
+            continue
+
+        # Which occurrence is which.
+        #
+        # The evidence that settles it is not position but LAYOUT: a STEP
+        # file stores a product's internal arrangement once, so applying an
+        # occurrence's true frame in reverse always gives that same
+        # arrangement. Take the pairing whose layouts all agree, and position
+        # only decides between pairings that are equally consistent — which
+        # happens whenever the occurrences are related by a symmetry, and is
+        # exactly where position is decisive.
+        #
+        # Position alone would swap a pair as soon as the offset between an
+        # occurrence's origin and its parts grew past half the spacing
+        # between two of them; layout does not care where anything is.
+        want_at = {}
+        layout_of = {}
+        for cid in cids:
+            rows = apply_frame(frame, _component_rows_units(comps[cid],
+                                                            unit_scale))
+            want_at[cid] = [rows[i][3] * scene_scale for i in range(3)]
+            for col, objs in bodies:
+                layout_of[(col.name, cid)] = _internal_layout(
+                    objs, rows, scene_scale)
+        at = {col.name: _centroid(objs, scene_scale) for col, objs in bodies}
+
+        def gap(col_name, cid):
+            a, b = at[col_name], want_at[cid]
+            if a is None:
+                return float("inf")
+            return sum((a[i] - b[i]) ** 2 for i in range(3)) ** 0.5
+
+        def cost(assignment):
+            return sum(gap(col.name, cid) for col, cid in assignment)
+
+        consistent = []
+        if len(bodies) > 1:
+            first = bodies[0][0].name
+            for anchor in cids:
+                reference = layout_of[(first, anchor)]
+                assignment, used, ok = [], set(), True
+                for col, _objs in bodies:
+                    hits = [c for c in cids if c not in used
+                            and _layouts_agree(layout_of[(col.name, c)],
+                                               reference)]
+                    if len(hits) != 1:
+                        ok = False
+                        break
+                    assignment.append((col, hits[0]))
+                    used.add(hits[0])
+                if ok:
+                    consistent.append(assignment)
+
+        if consistent:
+            chosen = min(consistent, key=cost)
+        else:
+            # Either a single occurrence, or the STEP and the manifest
+            # disagree about the arrangement itself — which is what a
+            # flexible subassembly inserted more than once does. Position is
+            # then all there is, and the report says so.
+            order = sorted(bodies,
+                           key=lambda item: min(gap(item[0].name, c)
+                                                for c in cids))
+            taken, chosen = set(), []
+            for col, _objs in order:
+                free = [c for c in cids if c not in taken]
+                best = min(free, key=lambda c: gap(col.name, c))
+                taken.add(best)
+                chosen.append((col, best))
+            if len(bodies) > 1:
+                report.notes.append(
+                    "%s: the parts do not sit the same way inside each "
+                    "occurrence, so this pairing rests on position alone (a "
+                    "flexible subassembly inserted more than once does that)"
+                    % path)
+
+        objs_of = {col.name: objs for col, objs in bodies}
+        pairing = [(col, objs_of[col.name], cid) for col, cid in chosen]
+        for col, objs, cid in pairing:
+            spent.add(col.name)
+            # Only a RIGID subassembly is one body. A flexible one is walked,
+            # so every part inside it is a component in its own right and
+            # usually in another rigid group; expanding it would claim parts
+            # that belong to those components — and put a moving part in the
+            # grounded group when they had not matched yet (live corpus 07
+            # flexible-sub1, 2026-08-24). It is still PAIRED, because that is
+            # what tells its rigid twin's collection from its own.
+            mine = ([] if todo[cid].subassembly_solving == "flexible"
+                    else [o for o in objs if o in remaining])
+            claim(cid, None, 6, members=mine, collection=col)
+
+    # The "import as empties" advice is only about components that ARE
+    # subassembly occurrences: those are the ones no collection import gives
+    # an object of their own. `orphaned` says the scene was built that way,
+    # but step 6 now resolves such components, so it stays large for a
+    # perfectly healthy import — a leftover PART (renamed in the STEP, say)
+    # must not draw this.
+    stuck_subs = [cid for cid, comp in todo.items()
+                  if comp.subassembly_solving is not None]
+    if stuck_subs and orphaned:
+        report.hint = (
+            "%d object(s) name a parent that is not in the scene, so this "
+            "STEP was imported as a collection hierarchy; %d subassembly "
+            "occurrence(s) still did not resolve to one. Importing with Tree "
+            "hierarchy = \"Parented empties\" gives every subassembly an "
+            "object of its own and needs none of this guesswork."
+            % (orphaned, len(stuck_subs)))
+        print("[SWTB match] %s" % report.hint)
+    for note in report.notes:
+        print("[SWTB match] %s" % note)
+
     report.ambiguous = sorted(
         (cid, names) for cid, names in ambiguous_seen.items() if cid in todo)
     still_ambiguous = {cid for cid, _ in report.ambiguous}
     report.unmatched = sorted(cid for cid in todo if cid not in still_ambiguous)
+    # A member of a subassembly body carries RIG_group but no
+    # RIG_component_id, so it has neither a pre-seed nor a stale-tag path and
+    # nothing above can ever take that group back. Group ids are positional:
+    # a re-export that drops a component renumbers them, and a surviving tag
+    # then names a DIFFERENT body — parenting reads the raw tag, so the part
+    # would silently ride that body's bone. A member this run did not
+    # re-claim loses its tags here. Out of the rig is visible and
+    # recoverable; in the wrong rigid group is neither.
+    for obj in pool:
+        try:
+            was_member = obj.get("RIG_component_of") is not None
+        except (AttributeError, TypeError):
+            was_member = False
+        if not was_member:
+            continue
+        for tag in ("RIG_component_of", "RIG_group"):
+            try:
+                del obj[tag]
+            except (KeyError, TypeError):
+                pass
+        print("[SWTB match] stale member tag: %s no longer belongs to a "
+              "matched subassembly body; group tag cleared" % obj.name)
+
     report.unclaimed_objects = [o.name for o in pool]
 
     # Say WHY, per failure — the console line is what turns the next

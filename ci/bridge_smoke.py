@@ -186,8 +186,47 @@ def main():
     assert not os.path.exists(reg_path), "registry entry not cleaned up"
     assert not bridge.is_running()
 
-    print("bridge_smoke: OK — ping, auth, and a full pipeline job over "
-          "HTTP on port %d" % port)
+    check_option_parity()
+
+    print("bridge_smoke: OK — ping, auth, a full pipeline job over "
+          "HTTP on port %d, and import-option parity" % port)
+
+
+def check_option_parity():
+    """Every option the bridge accepts must really exist on the import
+    operator, and every option the SolidWorks side sends must be accepted.
+
+    This is the seam where the two halves drift: an option added to the
+    importer and not to the allowlist is dropped in silence, and one the
+    add-in sends that the allowlist does not know is reported as ignored
+    where nobody looks. Both directions are checked here because the add-in
+    and the addon ship separately.
+    """
+    from STEPper_NEXT import bridge as bridge_mod
+    from STEPper_NEXT import main as main_mod
+
+    # The class annotations, not the registered RNA: this smoke drives the
+    # bridge module directly and never enables the addon, and the properties
+    # are declared either way.
+    real = set(main_mod.ImportStepCADOperator.__annotations__)
+    allowed = set(bridge_mod._IMPORT_OPTION_KEYS)
+
+    unreal = sorted(allowed - real)
+    assert not unreal, (
+        "the bridge accepts import options the operator does not have: %s"
+        % unreal)
+
+    # What Peak.SwToBlender.SendToBlenderCommand puts in import_options.
+    sent_by_addin = {
+        "hierarchy_types", "quality_preset", "up_as", "fw_as",
+        "import_curves", "group_in_collection", "separate_solids",
+    }
+    dropped = sorted(sent_by_addin - allowed)
+    assert not dropped, (
+        "the SolidWorks add-in sends import options the bridge would drop: %s"
+        % dropped)
+    print("  option parity: %d accepted, all real; %d sent by the add-in, "
+          "all accepted" % (len(allowed), len(sent_by_addin)))
 
 
 main()

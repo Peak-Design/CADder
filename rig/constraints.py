@@ -140,7 +140,8 @@ def _limit_location_zero(pose_bone):
     return con
 
 
-def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None):
+def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None,
+                aimed=False):
     """Configures one tree joint's bone. The caller has already set
     rotation_mode — the euler_order copy above depends on it. unit_scale is
     Blender units per metre; angles need no conversion. contact_mesh is the
@@ -166,19 +167,22 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None):
 
     elif joint.type == "revolute":
         lock_loc = [True, True, True]
-        lock_rot = [True, False, True]
+        # The DOF is local Y — unless a driver owns it, in which case the
+        # lock is what stops a user posing a channel that will be written
+        # back over on the next depsgraph pass.
+        lock_rot = [True, not rot_free, True]
         if joint.rotation_limit is not None:
             _limit_rotation_y(pose_bone, joint.rotation_limit, rot_free)
 
     elif joint.type == "prismatic":
         lock_rot = [True, True, True]
-        lock_loc = [True, False, True]
+        lock_loc = [True, not loc_free, True]
         if joint.translation_limit is not None:
             _limit_location_y(pose_bone, joint.translation_limit, loc_free, unit_scale)
 
     elif joint.type == "cylindrical":
-        lock_rot = [True, False, True]
-        lock_loc = [True, False, True]
+        lock_rot = [True, not rot_free, True]
+        lock_loc = [True, not loc_free, True]
         if joint.rotation_limit is not None:
             _limit_rotation_y(pose_bone, joint.rotation_limit, rot_free)
         if joint.translation_limit is not None:
@@ -242,6 +246,23 @@ def apply_joint(pose_bone, joint: Joint, unit_scale=1.0, contact_mesh=None):
 
     elif joint.type == "free":
         pass
+
+    if aimed:
+        # Half of a slider-crank. Its orientation belongs entirely to the aim
+        # constraint sliders.py puts on it, which turns it about its own pin
+        # and nothing else, so every rotation channel left open here is only a
+        # way to break that by hand — a free one about local Y would ROLL the
+        # ram along its own length, which no pin permits.
+        #
+        # A rotation Limit would clamp the wrong axis too: an aimed bone rests
+        # with local Y along the RAM and its pin on local Z, where every other
+        # joint measures its rotation about local Y. Nothing is lost with it —
+        # this pin is stopped by the ram's own stroke at the far end of the
+        # loop, which the slide still carries.
+        for con in list(pose_bone.constraints):
+            if con.type == "LIMIT_ROTATION" and con.name.startswith(_PREFIX):
+                pose_bone.constraints.remove(con)
+        lock_rot = [True, True, True]
 
     pose_bone.lock_location = lock_loc
     pose_bone.lock_rotation = lock_rot

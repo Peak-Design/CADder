@@ -49,7 +49,7 @@ _IMPORT_OPTION_KEYS = {
     "custom_scale", "user_scale", "apply_scale", "uv_mode", "uv_normalize",
     "uv_split_closed", "box_uv_scale", "eng_materials", "import_curves",
     "skip_construction", "material_database", "tessellation_relative",
-    "lin_deflection_rel",
+    "lin_deflection_rel", "group_in_collection", "separate_solids",
 }
 
 _state = {
@@ -290,6 +290,7 @@ def _run_job(payload: dict) -> dict:
     log = []
     manifest_path = payload.get("manifest") or ""
     step_path = payload.get("step") or ""
+    mesh_path = payload.get("mesh") or ""
     steps = payload.get("steps") or {}
 
     def want(name, default=True):
@@ -324,7 +325,32 @@ def _run_job(payload: dict) -> dict:
                 step_path = os.path.join(os.path.dirname(manifest_path),
                                          m.step_file)
 
-        if want("import", bool(step_path)):
+        # The DIRECT link. Geometry the add-in tessellated itself, already
+        # tagged with the component ids the manifest uses — so it replaces
+        # both the STEP import and the matching pass that follows it, and
+        # the report it hands back is exact rather than inferred.
+        if mesh_path:
+            if not os.path.isfile(mesh_path):
+                return {"ok": False, "error": "mesh not found: %s" % mesh_path,
+                        "stages": stages}
+            from .rig import native_import
+            try:
+                objects, report = native_import.build(
+                    bpy.context, mesh_path,
+                    manifest=rig_ui._STATE.get("manifest"))
+            except Exception as exc:
+                return {"ok": False, "error": "native import failed: %s" % exc,
+                        "stages": stages}
+            rig_ui._STATE["match_report"] = report
+            stages["mesh"] = {
+                "file": os.path.basename(mesh_path),
+                "objects": len(objects),
+                "meshes": len({o.data.name for o in objects if o.data}),
+                "unmatched": list(report.unmatched),
+            }
+            bpy.context.view_layer.update()
+
+        if not mesh_path and want("import", bool(step_path)):
             if not step_path or not os.path.isfile(step_path):
                 return {"ok": False, "error": "STEP file not found: %s" % step_path,
                         "stages": stages}
@@ -350,7 +376,7 @@ def _run_job(payload: dict) -> dict:
             stages["import"] = {"file": os.path.basename(step_path)}
             bpy.context.view_layer.update()
 
-        if have_manifest and want("match"):
+        if have_manifest and not mesh_path and want("match"):
             if "FINISHED" not in bpy.ops.swtb.match_geometry():
                 return {"ok": False, "error": "matching failed", "stages": stages}
             rep = rig_ui._STATE["match_report"]
@@ -396,6 +422,7 @@ def _run_job(payload: dict) -> dict:
                 if rep is not None:
                     stages["relink"] = {
                         "parented": rep.bone_parented,
+                        "grounded": len(rep.grounded),
                         "drift_violations": len(rep.violations),
                         "posed_bones": [name for name, _ in rep.posed_bones],
                     }
@@ -531,9 +558,9 @@ def stop():
 def register():
     try:
         prefs = bpy.context.preferences.addons[__package__].preferences
-        enabled = getattr(prefs, "enable_bridge", True)
+        enabled = getattr(prefs, "enable_bridge", False)
     except (AttributeError, KeyError):
-        enabled = True
+        enabled = False
     if enabled:
         start()
 

@@ -49,6 +49,9 @@ class ParentReport:
     # (object name, drift in Blender units); collected, never raised —
     # aborting mid-scene would leave half the assembly re-parented.
     violations: List[Tuple[str, float]] = field(default_factory=list)
+    # Objects the rig drives nothing of, hung off the ground bone so the
+    # assembly stays whole when the rig is moved.
+    grounded: List[str] = field(default_factory=list)
     # (bone name, metres its head sits from rest at relink time). A bone off
     # rest before anyone posed it means a constraint rejects the rest pose —
     # almost always a manifest limit whose value_at_rest lies outside its
@@ -70,14 +73,90 @@ def _rig_maps(arm_obj):
         gid = pb.get("RIG_group")
         if gid and "RIG_helper" not in pb.keys():
             bone_by_group[gid] = pb.name
+    # Group ids are per-manifest and start at g000 every time, so a scene
+    # holding two rigged assemblies has two of everything. An object says
+    # which manifest tagged it; one that predates the tag (or came from a
+    # foreign importer) is still taken, because there is nothing better to
+    # go on and one rig in a scene is the common case.
+    source = arm_obj.get("RIG_source") or None
     geometry = {}
     for obj in bpy.data.objects:
         if obj.get("RIG_group_empty") or obj.get("RIG_rig"):
             continue    # legacy rig empties and the armature itself
         gid = obj.get("RIG_group")
-        if gid:
-            geometry.setdefault(gid, []).append(obj)
+        if not gid:
+            continue
+        theirs = obj.get("RIG_source") or None
+        if source and theirs and theirs != source:
+            continue
+        geometry.setdefault(gid, []).append(obj)
     return bone_by_group, geometry
+
+
+def _prototype_collections():
+    """Collections some object instances. Their contents are a TEMPLATE, not
+    scene geometry: the collection-instance import mode keeps every part
+    once in a hidden collection and puts empties where the occurrences are.
+    Parenting a template to a bone moves it inside every instance at once."""
+    out = set()
+    for obj in bpy.data.objects:
+        col = getattr(obj, "instance_collection", None)
+        if col is not None:
+            out.add(col.name)
+            for child in col.children_recursive:
+                out.add(child.name)
+    return out
+
+
+def _home_subtree(arm_obj):
+    """The collections under the one the rig lives in, or None when it lives
+    loose at the scene root and there is no subtree to speak of.
+
+    This is what keeps a rig to its own assembly: the same file imported
+    twice makes two collections, and each rig may only adopt what is inside
+    its own.
+    """
+    rig_cols = {c.name for c in arm_obj.users_collection}
+    for col in bpy.data.collections:
+        if rig_cols & {c.name for c in col.children}:
+            return {col.name} | {c.name for c in col.children_recursive}
+    return None
+
+
+def _leftovers(arm_obj, plan_objects, files):
+    """Imported objects this rig drives nothing of, and that hang from
+    nothing — the empties an import made, and any part matching could not
+    place.
+
+    They are the reason a rig looked like it half-worked: bone-parented
+    geometry follows the armature and everything else stays behind in world
+    space, so moving the rig tore the assembly in two. Hanging them off the
+    ground bone keeps the machine whole; they simply do not articulate.
+
+    Only objects from the same STEP file(s) as the geometry this rig drives,
+    so a second import sitting in the same scene is never adopted.
+    """
+    if not files:
+        return []
+    driven = {obj.name for obj in plan_objects}
+    prototypes = _prototype_collections()
+    home = _home_subtree(arm_obj)
+    out = []
+    for obj in bpy.data.objects:
+        if obj.name in driven or obj.parent is not None:
+            continue
+        if (obj.get("RIG_rig") or obj.get("RIG_helper")
+                or obj.get("SWTB_widget") or obj.get("RIG_group_empty")):
+            continue
+        if obj.get("STEP_file") not in files:
+            continue
+        if any(c.name in prototypes for c in obj.users_collection):
+            continue
+        if home is not None and not any(c.name in home
+                                        for c in obj.users_collection):
+            continue
+        out.append(obj)
+    return out
 
 
 def relink(context, arm_obj) -> ParentReport:
@@ -116,6 +195,18 @@ def relink(context, arm_obj) -> ParentReport:
                   "relinking (%.4f rad/m) — a constraint rejects the rest "
                   "pose (check that joint's limits vs value_at_rest); "
                   "geometry keeps its place regardless" % (bone_name, off))
+
+    # Whatever the import left over rides the ground bone: the assembly
+    # stays one object when the rig is moved, instead of half of it walking
+    # away. Same world-preserving parenting as everything else, so nothing
+    # shifts by a millimetre when it happens.
+    ground = arm_obj.get("RIG_ground_bone")
+    if ground and ground in arm_obj.pose.bones:
+        files = {obj.get("STEP_file") for obj, _, _ in plan}
+        files.discard(None)
+        for obj in _leftovers(arm_obj, [o for o, _, _ in plan], files):
+            plan.append((obj, ground, obj.matrix_world.copy()))
+            report.grounded.append(obj.name)
 
     for obj, bone_name, _ in plan:
         obj.parent = arm_obj

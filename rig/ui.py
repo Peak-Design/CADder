@@ -54,6 +54,25 @@ def _stepper_available():
         return False
 
 
+def _sw_integration_enabled(context):
+    """True when the user has switched on the experimental SolidWorks
+    integration in the addon preferences.
+
+    Gates the whole tab: without it the panel never polls true, so the
+    "SW To Blender" category does not appear in the sidebar at all. Fails
+    closed, because a user who has not opted in should never see it.
+    """
+    if bpy is None:
+        return False
+    # __package__ is "<addon>.rig" here; the preferences live on the addon.
+    addon = __package__.rpartition(".")[0] or __package__
+    try:
+        prefs = context.preferences.addons[addon].preferences
+    except (AttributeError, KeyError):
+        return False
+    return bool(getattr(prefs, "enable_bridge", False))
+
+
 def _find_rig(context):
     build = _STATE.get("build")
     if build is not None and build.armature_object is not None:
@@ -163,12 +182,20 @@ if bpy is not None:
         def execute(self, context):
             report = matching.match(_STATE["manifest"])
             _STATE["match_report"] = report
-            level = "INFO" if not report.unmatched else "WARNING"
-            self.report({level},
-                        "Matched {}, ambiguous {}, unmatched {}; frame: {}".format(
-                            len(report.matched), len(report.ambiguous),
-                            len(report.unmatched),
-                            matching.describe_frame(report.frame_rows)))
+            level = ("WARNING" if report.unmatched or report.notes
+                     else "INFO")
+            message = "Matched {}, ambiguous {}, unmatched {}; frame: {}".format(
+                len(report.matched), len(report.ambiguous),
+                len(report.unmatched),
+                matching.describe_frame(report.frame_rows))
+            if report.hint:
+                message += " — " + report.hint
+            # What the matcher had to decide on thin evidence. Written only
+            # when it could not check its own answer, so it belongs where the
+            # answer is read and not only in the system console.
+            for note in report.notes:
+                message += " — " + note
+            self.report({level}, message)
             return {"FINISHED"}
 
     class SWTB_OT_sync_poses(bpy.types.Operator):
@@ -264,9 +291,64 @@ if bpy is not None:
                             "constraint rejects the rest pose; check that "
                             "joint's limits (console has names)".format(
                                 len(report.posed_bones)))
+            elif report.grounded:
+                self.report({"INFO"},
+                            "Parented {} objects to bones; {} more had no "
+                            "bone of their own and now ride the ground, so "
+                            "the assembly stays together".format(
+                                report.bone_parented - len(report.grounded),
+                                len(report.grounded)))
             else:
                 self.report({"INFO"}, "Parented {} objects to bones".format(
                     report.bone_parented))
+            return {"FINISHED"}
+
+    class SWTB_OT_refine_selected(bpy.types.Operator):
+        bl_idname = "swtb.refine_selected"
+        bl_label = "Refine in SolidWorks"
+        bl_description = ("Ask SolidWorks to tessellate the selected parts "
+                          "again at a finer tolerance and swap the geometry "
+                          "in, keeping their pose and rig")
+        bl_options = {"REGISTER", "UNDO"}
+
+        quality: bpy.props.FloatProperty(
+            name="Quality", default=0.9, min=0.0, max=1.0, subtype="FACTOR",
+            description=("Chord tolerance, relative to each part's own size: "
+                         "0 is a coarse preview, 1 is a smooth close-up"))
+
+        @classmethod
+        def poll(cls, context):
+            return any(o.get("RIG_component_id") for o in context.selected_objects)
+
+        def execute(self, context):
+            from . import native_import, sw_link
+            ids = []
+            for obj in context.selected_objects:
+                cid = obj.get("RIG_component_id")
+                if cid and cid not in ids:
+                    ids.append(cid)
+            if not ids:
+                self.report({"WARNING"}, "Select parts that came from SolidWorks")
+                return {"CANCELLED"}
+            try:
+                reply = sw_link.retessellate(ids, self.quality)
+                changed = native_import.refine(context, reply["mesh"])
+            except sw_link.SwLinkError as exc:
+                _STATE["error"] = str(exc)
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
+            except (OSError, ValueError) as exc:
+                self.report({"ERROR"}, "Could not read the refined mesh: %s" % exc)
+                return {"CANCELLED"}
+            if not changed:
+                self.report({"WARNING"},
+                            "SolidWorks sent geometry for parts that are not "
+                            "in this scene")
+                return {"CANCELLED"}
+            self.report({"INFO"},
+                        "Refined {} part(s) to {} triangles ({:.3g} m chord)"
+                        .format(len(changed), reply.get("triangles", 0),
+                                reply.get("tolerance_m", 0.0)))
             return {"FINISHED"}
 
     class SWTB_PT_panel(bpy.types.Panel):
@@ -275,6 +357,10 @@ if bpy is not None:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "SW To Blender"
+
+        @classmethod
+        def poll(cls, context):
+            return _sw_integration_enabled(context)
 
         def draw(self, context):
             layout = self.layout
@@ -287,6 +373,19 @@ if bpy is not None:
                         bridge.port()), icon="PLUGIN")
             except Exception:
                 pass
+
+            # Only offered when the selection came from the direct link:
+            # a part imported through STEP has no component to ask about.
+            selected = [o for o in context.selected_objects
+                        if o.get("RIG_component_id")]
+            if selected:
+                box = layout.box()
+                box.label(text="{} part(s) selected".format(len(selected)),
+                          icon="MESH_DATA")
+                tolerance = selected[0].get("SWMESH_tolerance_m")
+                if tolerance:
+                    box.label(text="tessellated at {:.3g} m".format(tolerance))
+                box.operator("swtb.refine_selected", icon="MOD_SMOOTH")
 
             row = layout.row(align=True)
             row.prop(settings, "manifest_path")
@@ -338,6 +437,13 @@ if bpy is not None:
                         icon="QUESTION")
                 if len(report.ambiguous) > 10:
                     box.label(text="... {} more".format(len(report.ambiguous) - 10))
+                if report.notes:
+                    box.label(text="Matched on thin evidence:", icon="INFO")
+                    for note in report.notes[:5]:
+                        box.label(text=note)
+                    if len(report.notes) > 5:
+                        box.label(text="... {} more".format(
+                            len(report.notes) - 5))
 
             preport_pose = _STATE["pose_report"]
             if preport_pose is not None and (preport_pose.moved
@@ -386,6 +492,7 @@ if bpy is not None:
         SWTB_OT_sync_poses,
         SWTB_OT_build_rig,
         SWTB_OT_relink_geometry,
+        SWTB_OT_refine_selected,
         SWTB_PT_panel,
     )
 else:

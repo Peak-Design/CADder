@@ -56,6 +56,12 @@ class Coupling:
     # of the driver's body across this plane (SCHEMA.md, 2026-08-23).
     mirror_plane_point: Optional[Vec3] = None
     mirror_plane_normal: Optional[Vec3] = None
+    # mirror only: how much of the pose is reflected. "plane" is a symmetric
+    # MATE between planar faces — a plane-to-plane relation, so only the
+    # translation along the normal and the two tilts follow. "rigid" is an
+    # assembly MIRROR FEATURE, where the instance is a full reflection of its
+    # source and every channel follows.
+    mirror_scope: str = "plane"
 
 
 @dataclass
@@ -68,7 +74,6 @@ class Component:
     step_occurrence_path: Optional[str] = None
     bbox_min: Optional[Vec3] = None
     bbox_max: Optional[Vec3] = None
-    is_fastener: bool = False
     suppressed: bool = False
     subassembly_solving: Optional[str] = None
 
@@ -116,6 +121,14 @@ class Loop:
     suggested_driver_joint: Optional[str] = None
     planar: bool = False
     plane_normal: Optional[Vec3] = None
+    # How to re-close the cut. "ik" is a point coincidence solved by rotating
+    # the driven chain. "aim_pair" is a slider-crank: the bodies either side
+    # of the cut hang off their own pins and aim at each other, because no
+    # rotational solver can lengthen a slide. "none" means the exporter cut
+    # the loop so that the TREE already carries the motion, and solving it
+    # would move a body the mates never let move. Absent means "ik" — that is
+    # what every manifest written before the field meant.
+    closure_kind: str = "ik"
 
 
 @dataclass
@@ -157,6 +170,15 @@ def _vec3(value, what: str) -> Vec3:
         raise ManifestError(f"{what}: expected a 3-vector, got {value!r}")
     return (float(value[0]), float(value[1]), float(value[2]))
 
+
+
+def _closure_kind(lp: dict) -> str:
+    kind = lp.get("closure_kind", "ik")
+    if kind not in ("ik", "aim_pair", "none"):
+        raise ManifestError(
+            f"loop {lp['id']}: closure_kind {kind!r} is not one of "
+            "'ik', 'aim_pair', 'none'")
+    return kind
 
 def _opt_vec3(value, what: str) -> Optional[Vec3]:
     return None if value is None else _vec3(value, what)
@@ -219,7 +241,6 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
             step_occurrence_path=c.get("step_occurrence_path"),
             bbox_min=_opt_vec3((c.get("bbox_local") or {}).get("min"), f"component {c['id']} bbox min"),
             bbox_max=_opt_vec3((c.get("bbox_local") or {}).get("max"), f"component {c['id']} bbox max"),
-            is_fastener=bool(c.get("is_fastener", False)),
             suppressed=bool(c.get("suppressed", False)),
             subassembly_solving=c.get("subassembly_solving"),
         ))
@@ -271,6 +292,10 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
                 if not cdata.get("driver_joint"):
                     raise ManifestError(
                         f"joint {jid}: mirror coupling without a driver_joint")
+                if cdata.get("mirror_scope") not in (None, "plane", "rigid"):
+                    raise ManifestError(
+                        f"joint {jid}: unknown mirror_scope "
+                        f"{cdata['mirror_scope']!r}")
             coupling = Coupling(
                 kind=cdata["kind"],
                 driver_joint=cdata.get("driver_joint"),
@@ -281,6 +306,7 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
                 if mp is not None else None,
                 mirror_plane_normal=_vec3(mp["normal"], f"joint {jid} mirror normal")
                 if mp is not None else None,
+                mirror_scope=cdata.get("mirror_scope") or "plane",
             )
         path_points = None
         path_closed = False
@@ -353,6 +379,7 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
             member_joints=members,
             closure_joint=lp["closure_joint"],
             suggested_driver_joint=lp.get("suggested_driver_joint"),
+            closure_kind=_closure_kind(lp),
             planar=bool(lp.get("planar", False)),
             plane_normal=_opt_vec3(lp.get("plane_normal"), f"loop {lp['id']} plane normal"),
         ))

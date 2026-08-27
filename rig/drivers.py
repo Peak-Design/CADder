@@ -95,21 +95,40 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
         source_bone = bone_names[driver_group]
 
         if c.kind == "mirror":
-            # The exact 6-DOF reflection. rig_build rested BOTH bones with
-            # the SAME plane-aligned orientation (local +Y = the mirror
-            # normal) at mirrored positions, which reduces S∘T∘S to
-            # per-channel sign flips: location y negates, euler x and z
-            # negate (conjugating any rotation product by the reflection
-            # flips each factor about the in-plane axes; the euler order is
-            # preserved). Live corpus 14 sym4, 2026-08-23.
+            # rig_build rested BOTH bones with the SAME plane-aligned
+            # orientation (local +Y = the mirror normal) at mirrored
+            # positions, which reduces the reflection to per-channel sign
+            # flips: conjugating a rotation by an improper transform gives
+            # R(S·a, −angle), so with S mapping Y to −Y the channels that
+            # NEGATE are location y and euler x and z, and location x, z and
+            # euler y come through unchanged.
+            #
+            # How many of the six get drivers is what mirror_scope says.
+            #
+            # "plane" — a symmetric MATE between two planar faces. That is a
+            # plane-to-plane relation and it constrains exactly three degrees
+            # of freedom: the translation along the normal and the two
+            # rotations that tilt it, which are precisely the three that
+            # negate. The other three are what the relation leaves free and
+            # they must stay INDEPENDENT — driving them would weld the pair
+            # into one rigid mirror image, so one block could not be raised
+            # without the other (live corpus 14 sym4, 2026-08-24: SolidWorks
+            # allows exactly that independence).
+            #
+            # "rigid" — an assembly MIRROR FEATURE. There the instance IS a
+            # full reflection of its source, so all six follow and the pair
+            # really is one rigid mirror image.
             specs = (
-                ("location", 0, "LOC_X", 1.0),
                 ("location", 1, "LOC_Y", -1.0),
-                ("location", 2, "LOC_Z", 1.0),
                 ("rotation_euler", 0, "ROT_X", -1.0),
-                ("rotation_euler", 1, "ROT_Y", 1.0),
                 ("rotation_euler", 2, "ROT_Z", -1.0),
             )
+            if c.mirror_scope == "rigid":
+                specs += (
+                    ("location", 0, "LOC_X", 1.0),
+                    ("location", 2, "LOC_Z", 1.0),
+                    ("rotation_euler", 1, "ROT_Y", 1.0),
+                )
             for path, idx, ttype, sign in specs:
                 _add_driver(arm_obj, own_pb, path, source_bone, ttype, sign,
                             index=idx)

@@ -99,6 +99,76 @@ The material database lets you define mappings from generic STEP material names 
 
 Select a database from the dropdown in the STEP import dialog under **Material DB**. The selected database persists between sessions. When importing, all matching STEP materials are automatically replaced.
 
+### Reading a generated rig
+
+Bones are sorted into four bone collections, and only two of them are visible
+when the rig is built:
+
+- **`SW_controls`** (red): everything with a degree of freedom you can pose.
+  Each wears a widget that says what it does: a dial with a pointer for a
+  rotation, a round bar for something that slides and turns, a square bar for
+  something that only slides, a helix for a screw, a ball and stud for a ball
+  joint.
+- **`SW_limits`** (yellow): a fixed dial or rail beside each control that has
+  a limit, drawn to the real numbers: the arc spans the angle the joint may
+  turn through, the rail is as long as the travel plus half a slide bar at
+  each end (so the bar's end meets the rail's end when it is hard against the
+  stop), the cone opens to the swing angle. The arc rings the dial it belongs
+  to, so the dial's pointer reads against it.
+- **`SW_mechanism`** (green, hidden): bones that move but that you do not
+  drive: the driven half of a symmetry or gear coupling, the halves of a
+  hydraulic ram closed by aiming, anything welded solid.
+- **`SW_helpers`** (blue, hidden): scaffolding the closures need.
+
+The widgets you take hold of are solid, and drawn from both sides so they
+read from anywhere around the machine; the ones that annotate geometry (the
+ball cage, the swing cone, the plane) stay wire so they do not hide what
+they point at.
+
+Switch `SW_mechanism` on in the armature's Bone Collections panel to see the
+parts that follow rather than lead.
+
+The rig is built inside the collection you imported into, so hiding that
+collection hides the machine and its bones together. Anything the rig has no
+bone for (the import's own empties, a part that did not match) is hung off
+the ground bone rather than left behind, so moving the rig moves the whole
+assembly. Nothing is moved between collections: everything stays exactly
+where you put it.
+
+### Imported files, and refreshing them
+
+The N-panel lists every STEP file this .blend has imported, with what it holds
+and whether the file has changed on disk since. **Refresh from disk** reads the
+file again and puts the arrangement back around it:
+
+- objects stay in the collections you put them in, including a part
+  ctrl-dragged into a second collection so it lives in two places at once;
+- the import's own collections go back inside whatever collection you moved
+  them into;
+- objects of your own that you parented to a part are re-attached to it;
+- what you hid stays hidden.
+
+Components that have gone from the file, or are new in it, are reported rather
+than guessed at: that is the signal that the assembly itself changed, not just
+its geometry. The settings a file was imported with are remembered per file, so
+a refresh reproduces the import rather than using whatever the dialog holds at
+the time.
+
+### Import options worth knowing
+
+- **Group in a collection**: everything a file creates goes under one
+  collection named after it, so a second import does not interleave with the
+  first.
+- **Import curves**: free edges (sketches, construction wires) become POLY
+  curve objects in a collection named "Cad Curves". They keep their place in
+  the assembly and ride their parent.
+- **Separate solids**: one object per body of a multibody part, for files
+  that hold several solids, shells or surfaces with no assembly structure to
+  tell them apart. Off by default.
+- The **material database folder** can be set in preferences. Left empty it
+  uses the folder inside the addon, which a reinstall wipes and which cannot be
+  shared between machines.
+
 ### Panel buttons
 
 | Button | Description |
@@ -174,9 +244,9 @@ With **Remember import settings** enabled in the addon preferences (the default)
 
 This addon is free and open source under the GPL v3 license.
 
-**ambi** — original creator: https://ambient.gumroad.com/l/stepper
+**ambi**, original creator: https://ambient.gumroad.com/l/stepper
 
-**Peak Design** — current maintainer. Tips welcome:
+**Peak Design**, current maintainer. Tips welcome:
 
 [![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/oskarasspalvys)
 

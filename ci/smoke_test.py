@@ -4,8 +4,8 @@ Usage: python ci/smoke_test.py <assembled_addon_dir>
 
 Validates on the build platform that:
 1. every Python module of the addon was actually copied into the package
-   (a missing file would otherwise ship a zip that fails to register);
-2. the vendored OCP package imports and the STEP reader is reachable;
+   (a missing file would otherwise ship a zip that fails to register).
+2. the vendored OCP package imports and the STEP reader is reachable.
 3. the built stepper_native module loads against its native_libs OCCT
    subset and completes a BinTools serialize handoff round-trip.
 """

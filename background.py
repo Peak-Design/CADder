@@ -2,7 +2,7 @@
 #
 # OCP holds the GIL during STEP parsing (measured), so responsiveness
 # requires a separate process. A headless Blender runs worker.py (the
-# exact same import pipeline) and saves a .blend; the modal operator here
+# exact same import pipeline) and saves a .blend. The modal operator here
 # keeps the UI alive, shows progress, supports ESC-cancel and appends the
 # result when the worker finishes.
 
@@ -19,7 +19,7 @@ import uuid
 import bpy
 
 
-# Addon preferences that change import results; forwarded to the worker so
+# Addon preferences that change import results. Forwarded to the worker so
 # the background path matches the synchronous path exactly.
 FORWARDED_PREFS = (
     "build_materials",
@@ -106,8 +106,8 @@ class STEPPER_OT_background_import(bpy.types.Operator):
     def execute(self, context):
         if STEPPER_OT_background_import._running:
             self.report({"WARNING"},
-                        "A background import is already running; "
-                        "wait for it to finish (or press Esc to cancel it)")
+                        "A background import is already running. "
+                        "Wait for it to finish (or press Esc to cancel it)")
             return {"CANCELLED"}
         try:
             job = json.loads(self.job_json)
@@ -271,8 +271,8 @@ class STEPPER_OT_background_import(bpy.types.Operator):
                 self._cleanup(context)
                 self.report({"ERROR"}, f"Could not append result: {e}")
                 return {"CANCELLED"}
-            # Don't block the UI while the worker Blender shuts down;
-            # poll it on later timer ticks instead.
+            # Don't block the UI while the worker Blender shuts down.
+            # Poll it on later timer ticks instead.
             if self._proc.poll() is None:
                 self._reap.append(self._proc)
             self._file_index += 1
@@ -308,7 +308,7 @@ class STEPPER_OT_background_import(bpy.types.Operator):
 
     def cancel(self, context):
         # Called by the window manager if the modal is force-terminated
-        # (file load, window closed, Blender quit); without this the
+        # (file load, window closed, Blender quit). Without this the
         # headless worker would keep running as an orphan.
         self._cleanup(context)
 
@@ -329,7 +329,7 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             wm.progress_end()
         except Exception:
             pass
-        # The user may have switched workspace mid-import; clear the status
+        # The user may have switched workspace mid-import. Clear the status
         # text everywhere, not just on the current workspace.
         for ws in bpy.data.workspaces:
             try:

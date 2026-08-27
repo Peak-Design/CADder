@@ -2,7 +2,7 @@
 #
 # All import modes write a single "UVMap" layer (Blender's default name):
 # the CAD parametric UVs extracted during tessellation are written by the
-# mesh apply paths in main.py; this module provides the shared writer plus
+# mesh apply paths in main.py. This module provides the shared writer plus
 # the triplanar box-projection generator that works on any finished
 # Blender mesh.
 
@@ -30,7 +30,7 @@ def write_uv_layer(me, name, loop_uvs):
 def add_box_uv(me, scale=1.0, name="UVMap"):
     """Add a triplanar box-projected UV layer to a finished Blender mesh.
 
-    Each face is projected along its dominant normal axis; UVs are the two
+    Each face is projected along its dominant normal axis. UVs are the two
     remaining vertex coordinates divided by `scale` (world units per tile).
     """
     n_loops = len(me.loops)

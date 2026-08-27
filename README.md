@@ -106,10 +106,10 @@ and whether the file has changed on disk since. **Refresh from disk** reads the
 file again and puts the arrangement back around it:
 
 - objects stay in the collections you put them in, including a part
-  ctrl-dragged into a second collection so it lives in two places at once;
+  ctrl-dragged into a second collection so it lives in two places at once.
 - the import's own collections go back inside whatever collection you moved
-  them into;
-- objects of your own that you parented to a part are re-attached to it;
+  them into.
+- objects of your own that you parented to a part are re-attached to it.
 - what you hid stays hidden.
 
 Components that have gone from the file, or are new in it, are reported rather
@@ -173,7 +173,7 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 | Mode | Description |
 |------|-------------|
 | **CAD Surface** | One island per CAD face, taken from the parametric surface coordinates. Fast, and the default. |
-| **Unwrap** | Blender's angle-based unwrap with packed islands; sharp CAD edges act as seams. Slower on large assemblies. |
+| **Unwrap** | Blender's angle-based unwrap with packed islands. Sharp CAD edges act as seams. Slower on large assemblies. |
 | **Box Project** | Triplanar projection with a world-unit tile size. |
 | **None** | No UV layer. |
 
@@ -195,14 +195,14 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 2.4.6   | 5.1     | Fixed engineering materials always being created grey instead of keeping the part's imported colour |
-| 2.4.5   | 5.1     | Engineering material import (AP242/AP214 name, description, density) as custom properties and optional named materials; single `UVMap` layer with a UV mode dropdown, real-world UV scaling and automatic seams on closed/cylindrical faces; import options remembered between sessions; parented-empties imports now leave everything at scale 1; recursive folder batch import; multi-file drag & drop fix |
+| 2.4.6   | 5.1     | Fixed engineering materials always being created gray instead of keeping the part's imported color |
+| 2.4.5   | 5.1     | Engineering material import (AP242/AP214 name, description, density) as custom properties and optional named materials. Single `UVMap` layer with a UV mode dropdown, real-world UV scaling and automatic seams on closed/cylindrical faces. Import options remembered between sessions. Parented-empties imports now leave everything at scale 1. Recursive folder batch import. Multi-file drag & drop fix |
 | 2.4.4   | 5.1     | Code-review hardening: multi-level Prune/Restore, detail slider no longer overridden by the quality preset, batch import honours preference defaults, Regenerate/Reload fixed for IGES/BREP, background worker inherits preferences and cannot hang or outlive Blender, long CAD material names, edit-mode guards, tooltip and layout polish |
-| 2.4.3   | 5.1     | Non-blocking background import (worker process, live progress, Esc to cancel) with a size threshold; identical output to direct import |
+| 2.4.3   | 5.1     | Non-blocking background import (worker process, live progress, Esc to cancel) with a size threshold. Identical output to direct import |
 | 2.4.2   | 5.1     | IGES + BREP import, sketch/construction curves import, relative (adaptive) tessellation, pre-import analyzer with import-time estimates |
 | 2.4.1   | 5.1     | SurfaceUV + BoxUV layers, viewport drag & drop, folder batch import, state-preserving Regenerate, Prune/Restore hierarchy tools, mesh cleanup |
 | 2.4.0   | 5.1     | Quality presets with unit-aware deflection (physical mm in any unit system), collection-instances hierarchy mode, construction-geometry filters, per-instance color overrides, modern import dialog |
-| 2.3.0   | 5.1     | Migrated OpenCASCADE bindings from pythonocc-core to OCP (cadquery-ocp-novtk 7.9.3.1.1); converted to Blender extension format with per-platform OCP wheels; added macOS Intel support; native mesh extraction reworked to a serialize handoff |
+| 2.3.0   | 5.1     | Migrated OpenCASCADE bindings from pythonocc-core to OCP (cadquery-ocp-novtk 7.9.3.1.1). Converted to Blender extension format with per-platform OCP wheels. Added macOS Intel support. Native mesh extraction reworked to a serialize handoff |
 | 2.2.0   | 5.1     | Material database system for automatic material replacement, fixed apply-scale on instanced/multi-user meshes |
 | 2.1.3   | 5.1     | Renamed to STEPper NEXT, auto-apply scale, skip empty objects, preferences now persist across sessions |
 | 2.1.x   | 5.1     | Multithreaded normal computation, performance optimizations, crash fixes for corrupt STEP files |

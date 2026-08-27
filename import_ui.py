@@ -1,7 +1,7 @@
 # Import dialog UI, quality presets, preference seeding, drag & drop and
 # folder batch import for STEPper NEXT.
 #
-# The import operator class lives in main.py (registration hub); this module
+# The import operator class lives in main.py (registration hub). This module
 # holds the preset table, deflection resolution and the dialog draw code so
 # main.py stops growing.
 
@@ -51,7 +51,7 @@ PERSISTED_PROPS = (
 def save_last_used(op, prefs):
     """Persist the operator's current dialog options into the preferences.
 
-    Written on every user-initiated import; lands on disk with Blender's
+    Written on every user-initiated import. Lands on disk with Blender's
     normal preferences save (auto on quit by default).
     """
     if not getattr(prefs, "remember_import_settings", False):
@@ -78,7 +78,7 @@ def _restore_last_used(op, prefs):
             continue
         # Assigning quality_preset marks it "set" for the session, which
         # would override the artist-friendly detail slider (see
-        # make_deflection_spec); same rule as seeding below.
+        # make_deflection_spec). Same rule as seeding below.
         if key == "quality_preset" and prefs.simpler_parameters:
             continue
         try:
@@ -92,7 +92,7 @@ def make_deflection_spec(op, prefs):
 
     Modes:
       legacy:    raw file-unit values (old lin_deflection/ang_deflection
-                 semantics); used when the legacy props were explicitly set
+                 semantics). Used when the legacy props were explicitly set
                  (scripts, parity harness) so old callers are unaffected.
       detail:    simple-mode integer detail level (resolved by caller).
       physical:  linear deflection is a physical length in meters, converted
@@ -143,7 +143,7 @@ def seed_from_prefs(op, prefs):
     """Seed dialog defaults from addon preferences, once per session.
 
     With "Remember import settings" on, the options saved by the last
-    import (any session) win; otherwise the explicit defaults from the
+    import (any session) win. Otherwise the explicit defaults from the
     preferences are used. After the first invoke, the operator's own
     last-used values win (Blender keeps them for the session).
     """

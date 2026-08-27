@@ -3,7 +3,7 @@ import numpy as np
 try:
     from mathutils import Vector
 except ModuleNotFoundError:
-    Vector = None  # only needed inside Blender; importer runs without it
+    Vector = None  # only needed inside Blender. Importer runs without it
 
 
 class NurbsPoint:

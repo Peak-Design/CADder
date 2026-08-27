@@ -16,7 +16,7 @@ _ENTITY_PATTERNS = {
     "faces": rb"=\s*ADVANCED_FACE\s*\(",
     "shells": rb"=\s*(?:CLOSED_SHELL|OPEN_SHELL)\s*\(",
     # WITH_KNOTS appears exactly once per B-spline surface entity, in both
-    # the simple and the complex (rational) instance forms; the bare
+    # the simple and the complex (rational) instance forms. The bare
     # substring would count complex instances 2-3 times.
     "bspline_surfaces": rb"B_SPLINE_SURFACE_WITH_KNOTS\s*\(",
     "entities": rb"\n#\d+\s*=",
@@ -58,7 +58,7 @@ def scan_step_file(filepath, chunk_size=8 * 1024 * 1024):
                 break
             buf = tail + chunk
             # Matches ending inside the carried-over tail were already
-            # counted in the previous iteration; matches spanning the chunk
+            # counted in the previous iteration. Matches spanning the chunk
             # boundary complete (and count) only now.
             base = len(tail)
             for key, pat in _ENTITY_PATTERNS.items():
@@ -91,7 +91,7 @@ def estimate_times(scan, prefs):
     if not eps or scan["entities"] <= 0:
         return None
     parse_s = scan["entities"] / eps
-    # Meshing roughly tracks parse cost on typical files; scale per preset
+    # Meshing roughly tracks parse cost on typical files. Scale per preset
     return {p: parse_s * (1.0 + f) for p, f in _PRESET_FACTORS.items()}
 
 

@@ -30,7 +30,7 @@ def _parent_alive(pid):
         if not handle:
             return False
         # OpenProcess can still succeed on an exited process (its object
-        # lives while any handle exists); a zero-timeout wait tells us
+        # lives while any handle exists). A zero-timeout wait tells us
         # whether it is actually running.
         res = kernel32.WaitForSingleObject(handle, 0)
         kernel32.CloseHandle(handle)

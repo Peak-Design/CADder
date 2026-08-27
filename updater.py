@@ -6,7 +6,7 @@
 # (it ships precompiled binaries), so Blender's own extension updater never
 # sees it and this is the only way a user learns a new version is out.
 #
-# The request runs on a daemon thread and touches no bpy data; the result
+# The request runs on a daemon thread and touches no bpy data. The result
 # is picked up by a bpy.app timer on the main thread, which is also the
 # only place the cached answer is written back to the preferences.
 
@@ -96,7 +96,7 @@ def _fetch():
     with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
         data = json.loads(response.read().decode("utf-8"))
     tag = data.get("tag_name") or ""
-    # Hand back the zip for this platform where we can recognise one, so
+    # Hand back the zip for this platform where we can recognize one, so
     # the user does not have to pick from four downloads.
     key = platform_key()
     url = ""
@@ -178,7 +178,7 @@ def _tick():
 
 
 def start(delay=6.0):
-    """Schedule the daily check. Called from register(); the delay keeps it
+    """Schedule the daily check. Called from register(). The delay keeps it
     clear of Blender's startup so nothing competes with file loading."""
     global _timer_running
     if bpy is None or _timer_running:

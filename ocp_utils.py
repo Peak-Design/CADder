@@ -25,7 +25,7 @@ def get_label_name(label):
         pass
     # ToCString is all-or-nothing, so read it a character at a time and let
     # the one bad character be the only casualty. Value() returns a str on
-    # some OCP builds and an int on others; both are handled, and a
+    # some OCP builds and an int on others. Both are handled, and a
     # character that cannot be read at all becomes "?".
     out = []
     try:

@@ -20,8 +20,7 @@
 #   - Added failed parts diagnostics
 #   - Added ShapeFix healing and per-face entity recovery for broken shapes
 #   - Scoped face recovery to only unmapped entities (prevents geometry bleed)
-#   - Migrated to OCP bindings (cadquery-ocp-novtk 7.9.3.1.1 / OCCT 7.9.3);
-#     native module now receives faces via BinTools serialize handoff
+#   - Migrated to OCP bindings (cadquery-ocp-novtk 7.9.3.1.1 / OCCT 7.9.3). Native module now receives faces via BinTools serialize handoff
 
 import sys
 from os.path import dirname
@@ -141,7 +140,7 @@ def _mesh_shape(shp, lin_def, ang_def, relative=False):
     """Run BRepMesh on a shape.
 
     relative=True switches OCCT to relative deflection (deflection scales
-    with each edge's size) and enables parallel meshing; the absolute path
+    with each edge's size) and enables parallel meshing. The absolute path
     keeps the historical single-threaded call for deterministic parity.
     """
     if relative:
@@ -263,7 +262,7 @@ class NativeMeshData:
         self.tri_mat_names = [self.tri_mat_names[i]
                               for i in range(len(keep)) if keep[i]]
         if self.loop_norms is not None:
-            # keep mask is per-tri; loop_norms is per-corner (3 per tri)
+            # keep mask is per-tri. loop_norms is per-corner (3 per tri)
             keep3 = np.repeat(keep, 3)
             self.loop_norms = self.loop_norms[keep3]
             if self.loop_uvs is not None:
@@ -281,7 +280,7 @@ class NativeMeshData:
         self.tri_batches = self.tri_batches[unique_idx]
         self.tri_mat_names = [self.tri_mat_names[i] for i in unique_idx]
         if self.loop_norms is not None:
-            # unique_idx is per-tri; expand to per-corner
+            # unique_idx is per-tri. Expand to per-corner
             loop_idx = np.repeat(unique_idx * 3, 3) + np.tile([0, 1, 2], len(unique_idx))
             self.loop_norms = self.loop_norms[loop_idx]
             if self.loop_uvs is not None:
@@ -513,7 +512,7 @@ class ReadSTEP:
     # Per-import UV mode, set by load_step before tessellation:
     # None  -> normalize each face's UVs to the 0-1 square (default)
     # float -> scale UVs so 1 UV unit == 1 scene unit (value = scene units
-    #          per file unit); texel density then matches across parts
+    #          per file unit). Texel density then matches across parts
     uv_world_scale = None
 
     def __init__(self, filename, skip_name_prefixes=()):
@@ -549,8 +548,8 @@ class ReadSTEP:
         c_curv = XCAFDoc_ColorTool.GetColor_s(label, XCAFDoc_ColorCurv, cc)
         if c_gen or c_surf or c_curv:
             colorset = True
-            # Meshes want the surface color first, then the generic color;
-            # the curve color only when nothing else is defined.
+            # Meshes want the surface color first, then the generic color.
+            # The curve color only when nothing else is defined.
             if c_surf:
                 c, colortype = cs, 2
             elif c_gen:
@@ -743,7 +742,7 @@ class ReadSTEP:
 
         # Try transfer with default surface curve mode first (preserves more
         # geometry).  Only fall back to mode 0 (skip surface curves) when the
-        # transfer crashes; this can happen on files with unresolved refs.
+        # transfer crashes. This can happen on files with unresolved refs.
         # See: https://dev.opencascade.org/content/loading-step-file-crashes-edgeloop
         transfer_ok = False
         if has_data_failures:
@@ -890,7 +889,7 @@ class ReadSTEP:
                             new_leaf.color_override = (oc.Red(), oc.Green(), oc.Blue())
 
                         # Engineering material on the component reference
-                        # (rare; usually it sits on the referred product,
+                        # (rare. Usually it sits on the referred product,
                         # picked up in the simple-shape branch below)
                         new_leaf.material = self.query_material(label)
 
@@ -1084,7 +1083,7 @@ class ReadSTEP:
         for t in tris:
             # Degenerate triangles (repeated node index: collapsed seams,
             # corrupt geometry) would fail TriData's assertions and discard
-            # the whole face; skip just the bad triangle instead, matching
+            # the whole face. Skip just the bad triangle instead, matching
             # the native path (which drops them in filter_zero_area).
             if t[0] == t[1] or t[1] == t[2] or t[2] == t[0]:
                 continue
@@ -1427,12 +1426,12 @@ class ReadSTEP:
             return out_mesh
 
         # Attempt per-face entity recovery for empty shapes (only when
-        # skip_faulty is off; recovery can produce corrupt triangulations)
+        # skip_faulty is off. Recovery can produce corrupt triangulations)
         recovered_shape = None
         if all_subs_empty and not skip_faulty:
             recovered_shape = self._get_recovery_compound(shape)
             if recovered_shape is not None:
-                # Use recovered compound as the sole shape; discard sub_shapes
+                # Use recovered compound as the sole shape. Discard sub_shapes
                 # since we no longer have XCAF label associations.
                 self.face_colors[ShapeKey(recovered_shape)] = self.face_colors.get(ShapeKey(shape))
                 self.face_color_priority[ShapeKey(recovered_shape)] = self.face_color_priority.get(ShapeKey(shape), 0)
@@ -1579,7 +1578,7 @@ class ReadSTEP:
          failed_mask, undef_mask) = result
 
         if len(failed_mask) != len(face_refs):
-            print("\n  [native face-count mismatch; Python fallback]",
+            print("\n  [native face-count mismatch. Python fallback]",
                   end="", flush=True)
             return self._build_trimesh_python(
                 collected_faces, face_dedup, out_mesh)
@@ -1694,7 +1693,7 @@ class ReadSTEP:
                 _recompute_face_normals(j)
 
         # Build combined flat arrays: accumulate all faces with global indices
-        # Each OCC face has its own local vertex set; we concatenate them all.
+        # Each OCC face has its own local vertex set. We concatenate them all.
         # all_verts/all_norms/all_uvs are already concatenated by the C++ module
         # all_faces has global indices into all_verts
         #

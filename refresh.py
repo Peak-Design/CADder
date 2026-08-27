@@ -28,8 +28,7 @@ Three things are recorded, and each one answers a real workflow:
 
 Identity across a re-import is a cascade, because none of the single keys
 survives every edit. An object's own NAME first, which is what the user sees
-and what the importer reproduces deterministically for an unchanged file;
-then the CAD node index with the CAD name, which survives a rename; then the
+and what the importer reproduces deterministically for an unchanged file. Then the CAD node index with the CAD name, which survives a rename. Then the
 CAD name alone where it is unique, which survives a node index shifting
 because a component was added earlier in the tree. What matches by none of
 them is reported rather than guessed at: an object that has gone from the
@@ -211,7 +210,7 @@ def snapshot(path):
             "user_collections": user_cols,
             # Whether it was still inside the import's own hierarchy. If it
             # was, the fresh hierarchy is where it belongs and the user's
-            # collections are EXTRA; if it was not, the user took it out and
+            # collections are EXTRA. If it was not, the user took it out and
             # their collections are the whole answer.
             "in_owned": any(c.name in owned_cols for c in obj.users_collection),
             "external_children": external_children.get(obj.name, []),
@@ -234,7 +233,7 @@ def snapshot(path):
     # dragged in. Removing the import unlinks them from their only home, and
     # a collection linked nowhere is gone from the scene, so where they sat
     # has to be written down before that happens. Keyed by the owner's ROLE,
-    # which the re-import recreates; its NAME may come back as name.001.
+    # which the re-import recreates. Its NAME may come back as name.001.
     external_collections = {}
     for col in file_collections(path):
         strays = [c.name for c in col.children if c.name not in owned_cols]
@@ -279,7 +278,7 @@ def clear(path):
     # will still exist afterwards. Blender does not delete a child
     # collection along with its parent. It simply unlinks it, and a
     # collection linked nowhere is out of the scene. `restore` puts these
-    # back inside; this is what keeps them ALIVE for it to find.
+    # back inside. This is what keeps them ALIVE for it to find.
     owned = {c.name for c in file_collections(path)}
     for col in file_collections(path):
         for child in list(col.children):
@@ -406,7 +405,7 @@ def restore(path, snap):
                     scene.collection.children.unlink(col)
 
     # ...and whatever of the user's had been nested inside them goes back
-    # in. `clear` parked these somewhere that would survive it; this is the
+    # in. `clear` parked these somewhere that would survive it. This is the
     # move that returns them, so a rig collection kept with its assembly
     # stays with it across a refresh.
     fresh_by_role = {(c.get(ROLE_PROP) or c.name): c
@@ -463,8 +462,8 @@ if bpy is not None:
             settings = settings_for(context.scene, path)
             if settings is None:
                 self.report({"WARNING"},
-                            "No record of how this file was imported; "
-                            "refreshing with the current defaults")
+                            "No record of how this file was imported. "
+                            "Refreshing with the current defaults")
                 settings = _main.import_defaults()
 
             snap = snapshot(path)
@@ -483,7 +482,7 @@ if bpy is not None:
                 self.report({"ERROR"}, "Re-import failed: %s" % exc)
                 return {"CANCELLED"}
             if result is False:
-                self.report({"ERROR"}, "Re-import failed; see the console")
+                self.report({"ERROR"}, "Re-import failed. See the console")
                 return {"CANCELLED"}
 
             restored, gone, added = restore(path, snap)
@@ -494,7 +493,7 @@ if bpy is not None:
             level = "INFO"
             if gone or added:
                 level = "WARNING"
-                msg += ("; the assembly changed - %d component(s) gone, %d "
+                msg += (". The assembly changed - %d component(s) gone, %d "
                         "new" % (len(gone), added))
                 for name in gone[:10]:
                     print("[STEPper refresh] gone from the file: %s" % name)

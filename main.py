@@ -46,6 +46,23 @@ from . import background as background_mod
 from . import updater as updater_mod
 from .formats import classes as formats_classes
 
+# The rig subpackage (SW To Blender: armature from a .rig.json manifest) is
+# developed in-tree but must never take the importer down with it — a broken
+# rig module costs the rig panel, not STEP import.
+try:
+    from . import rig as rig_mod
+except Exception as _rig_exc:
+    rig_mod = None
+    print("STEPper NEXT: rig subpackage failed to load:", _rig_exc)
+
+# Same isolation for the SolidWorks bridge: a bridge fault must never cost
+# STEP import.
+try:
+    from . import bridge as bridge_mod
+except Exception as _bridge_exc:
+    bridge_mod = None
+    print("STEPper NEXT: bridge module failed to load:", _bridge_exc)
+
 # Active UV options for the current import (set by load_step)
 # Per-import UV generation state (a single "UVMap" layer; the booleans are
 # derived from the operator's uv_mode enum in load_step)
@@ -3585,6 +3602,28 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
                 "Annotations,Planes,Origin",
     )
 
+    def _enable_bridge_changed(self, context):
+        if bridge_mod is None:
+            return
+        try:
+            if self.enable_bridge:
+                bridge_mod.start()
+            else:
+                bridge_mod.stop()
+        except Exception as exc:
+            print("STEPper NEXT: bridge toggle failed:", exc)
+
+    enable_bridge: bpy.props.BoolProperty(
+        name="SolidWorks integration (experimental)",
+        description="Show the SW To Blender sidebar tab. The addon also listens"
+                    " on localhost so the SolidWorks add-in can send exports "
+                    "into this Blender instance. This is off by default because"
+                    " the feature is experimental. The listener accepts "
+                    "connections only from this machine",
+        default=False,
+        update=_enable_bridge_changed,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -3660,6 +3699,12 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
                             text="Support development on Ko-fi")
         kofi.url = updater_mod.KOFI_URL
 
+        col = layout.box().column(align=True)
+        col.prop(self, "enable_bridge")
+        if bridge_mod is not None and bridge_mod.is_running():
+            col.label(text="Listening on 127.0.0.1:%d"
+                           % bridge_mod.port(), icon="CHECKMARK")
+
 
 def menu_func_import(self, context):
     self.layout.operator(ImportStepCADOperator.bl_idname, text="STEP/IGES/BREP CAD [STEPper NEXT]")
@@ -3702,9 +3747,30 @@ def register():
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     updater_mod.start()
 
+    if rig_mod is not None:
+        try:
+            rig_mod.register()
+        except Exception as exc:
+            print("STEPper NEXT: rig registration failed:", exc)
+    if bridge_mod is not None:
+        try:
+            bridge_mod.register()
+        except Exception as exc:
+            print("STEPper NEXT: bridge registration failed:", exc)
+
 
 def unregister():
     updater_mod.stop()
+    if bridge_mod is not None:
+        try:
+            bridge_mod.unregister()
+        except Exception as exc:
+            print("STEPper NEXT: bridge unregistration failed:", exc)
+    if rig_mod is not None:
+        try:
+            rig_mod.unregister()
+        except Exception as exc:
+            print("STEPper NEXT: rig unregistration failed:", exc)
     for c in classes[::-1]:
         bpy.utils.unregister_class(c)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)

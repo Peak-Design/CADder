@@ -93,6 +93,48 @@
 #     plus a Ko-fi link, and all user facing copy rewritten in Simplified
 #     Technical English
 
+#   - rig/ subpackage added (SW To Blender): builds a constrained armature
+#     from the .rig.json manifest written by the Peak.SwToBlender SolidWorks
+#     add-in (github.com/Peak-Design/SW-To-Blender holds the exporter and
+#     the manifest schema) and parents imported STEP geometry to the bones.
+#     Registered from main.register(), guarded so a rig fault never costs
+#     STEP import; panel in the 3D View sidebar under "SW To Blender".
+#     Tests in ci/rig/, headless smoke in ci/rig_smoke.py
+#   - rig/: scene-frame detection — a STEP imported with another up axis
+#     (e.g. Y-up) rotates the geometry away from the manifest's Z-up frame;
+#     matching now estimates that transform from its own name/path matches
+#     (candidate up-axis rotations compete when no anchors exist) and the
+#     rig builds through it, landing on the geometry whatever the import
+#     orientation. The match report names the detected frame.
+#   - rig/: dropped the GRP_ per-group empties — geometry now parents
+#     directly to the bones; identity lives in the RIG_* object tags, so
+#     the middleman bought nothing and cluttered the outliner. Legacy
+#     GRP_ empties are cleaned up on the next Build Rig
+#   - rig/: the rig is named after the assembly (<step base>_Rig, e.g.
+#     hinge_Rig) instead of a fixed SW_Rig, so rigs from several
+#     assemblies coexist; rebuilds still replace the same assembly's rig
+#   - rig/: rig placement follows the geometry — the scene frame now
+#     carries translation too (STEPper imports land at the 3D cursor), and
+#     name-anchored frame estimation runs even without occurrence paths;
+#     with no frame at all the rig builds at the 3D cursor, never silently
+#     at the world origin
+#   - rig/: ball-joint swing cones are symmetric about the rest pose — the
+#     mate dimension is an unsigned swing angle, and applying its raw
+#     0..max range per axis pinned the swing into one quadrant of the
+#     socket (and jittered against the one-sided clamps)
+#   - rig/: pin_slot joint type (manifest schema addition): spin about bone
+#     Y plus slide along bone Z (secondary_axis is the slide direction for
+#     this type). IK limits on ball joints in loop chains now use the same
+#     symmetric swing cone as the Limit Rotation constraint
+#   - rig/: loop closures rebuilt around a real IK end-effector — a second
+#     hidden bone rides the driven tip with its tail exactly on the closure
+#     point and owns the IK constraint. The old constraint pulled the tip
+#     bone's own tail, which sits off the closure point and cannot move in
+#     the mechanism plane, so four-bars froze solid. Pairs with the
+#     exporter-side fix that cuts each loop just past its driver joint
+#   - rig/: manifest file browser filters to *.rig.json (new filtered
+#     browse button; the bare path field stays editable)
+
 bl_info = {
     "name": "STEPper NEXT",
     "author": "ambi, Peak-Design",

@@ -1249,9 +1249,15 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                      + list(result.cone_frame_names.values())):
             pose.bones[name].rotation_mode = "YXZ"
 
+        source = manifest.source_path or ""
         for bp in plan.bones:
             pb = pose.bones[result.bone_names[bp.group.id]]
             pb["RIG_group"] = bp.group.id
+            # WHICH manifest this bone came from. Group ids restart at g000
+            # for every assembly, so once two rigs are joined into one
+            # armature the id alone no longer names a bone — half the
+            # geometry would re-parent to the other assembly's bones.
+            pb["RIG_source"] = source
             if bp.ball_def_name:
                 pb["RIG_joint"] = bp.joint.id
                 ctrl_pb = pose.bones[result.ball_ctrl_names[bp.group.id]]

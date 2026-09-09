@@ -67,18 +67,45 @@ def _bone_parent_matrix(arm_obj, bone_name):
             @ Matrix.Translation((0.0, bone.length, 0.0)))
 
 
+def rig_sources(arm_obj):
+    """Every manifest this armature holds bones for.
+
+    One, until rigs are joined. A joined armature carries several, and the
+    bones say individually which one they came from.
+    """
+    found = []
+    for value in [arm_obj.get("RIG_source")] + list(
+            arm_obj.get("RIG_sources") or []):
+        if value and value not in found:
+            found.append(value)
+    for pb in arm_obj.pose.bones:
+        value = pb.get("RIG_source")
+        if value and value not in found:
+            found.append(value)
+    return found
+
+
 def _rig_maps(arm_obj):
-    bone_by_group = {}
+    """(source, group id) -> bone name, and the same key -> the objects.
+
+    Group ids restart at g000 for every manifest, so the id alone stops
+    naming a bone the moment two assemblies share an armature: half the
+    geometry would re-parent to the other assembly's bones. The manifest a
+    bone and an object came from is recorded on both, and the pair is what
+    identifies a body.
+
+    An untagged object or bone predates the tag, or came from a foreign
+    importer. Those keep the old behaviour — matched on the group id alone —
+    because there is nothing better to go on, and one rig in one armature is
+    still the common case.
+    """
+    sources = rig_sources(arm_obj)
+    bone_by_key = {}
     for pb in arm_obj.pose.bones:
         gid = pb.get("RIG_group")
         if gid and "RIG_helper" not in pb.keys():
-            bone_by_group[gid] = pb.name
-    # Group ids are per-manifest and start at g000 every time, so a scene
-    # holding two rigged assemblies has two of everything. An object says
-    # which manifest tagged it. One that predates the tag (or came from a
-    # foreign importer) is still taken, because there is nothing better to
-    # go on and one rig in a scene is the common case.
-    source = arm_obj.get("RIG_source") or None
+            bone_by_key[(pb.get("RIG_source") or None, gid)] = pb.name
+
     geometry = {}
     for obj in bpy.data.objects:
         if obj.get("RIG_group_empty") or obj.get("RIG_rig"):
@@ -87,10 +114,22 @@ def _rig_maps(arm_obj):
         if not gid:
             continue
         theirs = obj.get("RIG_source") or None
-        if source and theirs and theirs != source:
+        if sources and theirs and theirs not in sources:
             continue
-        geometry.setdefault(gid, []).append(obj)
-    return bone_by_group, geometry
+        geometry.setdefault((theirs, gid), []).append(obj)
+    return bone_by_key, geometry
+
+
+def _bone_for(bone_by_key, key):
+    """The bone an object belongs on, allowing for either side being
+    untagged: an exact (source, group) match first, then the same group id
+    when only ONE bone claims it — which is every rig that has not been
+    joined to another."""
+    if key in bone_by_key:
+        return bone_by_key[key]
+    _source, gid = key
+    same = [name for (_s, g), name in bone_by_key.items() if g == gid]
+    return same[0] if len(same) == 1 else None
 
 
 def _prototype_collections():
@@ -170,15 +209,16 @@ def relink(context, arm_obj) -> ParentReport:
     # includes constraints), so the depsgraph must be current before
     # anything is captured.
     context.view_layer.update()
-    bone_by_group, geometry = _rig_maps(arm_obj)
+    bone_by_key, geometry = _rig_maps(arm_obj)
 
     plan = []  # (obj, bone_name, world_before)
-    for gid in sorted(set(bone_by_group) | set(geometry)):
-        bone_name = bone_by_group.get(gid)
+    for key in sorted(set(bone_by_key) | set(geometry),
+                      key=lambda k: (k[0] or "", k[1])):
+        bone_name = _bone_for(bone_by_key, key)
         if bone_name is None:
-            report.missing_groups.append(gid)
+            report.missing_groups.append(key[1])
             continue
-        for obj in geometry.get(gid, []):
+        for obj in geometry.get(key, []):
             plan.append((obj, bone_name, obj.matrix_world.copy()))
 
     for bone_name in sorted({name for _, name, _ in plan}):

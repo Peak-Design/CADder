@@ -12,7 +12,8 @@ broken file can never take the UI down with it.
 
 import os
 
-from . import graph, manifest as manifest_mod, matching, parenting, pose_sync, rig_build
+from . import (graph, joining, manifest as manifest_mod, matching,
+               parenting, pose_sync, rig_build)
 from .manifest import ManifestError
 
 try:
@@ -27,6 +28,7 @@ _STATE = {
     "pose_report": None,
     "build": None,
     "parent_report": None,
+    "join_report": None,
     "error": "",
 }
 
@@ -305,6 +307,84 @@ if bpy is not None:
                     report.bone_parented))
             return {"FINISHED"}
 
+    class SWTB_OT_join_rigs(bpy.types.Operator):
+        bl_idname = "swtb.join_rigs"
+        bl_label = "Join Rigs"
+        bl_description = ("Fold the other selected rigs into the active one, "
+                          "hang each of their roots off one of its bones, and "
+                          "re-parent the geometry")
+        bl_options = {"REGISTER", "UNDO"}
+
+        attach_bone: bpy.props.StringProperty(
+            name="Attach To",
+            description=("Bone of the active rig that the joined rigs ride. "
+                         "Empty means its root, which is the machine's "
+                         "ground"))
+
+        @classmethod
+        def poll(cls, context):
+            host, others = joining.joinable(context)
+            return host is not None and bool(others)
+
+        def invoke(self, context, event):
+            # A bone selected in the host is the obvious thing to hang the
+            # subassembly off, so offer it rather than asking twice.
+            host, _others = joining.joinable(context)
+            if host is not None and not self.attach_bone:
+                active = host.data.bones.active
+                if active is not None and active.name in host.pose.bones:
+                    self.attach_bone = active.name
+            return context.window_manager.invoke_props_dialog(self)
+
+        def draw(self, context):
+            host, others = joining.joinable(context)
+            layout = self.layout
+            if host is None:
+                return
+            layout.label(text="Into: {}".format(host.name),
+                         icon="ARMATURE_DATA")
+            for other in others:
+                layout.label(text="Joining: {}".format(other.name),
+                             icon="PLUS")
+            layout.prop_search(self, "attach_bone", host.pose, "bones")
+            if not self.attach_bone:
+                layout.label(text="Empty: hang them off the machine ground",
+                             icon="INFO")
+
+        def execute(self, context):
+            host, others = joining.joinable(context)
+            if host is None or not others:
+                self.report({"ERROR"},
+                            "Select the rigs to join, then the rig to join "
+                            "them INTO last so it is the active object")
+                return {"CANCELLED"}
+            rig_build._ensure_object_mode(context)
+            report = joining.join(context, host, others,
+                                  attach_bone=self.attach_bone or None)
+            _STATE["join_report"] = report
+
+            for w in report.warnings:
+                print("[SWTB join]", w)
+            if report.drift:
+                worst = max(d for _, d in report.drift)
+                self.report({"WARNING"},
+                            "Joined {} bone(s), but {} thing(s) moved (worst "
+                            "{:.3f} mm) - see the console".format(
+                                report.bones_added, len(report.drift),
+                                worst * 1000.0))
+                for name, d in report.drift[:10]:
+                    print("[SWTB join] moved {:.6f} m: {}".format(d, name))
+            elif report.warnings:
+                self.report({"WARNING"}, report.warnings[0])
+            else:
+                self.report({"INFO"},
+                            "Joined {} bone(s) onto {}, re-parented {} "
+                            "object(s), nothing moved".format(
+                                report.bones_added,
+                                report.attached_to or "no bone",
+                                report.reparented))
+            return {"FINISHED"}
+
     class SWTB_OT_refine_selected(bpy.types.Operator):
         bl_idname = "swtb.refine_selected"
         bl_label = "Refine in SolidWorks"
@@ -422,6 +502,24 @@ if bpy is not None:
             col.operator("swtb.build_rig", icon="ARMATURE_DATA")
             col.operator("swtb.relink_geometry", icon="LINKED")
 
+            host, others = joining.joinable(context)
+            if others:
+                box = layout.box()
+                box.label(text="{} + {}".format(
+                    host.name, ", ".join(o.name for o in others)),
+                    icon="ARMATURE_DATA")
+                box.operator("swtb.join_rigs", icon="GROUP_BONE")
+            jreport = _STATE.get("join_report")
+            if jreport is not None and jreport.bones_added:
+                box = layout.box()
+                box.label(text="Joined {} bone(s) onto {}".format(
+                    jreport.bones_added, jreport.attached_to or "no bone"))
+                if jreport.renamed:
+                    box.label(text="{} renamed to keep names unique".format(
+                        len(jreport.renamed)))
+                for w in jreport.warnings[:3]:
+                    box.label(text=w[:60], icon="ERROR")
+
             report = _STATE["match_report"]
             if report is not None:
                 box = layout.box()
@@ -496,6 +594,7 @@ if bpy is not None:
         SWTB_OT_sync_poses,
         SWTB_OT_build_rig,
         SWTB_OT_relink_geometry,
+        SWTB_OT_join_rigs,
         SWTB_OT_refine_selected,
         SWTB_PT_panel,
     )

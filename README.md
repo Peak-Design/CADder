@@ -129,6 +129,28 @@ they point at.
 Switch `SW_mechanism` on in the armature's Bone Collections panel to see the
 parts that follow rather than lead.
 
+### Joining a subassembly's rig into a machine's
+
+A machine does not have to be exported all at once. Give a subassembly its
+own manifest and its own rig, move its armature into place, then:
+
+1. select the subassembly's rig,
+2. shift-select the machine's rig, so the machine is the active object,
+3. **Join Rigs**, and name the bone of the machine that carries the
+   subassembly (leave it empty to hang it off the machine's ground).
+
+The subassembly's bones move into the machine's armature, its root follows
+the bone you named, and its parts re-parent themselves. Nothing moves: the
+button reports the largest movement it measured, and it should be zero.
+
+The attach bone has to be at its rest pose. A bone's rest position is
+absolute, so parenting under a bone that has been posed away would carry
+that offset into everything joined below it. Clear the pose (Alt+G, Alt+R)
+and join again. Aligning the sub-rig is a move of its ARMATURE, which is a
+different thing and never in the way.
+
+Join as many as you like. Each keeps its own joints, limits and couplings.
+
 The rig is built inside the collection you imported into, so hiding that
 collection hides the machine and its bones together. Anything the rig has no
 bone for (the import's own empties, a part that did not match) is hung off

@@ -3285,6 +3285,7 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1003
 
     def draw(self, context):
         layout = self.layout
@@ -3327,17 +3328,25 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Info(bpy.types.Panel):
-    """Version line at the top of the tab, with the update notice."""
-    bl_label = "STEPper NEXT: Info"
+    """Version line at the top of the tab, with the update notice.
+
+    The version and the tip jar are drawn in the panel header, so the line
+    is one row high and the body stays empty until there is an update.
+
+    Do not put HIDE_HEADER on this panel. Blender registers a headerless
+    panel in front of every panel that has a header, whatever bl_order says,
+    and the tab of a category sits where its first panel sits. One headerless
+    panel here therefore pulls the whole STEPper NEXT tab above Item, Tool
+    and View.
+    """
+    bl_label = ""
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
-    bl_options = {"HIDE_HEADER"}
-    bl_order = 0
+    bl_order = 1000
 
-    def draw(self, context):
-        layout = self.layout
-        row = layout.row(align=True)
+    def draw_header(self, context):
+        row = self.layout.row(align=True)
         row.label(text="STEPper NEXT v%s" % updater_mod.version_string(),
                   icon="TOOL_SETTINGS")
         # The tip jar: a heart, deliberately unlabelled so the version line
@@ -3345,16 +3354,18 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
         row.operator("wm.url_open", text="",
                      icon="FUND").url = updater_mod.KOFI_URL
 
+    def draw(self, context):
         update = updater_mod.available_update()
-        if update:
-            box = layout.box().column(align=True)
-            box.label(text="Version %s is available" % update["version"],
-                      icon="INFO")
-            download = box.operator(
-                "wm.url_open", icon="IMPORT",
-                text="Download %s" % update["version"])
-            download.url = update["url"]
-            box.label(text="Install the zip as usual to update.")
+        if not update:
+            return
+        box = self.layout.box().column(align=True)
+        box.label(text="Version %s is available" % update["version"],
+                  icon="INFO")
+        download = box.operator(
+            "wm.url_open", icon="IMPORT",
+            text="Download %s" % update["version"])
+        download.url = update["url"]
+        box.label(text="Install the zip as usual to update.")
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
@@ -3362,6 +3373,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1001
 
     def draw(self, context):
         prg = context.scene.stepper
@@ -3398,6 +3410,7 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1002
 
     def draw(self, context):
         layout = self.layout
@@ -3422,6 +3435,7 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1004
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):

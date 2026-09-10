@@ -1110,6 +1110,12 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
+# How many times to cut one closed region before giving up. A tube needs
+# one, a ring two. Past a handful the shape is unusual enough that more cuts
+# are unlikely to help, and each round costs a pass over every edge.
+MAX_CLOSED_CUTS = 16
+
+
 def _one_seam_per_region(edge_keys, mask, region_of, face_a, face_b):
     """Pick one CAD face boundary in each region and return only its edges.
 
@@ -1272,18 +1278,24 @@ def _compute_edge_attributes(mesh):
         # characteristic V - E + F != 1: tubes, rings, sphere halves) and
         # seam their internal CAD-face boundaries, splitting them into
         # flattenable patches. UV seam only: shading is untouched.
-        smooth_pair = ~np.isin(int_edge_keys, seam_keys)
-        a = face_of[he0][smooth_pair]
-        b = face_of[he1][smooth_pair]
-        if len(a):
+        # One cut opens a tube, but a region can need more than one: a ring
+        # needs two, and a shape with more handles needs one for each. Cut,
+        # look again, and stop when every region is a disk. Split faces cuts
+        # everything at once, so one pass does it.
+        for _round in range(1 if closed_mode == "SPLIT" else MAX_CLOSED_CUTS):
+            smooth_pair = ~np.isin(int_edge_keys, seam_keys)
+            a = face_of[he0][smooth_pair]
+            b = face_of[he1][smooth_pair]
+            if not len(a):
+                break
             # Connected components via label propagation + pointer jumping
             labels = np.arange(T, dtype=np.int64)
             while True:
                 prev = labels
-                m = np.minimum(labels[a], labels[b])
+                mn = np.minimum(labels[a], labels[b])
                 labels = labels.copy()
-                np.minimum.at(labels, a, m)
-                np.minimum.at(labels, b, m)
+                np.minimum.at(labels, a, mn)
+                np.minimum.at(labels, b, mn)
                 labels = labels[labels]
                 if np.array_equal(labels, prev):
                     break
@@ -1303,25 +1315,33 @@ def _compute_edge_attributes(mesh):
             chi = (v_counts.astype(np.int64) - e_counts.astype(np.int64)
                    + f_counts.astype(np.int64))
             bad_ids = v_ids[chi != 1]
-            if len(bad_ids):
-                cand = smooth_pair & cross_batch
-                edge_comp = labels[face_of[he0]]
-                in_bad = cand & np.isin(edge_comp, bad_ids)
-                if closed_mode == "SPLIT":
-                    # Seam every boundary inside the region. A hole made of
-                    # two half cylinders becomes two islands.
-                    extra = int_edge_keys[in_bad]
-                else:
-                    # One cut is enough to open a tube. Seam the longest
-                    # boundary in each region and leave the rest joined, so
-                    # the hole unrolls into a single island instead of two
-                    # half shells.
-                    extra = _one_seam_per_region(
-                        int_edge_keys, in_bad, edge_comp,
-                        batches[face_of[he0]], batches[face_of[he1]])
-                if len(extra):
-                    seam_keys = np.unique(
-                        np.concatenate([seam_keys, extra]))
+            if not len(bad_ids):
+                break
+            cand = smooth_pair & cross_batch
+            edge_comp = labels[face_of[he0]]
+            in_bad = cand & np.isin(edge_comp, bad_ids)
+            if not in_bad.any():
+                # Nothing left to cut. The region has no CAD face boundary
+                # inside it, so a seam would have to be invented across the
+                # middle of a face, which is worse than leaving it.
+                break
+            if closed_mode == "SPLIT":
+                # Seam every boundary inside the region. A hole made of two
+                # half cylinders becomes two islands.
+                extra = int_edge_keys[in_bad]
+            else:
+                # Seam the longest boundary in each region and leave the
+                # rest joined, so a hole unrolls into a single island
+                # instead of two half shells.
+                extra = _one_seam_per_region(
+                    int_edge_keys, in_bad, edge_comp,
+                    batches[face_of[he0]], batches[face_of[he1]])
+            if not len(extra):
+                break
+            before_n = len(seam_keys)
+            seam_keys = np.unique(np.concatenate([seam_keys, extra]))
+            if len(seam_keys) == before_n:
+                break
 
     return sharp_keys, seam_keys, max_v
 

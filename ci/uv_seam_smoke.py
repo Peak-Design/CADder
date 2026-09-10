@@ -227,6 +227,43 @@ check(got["SINGLE"]["closed"][0] == got["SPLIT"]["closed"][0],
       "a hole that is one closed face is the same either way (%d islands)"
       % got["SINGLE"]["closed"][0])
 
+# ---- CAD Surface joins the patches of one surface ------------------------
+# A kernel splits a cylinder into two or three patches whenever a boolean
+# runs through it. They are separate faces on one surface, and their raw u
+# and v run in one space, so the importer lays them out in one chart. If it
+# did not, the hole would arrive as three islands with a packing margin
+# between parts of what is really one tube.
+print("\n== CAD Surface puts the patches of one hole in one island")
+
+
+def surface_islands(name_part):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    m._cache_drop(STEP)
+    m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z",
+                uv_mode="SURFACE", tris_to_quads=False)
+    for o in bpy.data.objects:
+        if (o.type == "MESH" and len(o.data.polygons)
+                and name_part in o.name.lower()):
+            return measure(o)
+    return None
+
+
+half = surface_islands("half")
+closed = surface_islands("closed")
+check(half is not None and closed is not None,
+      "both parts imported in CAD Surface mode")
+if half and closed:
+    print("   half hole %d islands, closed hole %d islands"
+          % (half[0], closed[0]))
+    # The two-piece hole is three patches of one cylinder. Joined, it costs
+    # the same number of islands as the hole that was one face all along.
+    check(half[0] <= closed[0],
+          "the two-piece hole needs no more islands than the one-piece hole "
+          "(%d against %d)" % (half[0], closed[0]))
+    check(half[2] < 0.02,
+          "and it is not stretched (%.1f%% over 5x)" % (100.0 * half[2]))
+
 if FAILS:
     print("\nuv_seam_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

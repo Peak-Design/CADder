@@ -455,6 +455,194 @@ def _uv_nudge(center):
     return hu * UV_FACE_NUDGE, hv * UV_FACE_NUDGE
 
 
+def _uv_scale(span, world_scale):
+    """How to turn chart length units into UV units.
+
+    In world mode the answer is simply the file-unit to scene-unit factor,
+    because the chart is already in length units. That was not true before
+    the metric went in, which is why this used to divide a 3D extent by the
+    parameter span to guess at it.
+    """
+    if world_scale is not None:
+        return float(world_scale)
+    return 1.0 / span if span > 1e-12 else 1.0
+
+
+def _surface_key(face):
+    """What surface this face lies on, as something hashable.
+
+    A CAD kernel splits one cylinder into two or three patches all the time,
+    for instance where a boolean cut runs through it. The patches are
+    separate faces but they share one surface, and their raw u and v run in
+    one continuous space: three patches of a drilled hole come back as
+    0 to 1.57, 1.57 to 4.71 and 4.71 to 6.28, which is exactly one turn.
+
+    Returns None for a surface this cannot compare, such as a spline. Such a
+    face then keeps a chart of its own, which is the old behavior.
+    """
+    from OCP.GeomAbs import (GeomAbs_Plane, GeomAbs_Cylinder, GeomAbs_Cone,
+                             GeomAbs_Sphere, GeomAbs_Torus)
+
+    def q(value):
+        return round(float(value), 6)
+
+    def axis(pos):
+        loc = pos.Location()
+        d = pos.Direction()
+        x = pos.XDirection()
+        return (q(loc.X()), q(loc.Y()), q(loc.Z()),
+                q(d.X()), q(d.Y()), q(d.Z()),
+                q(x.X()), q(x.Y()), q(x.Z()))
+
+    try:
+        ad = BRepAdaptor_Surface(face)
+        kind = ad.GetType()
+        if kind == GeomAbs_Plane:
+            return ("plane",) + axis(ad.Plane().Position())
+        if kind == GeomAbs_Cylinder:
+            c = ad.Cylinder()
+            return ("cyl",) + axis(c.Position()) + (q(c.Radius()),)
+        if kind == GeomAbs_Cone:
+            c = ad.Cone()
+            return ("cone",) + axis(c.Position()) + (q(c.RefRadius()),
+                                                     q(c.SemiAngle()))
+        if kind == GeomAbs_Sphere:
+            s = ad.Sphere()
+            return ("sph",) + axis(s.Position()) + (q(s.Radius()),)
+        if kind == GeomAbs_Torus:
+            tr = ad.Torus()
+            return ("tor",) + axis(tr.Position()) + (q(tr.MajorRadius()),
+                                                     q(tr.MinorRadius()))
+    except Exception:
+        return None
+    return None
+
+
+def _edge_keys(face):
+    """A key for each edge of the face, from its own geometry.
+
+    Two faces that share an edge produce the same key for it. This goes
+    through the curve rather than through a shape hash, because the OCP
+    bindings of this version get shape hashing wrong.
+    """
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    out = []
+    exp = TopExp_Explorer(face, TopAbs_EDGE)
+    while exp.More():
+        edge = TopoDS.Edge_s(exp.Current())
+        exp.Next()
+        try:
+            cur = BRepAdaptor_Curve(edge)
+            a, b = cur.FirstParameter(), cur.LastParameter()
+            pts = []
+            for p in (a, (a + b) * 0.5, b):
+                gp = cur.Value(p)
+                pts.append((round(gp.X(), 6), round(gp.Y(), 6),
+                            round(gp.Z(), 6)))
+            # Sort the ends so the two faces agree whichever way they run.
+            ends = tuple(sorted((pts[0], pts[2])))
+            out.append(ends + (pts[1],))
+        except Exception:
+            continue
+    return out
+
+
+class _Chart(object):
+    """One shared UV frame for a group of faces.
+
+    Every face in the group is scaled and shifted by the same numbers, so
+    two patches of one cylinder meet exactly along their shared edge and
+    Blender sees one island instead of two with a margin between them.
+    """
+
+    __slots__ = ("du", "dv", "u0", "v0", "span", "nudge")
+
+    def __init__(self, du, dv, u0, v0, span, nudge):
+        self.du = du
+        self.dv = dv
+        self.u0 = u0
+        self.v0 = v0
+        self.span = span
+        self.nudge = nudge
+
+
+def _build_charts(faces):
+    """One chart for each face, shared between patches of the same surface.
+
+    Faces join a chart when they lie on the same surface AND touch along an
+    edge. Both conditions matter: two coplanar faces at opposite ends of a
+    part share a plane but are not one patch, and joining them would push
+    each into a corner of the chart and waste the rest.
+    """
+    from OCP.BRepLProp import BRepLProp_SLProps
+    from OCP.gp import gp
+
+    n = len(faces)
+    keys = [_surface_key(f) for f in faces]
+    bounds = []
+    for f in faces:
+        try:
+            bounds.append(tuple(BRepTools.UVBounds_s(f)))
+        except Exception:
+            bounds.append((0.0, 1.0, 0.0, 1.0))
+
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        a, b = find(i), find(j)
+        if a != b:
+            parent[b] = a
+
+    by_edge = {}
+    for i, f in enumerate(faces):
+        if keys[i] is None:
+            continue
+        for ek in _edge_keys(f):
+            by_edge.setdefault(ek, []).append(i)
+    for shared in by_edge.values():
+        for j in shared[1:]:
+            if keys[shared[0]] == keys[j]:
+                union(shared[0], j)
+
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    charts = [None] * n
+    res = gp.Resolution_s()
+    for root, members in groups.items():
+        u_lo = min(bounds[i][0] for i in members)
+        u_hi = max(bounds[i][1] for i in members)
+        v_lo = min(bounds[i][2] for i in members)
+        v_hi = max(bounds[i][3] for i in members)
+        rep = faces[members[0]]
+        try:
+            prop = BRepLProp_SLProps(BRepAdaptor_Surface(rep), 2, res)
+            du, dv = _uv_metric(prop, u_lo, u_hi, v_lo, v_hi)
+        except Exception:
+            du, dv = 1.0, 1.0
+        span = max((u_hi - u_lo) * du, (v_hi - v_lo) * dv)
+        # The offset has to be the same for the whole group, or its patches
+        # would not meet. It comes from the group's own parameter box, which
+        # differs between groups on the same surface.
+        nudge = _uv_nudge((u_lo + u_hi, v_lo + v_hi,
+                           float(len(members)) + u_lo * 0.5))
+        chart = _Chart(du, dv, u_lo * du, v_lo * dv, span, nudge)
+        for i in members:
+            charts[i] = chart
+    return charts
+
+
 def _uv_metric(prop, u_lo, u_hi, v_lo, v_hi):
     """How much real length one unit of u and one unit of v cover.
 
@@ -1056,7 +1244,7 @@ class ReadSTEP:
 
         self._pre_tessellated = True
 
-    def triangulate_face(self, face, tform):
+    def triangulate_face(self, face, tform, chart=None):
         location = TopLoc_Location()
         facing = BRep_Tool.Triangulation_s(face, location)
         if facing is None:
@@ -1127,27 +1315,26 @@ class ReadSTEP:
         # per-face normalization, including real-world mode, see
         # _recompute_face_normals)
         if has_uvs:
-            # Put u and v into length units first. Without this a cylinder
-            # arrives as a thin ribbon, because its u is an angle.
-            du, dv = _uv_metric(prop, Umin, Umax, Vmin, Vmax)
-            u0, v0 = Umin * du, Vmin * dv
-            span = max((Umax - Umin) * du, (Vmax - Vmin) * dv)
-            if span > 1e-12:
-                if self.uv_world_scale is not None:
-                    va = np.asarray(verts, dtype=np.float32)
-                    ext = float((va.max(axis=0) - va.min(axis=0)).max())
-                    s = (ext * self.uv_world_scale) / span
-                else:
-                    s = 1.0 / span
+            if chart is None:
+                # Put u and v into length units first. Without this a
+                # cylinder arrives as a thin ribbon, because its u is an
+                # angle.
+                du, dv = _uv_metric(prop, Umin, Umax, Vmin, Vmax)
+                u0, v0 = Umin * du, Vmin * dv
+                span = max((Umax - Umin) * du, (Vmax - Vmin) * dv)
+                nudge = _uv_nudge(
+                    np.asarray(verts, dtype=np.float64).mean(axis=0))
             else:
-                s = 1.0
-            # Shrink by the nudge before adding it, so the face still fits
+                du, dv = chart.du, chart.dv
+                u0, v0 = chart.u0, chart.v0
+                span = chart.span
+                nudge = chart.nudge
+            s = _uv_scale(span, self.uv_world_scale)
+            # Shrink by the nudge before adding it, so the chart still fits
             # inside its own box.
-            va_c = np.asarray(verts, dtype=np.float64).mean(axis=0)
-            nu, nv = _uv_nudge(va_c)
             k = 1.0 - UV_FACE_NUDGE
-            uvs = [(((u * du - u0) * s) * k + nu,
-                    ((v * dv - v0) * s) * k + nv) for (u, v) in uvs]
+            uvs = [(((u * du - u0) * s) * k + nudge[0],
+                    ((v * dv - v0) * s) * k + nudge[1]) for (u, v) in uvs]
 
         # Read all triangles
         tris = [None] * d_nbtriangles
@@ -1681,6 +1868,14 @@ class ReadSTEP:
         # floating-point noise at OCC face boundaries, causing visible seams.
         # Parallelized with threads: OCC SWIG releases the GIL.
         _gp_res = gp.Resolution_s()
+        # One chart per group of faces that are patches of the same surface.
+        # Built once for the whole shape, because a face on its own cannot
+        # know it is half of a cylinder.
+        try:
+            uv_charts = _build_charts([fr[0] for fr in face_refs])
+        except Exception as _chart_err:
+            print("  [UV charts unavailable: %s]" % _chart_err, end="")
+            uv_charts = [None] * len(face_refs)
 
         def _recompute_face_normals(j):
             face, trf = face_refs[j]
@@ -1745,30 +1940,30 @@ class ReadSTEP:
             # Default: fit to a 0-1 box.  World mode (uv_world_scale set):
             # scale so 1 UV unit == 1 scene unit, using the face's 3D extent
             # as the reference, so texel density then matches across parts.
-            # Put u and v into length units first, so a cylinder does not
-            # arrive as a thin ribbon. See _uv_metric.
-            du, dv = _uv_metric(prop, float(u_vals.min()), float(u_vals.max()),
-                                float(v_vals.min()), float(v_vals.max()))
-            u_m = u_vals * du
-            v_m = v_vals * dv
-            u_min = float(u_m.min())
-            v_min = float(v_m.min())
-            span = max(float(u_m.max()) - u_min, float(v_m.max()) - v_min)
-            if span > 1e-12:
-                if self.uv_world_scale is not None:
-                    fv = all_verts[vs:vs + vc]
-                    ext = float((fv.max(axis=0) - fv.min(axis=0)).max())
-                    s = (ext * self.uv_world_scale) / span
-                else:
-                    s = 1.0 / span
+            chart = uv_charts[j] if j < len(uv_charts) else None
+            if chart is None:
+                # No chart for this face: fall back to its own box.
+                du, dv = _uv_metric(
+                    prop, float(u_vals.min()), float(u_vals.max()),
+                    float(v_vals.min()), float(v_vals.max()))
+                u_m, v_m = u_vals * du, v_vals * dv
+                u_min, v_min = float(u_m.min()), float(v_m.min())
+                span = max(float(u_m.max()) - u_min,
+                           float(v_m.max()) - v_min)
+                nudge = _uv_nudge(all_verts[vs:vs + vc].mean(axis=0))
             else:
-                s = 1.0
-            # Shrink by the nudge before adding it, so the face still fits
+                # The chart's numbers, so every patch of the surface lands
+                # in one frame and the shared edges meet exactly.
+                u_m, v_m = u_vals * chart.du, v_vals * chart.dv
+                u_min, v_min = chart.u0, chart.v0
+                span = chart.span
+                nudge = chart.nudge
+            s = _uv_scale(span, self.uv_world_scale)
+            # Shrink by the nudge before adding it, so the chart still fits
             # inside its own box.
-            nu, nv = _uv_nudge(all_verts[vs:vs + vc].mean(axis=0))
             k = 1.0 - UV_FACE_NUDGE
-            all_uvs[vs:vs + vc, 0] = (u_m - u_min) * s * k + nu
-            all_uvs[vs:vs + vc, 1] = (v_m - v_min) * s * k + nv
+            all_uvs[vs:vs + vc, 0] = (u_m - u_min) * s * k + nudge[0]
+            all_uvs[vs:vs + vc, 1] = (v_m - v_min) * s * k + nudge[1]
 
         valid_indices = [j for j in range(len(face_refs))
                          if not failed_mask[j]]
@@ -1830,10 +2025,18 @@ class ReadSTEP:
         """Python fallback: use triangulate_face per face."""
         dedup_indices = set(face_dedup.values())
 
-        for i in sorted(dedup_indices):
+        order = sorted(dedup_indices)
+        try:
+            built = _build_charts([collected_faces[i][0] for i in order])
+            charts = {i: built[k] for k, i in enumerate(order)}
+        except Exception as chart_err:
+            print("  [UV charts unavailable: %s]" % chart_err, end="")
+            charts = {}
+
+        for i in order:
             face, trf, col_rgb, col_name, batch_id = collected_faces[i]
             try:
-                mesh = self.triangulate_face(face, trf)
+                mesh = self.triangulate_face(face, trf, charts.get(i))
             except Exception:
                 mesh = None
 

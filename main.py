@@ -20,6 +20,7 @@
 #   - Import summary improvements
 
 import dataclasses
+import math
 import json
 import ntpath
 import os
@@ -651,6 +652,174 @@ def _assign_engineering_material(obj, mat_info):
             "material_index", np.zeros(n_polys, dtype=np.int32))
 
 
+# One UDIM row is ten tiles wide, which is the convention every texture
+# tool follows: tile 1001 + u + 10 * v.
+UDIM_ROW = 10
+UV_PACK_MARGIN = 0.005
+
+
+def _uv_array(me):
+    """The active UV layer as an (n, 2) array, or None."""
+    layer = me.uv_layers.active
+    n = len(me.loops)
+    if layer is None or not n:
+        return None, None
+    a = np.empty(n * 2, dtype=np.float32)
+    layer.uv.foreach_get("vector", a)
+    return layer, a.reshape(-1, 2)
+
+
+def _uv_move(me, du, dv):
+    """Slide a mesh's UVs by whole tiles."""
+    layer, uv = _uv_array(me)
+    if uv is None:
+        return
+    uv[:, 0] += du
+    uv[:, 1] += dv
+    layer.uv.foreach_set("vector", uv.ravel())
+
+
+def _uv_home(me):
+    """Slide a mesh's UVs back into tile 0.
+
+    The packer works out which tile to pack into from where the UVs already
+    are, so everything has to start in the same tile to end up in one.
+    """
+    layer, uv = _uv_array(me)
+    if uv is None:
+        return
+    low = np.floor(uv.min(axis=0))
+    if low[0] or low[1]:
+        uv -= low
+        layer.uv.foreach_set("vector", uv.ravel())
+
+
+def _deselect_all():
+    for o in bpy.context.view_layer.objects:
+        try:
+            o.select_set(False)
+        except RuntimeError:
+            pass
+
+
+def _crowd_margin(margin, count):
+    """The margin to ask for when `count` meshes share one tile.
+
+    Blender puts the margin around EVERY island, not around the group. A CAD
+    part carries about one island per face, so a whole assembly in one tile
+    is thousands of islands. Measured on 300 parts, near 3000 islands, in one
+    tile: a margin of 0.005 fills 6 percent of the tile, 0.001 fills 37
+    percent and 0.0001 fills 80 percent. The margin has to come down as the
+    crowd grows, or the gaps eat the texture.
+    """
+    return margin / math.sqrt(max(1, count))
+
+
+def _pack_group(objs, margin=UV_PACK_MARGIN):
+    """Pack one set of meshes into tile 0, together.
+
+    Selects and deselects only its own meshes. Clearing the whole scene on
+    every call would make packing one tile per part cost the square of the
+    part count, which on a real assembly is most of the run time.
+    """
+    if not objs:
+        return
+    view_layer = bpy.context.view_layer
+    for o in objs:
+        o.select_set(True)
+    view_layer.objects.active = objs[0]
+    try:
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True,
+                                scale=True,
+                                margin=_crowd_margin(margin, len(objs)))
+        bpy.ops.object.mode_set(mode="OBJECT")
+    finally:
+        for o in objs:
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass
+
+
+def _balance(objs, groups):
+    """Share the meshes over N groups, the biggest first into the emptiest.
+
+    Packing scales islands to fill the tile, so what matters is that each
+    tile carries a similar amount of surface, not a similar part count.
+    """
+    out = [[] for _ in range(groups)]
+    load = [0] * groups
+    for o in sorted(objs, key=lambda x: -len(x.data.polygons)):
+        i = load.index(min(load))
+        out[i].append(o)
+        load[i] += len(o.data.polygons)
+    return [g for g in out if g]
+
+
+def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN):
+    """Pack the UV islands. Unique meshes only, so linked copies come free.
+
+    ALL     one tile for the whole import, ready to merge and texture as one
+    OBJECT  one tile per part, each packed on its own
+    UDIM    the parts shared over a fixed number of tiles
+
+    Packing rescales the islands to fill the tile, so it replaces any
+    real-world UV scale. The two cannot both be true at once.
+    """
+    if mode in (None, "NONE"):
+        return
+    seen = set()
+    targets = []
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        targets.append(o)
+    if not targets:
+        return
+
+    t0 = time.time()
+    try:
+        _deselect_all()
+        if mode == "ALL":
+            for o in targets:
+                _uv_home(o.data)
+            _pack_group(targets, margin)
+            used = 1
+        elif mode == "OBJECT":
+            # One pack for each part. This is the slow one by nature: the
+            # packer has to run once per tile, and here every part is a
+            # tile of its own.
+            for o in targets:
+                _uv_home(o.data)
+                _pack_group([o], margin)
+            used = len(targets)
+        else:
+            groups = _balance(targets, max(1, int(tiles)))
+            for i, group in enumerate(groups):
+                for o in group:
+                    _uv_home(o.data)
+                _pack_group(group, margin)
+                du, dv = i % UDIM_ROW, i // UDIM_ROW
+                if du or dv:
+                    for o in group:
+                        _uv_move(o.data, du, dv)
+            used = len(groups)
+        print("UV pack (%s): %d mesh(es) into %d tile(s) in %.2fs"
+              % (mode.lower(), len(targets), used, time.time() - t0))
+    except Exception as e:
+        print(f"UV pack failed: {e}")
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+
+
 def _tris_to_quads_objects(objs):
     """Pair the tessellation triangles back into quads, on unique meshes.
 
@@ -669,8 +838,6 @@ def _tris_to_quads_objects(objs):
     Custom split normals survive, because bmesh carries the loop layer
     through. The mesh keeps the exact CAD shading it was given.
     """
-    import math
-
     seen = set()
     meshes = tris = quads = 0
     for o in objs:
@@ -1692,6 +1859,9 @@ def load_step(
     uv_split_closed=True,
     box_uv_scale=1.0,
     tris_to_quads=False,
+    uv_pack="NONE",
+    uv_pack_tiles=4,
+    uv_pack_margin=UV_PACK_MARGIN,
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
@@ -1839,6 +2009,9 @@ def load_step(
         "uv_split_closed": _uv_options["split_closed"],
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
+        "uv_pack": uv_pack,
+        "uv_pack_tiles": uv_pack_tiles,
+        "uv_pack_margin": uv_pack_margin,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -2145,10 +2318,17 @@ def load_step(
         _tris_to_quads_objects(created_names.values())
 
     if _uv_options.get("unwrap"):
+        # Packing rescales every island, so a real-world scale pass before
+        # it would only be undone. Skip it and let the packer decide.
         _unwrap_uv_objects(
             created_names.values(),
-            world_scale=(None if _uv_options.get("normalize", True)
+            world_scale=(None if (_uv_options.get("normalize", True)
+                                  or uv_pack not in (None, "NONE"))
                          else _uv_options["unit_scale"]))
+
+    if uv_pack not in (None, "NONE"):
+        _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
+                         uv_pack_margin)
 
     # remove all temporary links
     for tobj in created_objs:
@@ -2635,6 +2815,51 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    uv_pack: bpy.props.EnumProperty(
+        items=[
+            ("NONE", "None", "Leave the islands where the UV mode put them",
+             0),
+            ("ALL", "All parts together",
+             "Pack every part into one 0-1 tile. Merge the parts afterwards "
+             "and the whole import is ready to texture as one piece", 1),
+            ("OBJECT", "Each part on its own",
+             "Give every part its own 0-1 tile, packed on its own. The "
+             "slowest choice: the packer has to run once for each part", 2),
+            ("UDIM", "Into UDIM tiles",
+             "Share the parts over a set number of tiles and pack each tile. "
+             "A middle way between one texture for everything and one for "
+             "each part", 3),
+        ],
+        name="Pack UVs",
+        description="Pack the UV islands after the UV map is made. Packing "
+                    "scales the islands to fill the tile, so it replaces the "
+                    "real world UV scale",
+        default="NONE",
+    )
+
+    uv_pack_tiles: bpy.props.IntProperty(
+        name="UDIM tiles",
+        description="How many UDIM tiles to spread the parts over. The parts "
+                    "are shared out by surface area, so each tile carries a "
+                    "similar amount",
+        default=4,
+        min=1,
+        max=100,
+    )
+
+    uv_pack_margin: bpy.props.FloatProperty(
+        name="Pack margin",
+        description="Space left around each UV island, as a fraction of the "
+                    "tile. Blender puts this around every island, and a CAD "
+                    "part has about one island per face, so the addon divides "
+                    "it down when many parts share a tile. Raise it if a bake "
+                    "bleeds between islands",
+        default=0.005,
+        min=0.0,
+        max=0.25,
+        precision=4,
+    )
+
     tris_to_quads: bpy.props.BoolProperty(
         name="Tris to Quads",
         description="Pair the tessellation triangles back into quads after "
@@ -2732,6 +2957,9 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_split_closed": self.uv_split_closed,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
+            "uv_pack": self.uv_pack,
+            "uv_pack_tiles": self.uv_pack_tiles,
+            "uv_pack_margin": self.uv_pack_margin,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -2807,6 +3035,9 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_split_closed=self.uv_split_closed,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
+                uv_pack=self.uv_pack,
+                uv_pack_tiles=self.uv_pack_tiles,
+                uv_pack_margin=self.uv_pack_margin,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,

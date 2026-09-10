@@ -194,6 +194,51 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 
 **Split Closed Faces** is on by default. It marks a UV seam along the closure of cylinders, cones and tori. It also marks one across smooth joined face groups that form closed tubes or rings. CAD data has no seam in these places, and an unwrap without one gives badly distorted islands. This does not change the shading.
 
+### Pack UVs
+
+**Pack UVs** repacks the islands after the UV map is made. Without it the
+islands keep the place the UV mode gave them, which spreads a large assembly
+over many UDIM tiles and leaves most of the texture empty. Measured on 1000
+parts: no packing puts the islands across 147 tiles and fills about 1 percent
+of them.
+
+| Mode | Result on 1000 parts | Cost |
+|------|----------------------|------|
+| **None** | 147 tiles, 1% filled | none |
+| **All parts together** | 1 tile, 54% filled | +2% |
+| **Into UDIM tiles** (4) | 4 tiles, 68% filled | +3% |
+| **Into UDIM tiles** (16) | 16 tiles, 76% filled | +6% |
+| **Each part on its own** | one tile for each part, 74% filled | +86% |
+
+Use **All parts together** to merge the parts and texture the import as one
+piece. Use **Each part on its own** to give every part its own texture: it is
+the slow choice, because the packer has to run once for each part. Use **Into
+UDIM tiles** for a middle way, and set how many tiles to spread the parts
+over. The parts are shared out by surface area, so each tile carries a
+similar amount.
+
+**Pack margin** is the space left around each island. Blender puts this
+around every island, and a CAD part has about one island per face, so a whole
+assembly in one tile is thousands of islands. The addon divides the margin
+down as more parts share a tile. Without that correction the default margin
+fills only 6 percent of the tile on a 300 part import, against 80 percent
+with it. Raise the margin if a bake bleeds between islands.
+
+Packing scales the islands to fill the tile, so it replaces the real world UV
+scale. The two cannot both be true at once.
+
+### Tris to Quads
+
+**Tris to Quads** pairs the tessellation triangles back into quads. OCCT
+tessellates to triangles, so a flat CAD face arrives as thin triangle pairs
+that go straight back together. It never joins across a material, a UV
+island, a seam or a sharp edge.
+
+This is not a remesh. No vertex moves and none is added or lost, and the
+custom split normals from the CAD surface come through, so the shading does
+not change. On 1000 parts it costs about 2 percent of the import and takes
+the face count from 540,000 to 285,000.
+
 ## Import Defaults
 
 **Remember import settings** is on by default. The addon saves the import dialog options after every import and restores them in your next Blender session. Blender writes them out with its normal preferences save, so keep *Save Preferences on Quit* on. You can also save the preferences by hand. Turn the option off to use the fixed defaults in the preferences instead.

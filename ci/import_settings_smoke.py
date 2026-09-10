@@ -118,6 +118,7 @@ WANT = {
     "uv_closed_seams": "SPLIT",
     "box_uv_scale": 2.5,
     "uv_unwrap_method": "ANGLE_BASED",
+    "uv_merge_tangent": "SMART",
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,
     "uv_pack_margin": 0.0123,

@@ -206,6 +206,35 @@ When it is on, the addon fits the UVs to the 0-1 square. Every island of a part 
 
 Measured on a 182 part assembly, by share of surface stretched more than five times as far one way as the other: None 45%, Single seam 0.2%, Split faces 0.1%. Single seam reaches that with 2,958 islands against 3,381 for Split faces, so it wastes less texture on island margins. None of these change the shading.
 
+**Merge tangent** decides what happens where two CAD faces meet smoothly. A
+sheet metal part is a plate, a bend and another plate. None of those
+boundaries is sharp, so the run is one continuous surface that a press brake
+flattens into one rectangle.
+
+| Setting | Result |
+|---------|--------|
+| **None** | The layout each UV mode already makes. CAD Surface gives one island for each CAD face. This is the default and it packs the tightest |
+| **All** | Every run of tangent faces becomes one island. A bent plate comes out as its flat pattern |
+| **Smart** | The same, except a long thin run stays in separate faces |
+
+CAD Surface takes its UVs from the parametric coordinates of the surface,
+and two different surfaces have no common parameter space. A merged region
+is therefore flattened by an unwrap instead, and the addon then puts it back
+at the texel density of the rest of the part. A region that is one CAD face
+keeps its parametric UVs.
+
+Smart exists for the edge of a plate. That edge is one tangent run the full
+length of the profile and only as thick as the metal, so merging it gives an
+island tens of times longer than it is wide, which wastes the tile. Smart
+measures the area and the perimeter of each region, which both survive
+flattening, and leaves a run over 8 to 1 in separate faces.
+
+Measured on a bent plate 113 mm by 200 mm: None gives 14 islands, All gives
+6, and Smart gives 10. Each flat pattern holds its surface area to within
+0.2 percent. On a 182 part machined assembly, where little is tangent, All
+takes the island count from 2,827 to 2,606 and adds about 20 percent to the
+import time.
+
 ### Pack UVs
 
 **Pack UVs** repacks the islands after the UV map is made. Without it the

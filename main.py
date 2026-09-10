@@ -949,6 +949,205 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             pass
 
 
+def _uv_jump(loop, uvl, tol=1e-4):
+    """Do the two sides of this edge carry different UVs.
+
+    In CAD Surface mode each CAD face writes its own chart, so the UVs step
+    at every face boundary. A step across an edge that carries no seam is
+    therefore the mark of a tangent join, which is what a merged region is
+    made of.
+    """
+    other = loop.link_loop_radial_next
+    if other is loop:
+        return False
+    a, b = loop[uvl].uv, loop.link_loop_next[uvl].uv
+    oa, ob = other[uvl].uv, other.link_loop_next[uvl].uv
+    forward = (oa - a).length <= tol and (ob - b).length <= tol
+    reverse = (oa - b).length <= tol and (ob - a).length <= tol
+    return not (forward or reverse)
+
+
+def _merged_faces(me):
+    """The faces of every UV region that covers more than one CAD face.
+
+    A region is what stays joined once the seams are in. It spans more than
+    one CAD face when a UV step appears inside it.
+    """
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    if uvl is None:
+        bm.free()
+        return None, []
+    seen = [False] * len(bm.faces)
+    picked = []
+    for face in bm.faces:
+        if seen[face.index]:
+            continue
+        seen[face.index] = True
+        stack, members, merged = [face], [face], False
+        while stack:
+            cur = stack.pop()
+            for loop in cur.loops:
+                edge = loop.edge
+                if edge.seam or len(edge.link_faces) != 2:
+                    continue
+                if not merged and _uv_jump(loop, uvl):
+                    merged = True
+                other = (edge.link_faces[0] if edge.link_faces[1] is cur
+                         else edge.link_faces[1])
+                if not seen[other.index]:
+                    seen[other.index] = True
+                    members.append(other)
+                    stack.append(other)
+        if merged:
+            picked.extend(f.index for f in members)
+    bm.free()
+    return picked, []
+
+
+def _match_density(me, picked, normalize):
+    """Put the flattened islands at the texel density of the rest of the part.
+
+    Blender packs what it unwraps into the 0-1 square, which has nothing to
+    do with the scale the parametric islands are at. The factor is the ratio
+    of the two median densities, so one part still holds one density.
+    """
+    layer, uv = _uv_array(me)
+    if uv is None or not len(picked):
+        return
+    starts = np.empty(len(me.polygons), dtype=np.int32)
+    me.polygons.foreach_get("loop_start", starts)
+    counts = np.empty(len(me.polygons), dtype=np.int32)
+    me.polygons.foreach_get("loop_total", counts)
+    co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    vidx = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("vertex_index", vidx)
+
+    def density(poly_ids):
+        vals = []
+        for p in poly_ids:
+            s, n = int(starts[p]), int(counts[p])
+            if n < 3:
+                continue
+            a2 = 0.0
+            a3 = 0.0
+            for k in range(1, n - 1):
+                p0, p1, p2 = uv[s], uv[s + k], uv[s + k + 1]
+                a2 += abs((p1[0] - p0[0]) * (p2[1] - p0[1])
+                          - (p2[0] - p0[0]) * (p1[1] - p0[1]))
+                q0, q1, q2 = (co[vidx[s]], co[vidx[s + k]],
+                              co[vidx[s + k + 1]])
+                a3 += np.linalg.norm(np.cross(q1 - q0, q2 - q0))
+            if a3 > 1e-16 and a2 > 1e-18:
+                vals.append(np.sqrt(a2 / a3))
+        return float(np.median(vals)) if vals else 0.0
+
+    hit = np.zeros(len(me.polygons), dtype=bool)
+    hit[picked] = True
+    rest = np.where(~hit)[0]
+    if not len(rest):
+        return
+    want = density(rest)
+    have = density(picked)
+    if not (want > 0.0 and have > 0.0):
+        return
+    rows = np.concatenate([np.arange(starts[p], starts[p] + counts[p])
+                           for p in picked])
+    uv[rows] *= want / have
+    if normalize:
+        # Normalize UVs promises the 0-1 square. A flat pattern at the
+        # density of the rest of the part can overrun it, so bring the whole
+        # part back down together and keep the islands proportional.
+        top = float(uv.max())
+        if top > 1.0:
+            uv /= top
+    layer.uv.foreach_set("vector", uv.ravel())
+
+
+def _flatten_merged_objects(objs, method="CONFORMAL"):
+    """Unwrap the CAD Surface regions that span more than one face.
+
+    Parametric coordinates cannot cross from one surface to another, so a
+    region that joins a plate, a bend and another plate cannot be written
+    that way. Blender flattens those regions instead, which gives the flat
+    pattern a press brake would make. A region that is one CAD face keeps
+    its parametric UVs: they are exact and cost nothing.
+    """
+    targets = []
+    seen = set()
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        targets.append(o)
+    if not targets:
+        return
+    t0 = time.time()
+    work = []
+    for o in targets:
+        picked, _ = _merged_faces(o.data)
+        if not picked:
+            continue
+        sel = np.zeros(len(o.data.polygons), dtype=bool)
+        sel[picked] = True
+        o.data.polygons.foreach_set("select", sel)
+        vsel = np.zeros(len(o.data.vertices), dtype=bool)
+        loops = np.empty(len(o.data.loops), dtype=np.int32)
+        o.data.loops.foreach_get("vertex_index", loops)
+        starts = np.empty(len(o.data.polygons), dtype=np.int32)
+        o.data.polygons.foreach_get("loop_start", starts)
+        totals = np.empty(len(o.data.polygons), dtype=np.int32)
+        o.data.polygons.foreach_get("loop_total", totals)
+        for p in picked:
+            vsel[loops[starts[p]:starts[p] + totals[p]]] = True
+        o.data.vertices.foreach_set("select", vsel)
+        work.append((o, picked))
+    if not work:
+        return
+    view_layer = bpy.context.view_layer
+    normalize = bool(_uv_options.get("normalize", True))
+    try:
+        _deselect_all()
+        # The select mode has to be set before edit mode starts. Setting it
+        # afterwards flushes the selection through the other element types
+        # and can take faces the caller did not choose.
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+        for o, _ in work:
+            o.select_set(True)
+        view_layer.objects.active = work[0][0]
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True)
+        except TypeError:
+            bpy.ops.uv.unwrap(method=method, margin=0.005)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        n_faces = 0
+        for o, picked in work:
+            _match_density(o.data, picked, normalize)
+            n_faces += len(picked)
+        print("UV merge tangent: %d region face(s) on %d mesh(es) in %.2fs"
+              % (n_faces, len(work), time.time() - t0))
+    except Exception as e:
+        print(f"UV merge tangent failed: {e}")
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+    finally:
+        for o, _ in work:
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass
+
+
 def _scale_unwrap_to_world(me, world_scale):
     """Rescale the packed unwrapped 'UVMap' so 1 UV unit ~= 1 scene unit.
 
@@ -1119,6 +1318,60 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
+# Above this ratio between its length and its width, a merged island is
+# too skinny to be worth merging. The edge of a sheet metal plate is the
+# case this exists for: it is one long tangent strip a couple of millimeters
+# wide, and it packs far better as the separate faces it came from.
+MERGE_MAX_ASPECT = 8.0
+
+
+def _region_labels(a, b, n):
+    """Connected components over the triangle pairs (a, b).
+
+    Label propagation with pointer jumping. It is the same method the closed
+    surface test uses, and it stays in numpy, so a 100,000 triangle part
+    costs a few passes over an array instead of a Python graph walk.
+    """
+    labels = np.arange(n, dtype=np.int64)
+    if not len(a):
+        return labels
+    while True:
+        prev = labels
+        mn = np.minimum(labels[a], labels[b])
+        labels = labels.copy()
+        np.minimum.at(labels, a, mn)
+        np.minimum.at(labels, b, mn)
+        labels = labels[labels]
+        if np.array_equal(labels, prev):
+            break
+    return labels
+
+
+def _skinny_regions(labels, area, perim, n):
+    """Which regions are too long and thin to merge.
+
+    Area and perimeter both survive the flattening of a developable surface,
+    so a bent strip can be measured before anything is unwrapped. For a
+    rectangle L by W the two are L*W and 2(L+W), which gives L and W as the
+    roots of x^2 - (P/2)x + A. Other shapes are not rectangles, but the
+    answer stays close enough to tell a plate from a strip.
+    """
+    a = np.bincount(labels, weights=area, minlength=n)
+    p = np.bincount(labels, weights=perim, minlength=n)
+    half = p * 0.5
+    disc = half * half - 4.0 * a
+    out = np.zeros(n, dtype=bool)
+    ok = (disc > 0) & (a > 1e-12)
+    if not ok.any():
+        return out
+    root = np.sqrt(disc[ok])
+    long_side = (half[ok] + root) * 0.5
+    short_side = (half[ok] - root) * 0.5
+    ratio = long_side / np.maximum(short_side, 1e-12)
+    out[np.where(ok)[0]] = ratio > MERGE_MAX_ASPECT
+    return out
+
+
 # How many times to cut one closed region before giving up. A tube needs
 # one, a ring two. Past a handful the shape is unusual enough that more cuts
 # are unlikely to help, and each round costs a pass over every edge.
@@ -1252,6 +1505,48 @@ def _compute_edge_attributes(mesh):
     discontinuous = cross_batch & sharp_ev0 & sharp_ev1
     sharp_keys = int_edge_keys[discontinuous]
     seam_keys = sharp_keys  # seams only where normals actually split
+
+    # --- Tangent faces: one island, or one for each CAD face ---------------
+    # A sheet metal part is a plate, a bend, another plate. The faces meet
+    # smoothly, so none of those boundaries is sharp and the whole run stays
+    # one region. Merging it gives the flat pattern a press brake would
+    # make.
+    #
+    # Only Smart changes the seams. None leaves them where the sharp edges
+    # put them, which is what both UV modes already did. Cutting every CAD
+    # face boundary here would also undo the Closed surfaces setting: a hole
+    # made of two half cylinders can only stay in one island while the
+    # boundary between its halves carries no seam.
+    merge_mode = _uv_options.get("merge_tangent", "NONE")
+    if merge_mode == "SMART" and cross_batch.any():
+        smooth_pair = ~np.isin(int_edge_keys, seam_keys)
+        labels = _region_labels(face_of[he0][smooth_pair],
+                                face_of[he1][smooth_pair], T)
+        e0 = verts[faces[:, 0]].astype(np.float64)
+        e1 = verts[faces[:, 1]].astype(np.float64)
+        e2 = verts[faces[:, 2]].astype(np.float64)
+        tri_area = 0.5 * np.linalg.norm(np.cross(e1 - e0, e2 - e0), axis=1)
+        # An edge is on the boundary of a region when its two sides sit in
+        # different regions, or when it has only one side.
+        he_len = np.linalg.norm(
+            (verts[va] - verts[vb]).astype(np.float64), axis=1)
+        edge_len = np.zeros(len(unique_keys), dtype=np.float64)
+        edge_len[inverse] = he_len
+        r0 = labels[face_of[he0]]
+        r1 = labels[face_of[he1]]
+        split = r0 != r1
+        li = edge_len[interior_idx]
+        perim = (np.bincount(r0[split], weights=li[split], minlength=T)
+                 + np.bincount(r1[split], weights=li[split], minlength=T))
+        open_idx = np.where(counts == 1)[0]
+        if len(open_idx):
+            hb = order[group_starts[open_idx]]
+            perim += np.bincount(labels[face_of[hb]],
+                                 weights=edge_len[open_idx], minlength=T)
+        skinny = _skinny_regions(labels, tri_area, perim, T)
+        extra = int_edge_keys[cross_batch & skinny[labels[face_of[he0]]]]
+        if len(extra):
+            seam_keys = np.unique(np.concatenate([seam_keys, extra]))
 
     # --- Parametric closure seams (closed cylinders/cones/tori/splines) ---
     # A closed face has NO sharp edge along its parametric seam, so unwrap
@@ -1947,6 +2242,7 @@ def load_step(
     uv_mode="SURFACE",
     uv_normalize=True,
     uv_closed_seams="SINGLE",
+    uv_merge_tangent="NONE",
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
@@ -1971,6 +2267,7 @@ def load_step(
     _uv_options["box"] = uv_mode == "BOX"
     _uv_options["normalize"] = uv_normalize
     _uv_options["closed_seams"] = uv_closed_seams
+    _uv_options["merge_tangent"] = uv_merge_tangent
     _uv_options["box_scale"] = box_uv_scale
 
     (hierarchy_flat, hierarchy_tree, hierarchy_empties,
@@ -2098,6 +2395,7 @@ def load_step(
         "uv_mode": _uv_options["mode"],
         "uv_normalize": _uv_options["normalize"],
         "uv_closed_seams": _uv_options["closed_seams"],
+        "uv_merge_tangent": _uv_options["merge_tangent"],
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
@@ -2423,6 +2721,13 @@ def load_step(
                                   or rescales)
                          else _uv_options["unit_scale"]),
             method=uv_unwrap_method)
+
+    # CAD Surface writes one chart for each surface. Where the user asked
+    # for tangent faces to merge, the regions that span more than one
+    # surface have to be flattened, because no parameter space covers two.
+    if uv_mode == "SURFACE" and uv_merge_tangent != "NONE":
+        _flatten_merged_objects(created_names.values(),
+                                method=uv_unwrap_method)
 
     if packing:
         _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
@@ -2927,6 +3232,24 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default="SINGLE",
     )
 
+    uv_merge_tangent: bpy.props.EnumProperty(
+        items=[
+            ("NONE", "None",
+             "Leave the islands as the UV mode makes them. CAD Surface gives "
+             "one island for each CAD face, which packs tightly", 0),
+            ("ALL", "All",
+             "Join every run of tangent faces into one island. A bent sheet "
+             "metal part comes out as one flat pattern", 1),
+            ("SMART", "Smart",
+             "Join tangent faces, but leave a long thin run as separate "
+             "faces. The edge of a plate then packs at full density", 2),
+        ],
+        name="Merge tangent",
+        description="What to do where two CAD faces meet smoothly, such as "
+                    "a plate and its bend. This does not change the shading",
+        default="NONE",
+    )
+
     uv_pack: bpy.props.EnumProperty(
         items=[
             ("NONE", "None", "Leave the islands where the UV mode put them",
@@ -3083,6 +3406,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
             "uv_closed_seams": self.uv_closed_seams,
+            "uv_merge_tangent": self.uv_merge_tangent,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
@@ -3162,6 +3486,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_mode=self.uv_mode,
                 uv_normalize=self.uv_normalize,
                 uv_closed_seams=self.uv_closed_seams,
+                uv_merge_tangent=self.uv_merge_tangent,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,

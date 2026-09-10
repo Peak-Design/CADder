@@ -43,6 +43,7 @@ PERSISTED_PROPS = (
     "tessellation_relative", "quality_preset", "lin_deflection_len",
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
     "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
+    "uv_merge_tangent",
     "box_uv_scale", "uv_unwrap_method", "uv_pack", "uv_pack_tiles",
     "uv_pack_margin", "tris_to_quads",
     "skip_construction", "import_curves",
@@ -218,6 +219,9 @@ def draw_import_dialog(op, layout, prefs):
         sub.active = op.uv_mode == "UNWRAP"
         sub.prop(op, "uv_unwrap_method")
         body.prop(op, "uv_closed_seams")
+        sub = body.row()
+        sub.active = op.uv_mode in {"SURFACE", "UNWRAP"}
+        sub.prop(op, "uv_merge_tangent")
         body.prop(op, "uv_pack")
         sub = body.row()
         sub.active = op.uv_pack == "UDIM"
@@ -308,6 +312,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "apply_scale": True, "skip_construction": False,
                 "uv_mode": "SURFACE", "uv_normalize": False,
                 "uv_closed_seams": "SINGLE", "box_uv_scale": 1.0,
+                "uv_merge_tangent": "NONE",
                 "tris_to_quads": True, "uv_pack": "NONE",
                 "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
                 "uv_unwrap_method": "CONFORMAL",
@@ -321,6 +326,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
             if isinstance(stored, dict):
                 for key in ("apply_scale", "skip_construction", "uv_mode",
                             "uv_normalize", "uv_closed_seams",
+                            "uv_merge_tangent",
                             "box_uv_scale", "tris_to_quads", "uv_pack",
                             "uv_pack_tiles", "uv_pack_margin",
                             "uv_unwrap_method",

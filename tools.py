@@ -141,6 +141,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 m._uv_options["closed_seams"] = stored.get(
                     "uv_closed_seams",
                     "SPLIT" if stored.get("uv_split_closed", True) else "NONE")
+                m._uv_options["merge_tangent"] = stored.get(
+                    "uv_merge_tangent", "NONE")
                 m._uv_options["box_scale"] = stored.get("box_uv_scale", 1.0)
                 m._uv_options["unit_scale"] = stored.get(
                     "unit_scale", obj.get("STEP_applied_scale", 0.0) or 1.0)

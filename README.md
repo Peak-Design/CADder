@@ -242,10 +242,10 @@ grid is fixed and an island that overruns one tile lands in the next.
 
 ### Tris to Quads
 
-**Tris to Quads** pairs the tessellation triangles back into quads. OCCT
-tessellates to triangles, so a flat CAD face arrives as thin triangle pairs
-that go straight back together. It never joins across a material, a UV
-island, a seam or a sharp edge.
+**Tris to Quads** is on by default. It pairs the tessellation triangles back
+into quads. OCCT tessellates to triangles, so a flat CAD face arrives as thin
+triangle pairs that go straight back together. It never joins across a
+material, a UV island, a seam or a sharp edge.
 
 This is not a remesh. No vertex moves and none is added or lost, and the
 custom split normals from the CAD surface come through, so the shading does

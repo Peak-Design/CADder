@@ -65,6 +65,29 @@ check(not stale,
       "the list names no option that no longer exists (%s)"
       % (stale or "none"))
 
+print("\n== the defaults the addon ships with")
+# These are a deliberate choice, not whatever each property happened to be
+# given. A change here should be a decision, so it has to break this test
+# first.
+SHIPPED = {
+    "uv_mode": "SURFACE",
+    "uv_normalize": False,
+    "uv_closed_seams": "SINGLE",
+    "uv_pack": "NONE",
+    "tris_to_quads": True,
+}
+by_id = {p.identifier: p for p in rna.properties}
+wrong_default = []
+for key, value in SHIPPED.items():
+    p = by_id.get(key)
+    got = getattr(p, "default", None) if p is not None else None
+    if got != value:
+        wrong_default.append("%s=%r wanted %r" % (key, got, value))
+check(not wrong_default,
+      "the shipped defaults are unchanged (%s)"
+      % ("; ".join(wrong_default) if wrong_default
+         else ", ".join("%s=%r" % (k, v) for k, v in sorted(SHIPPED.items()))))
+
 print("\n== the values survive a round trip")
 prefs = m._get_addon_prefs()
 prefs.remember_import_settings = True

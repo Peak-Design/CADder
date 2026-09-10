@@ -1919,7 +1919,7 @@ def load_step(
     uv_normalize=True,
     uv_closed_seams="SINGLE",
     box_uv_scale=1.0,
-    tris_to_quads=False,
+    tris_to_quads=True,
     uv_pack="NONE",
     uv_pack_tiles=4,
     uv_pack_margin=UV_PACK_MARGIN,
@@ -2966,7 +2966,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                     "joins across a material, a UV island, a seam or a sharp "
                     "edge. It does not retopologize: the vertices do not move "
                     "and the shape does not change",
-        default=False,
+        default=True,
     )
 
     box_uv_scale: bpy.props.FloatProperty(

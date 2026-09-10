@@ -99,18 +99,18 @@ def sides(obj):
     return counts
 
 
-print("\n== the option is off by default")
-plain = load()
+print("\n== the option can be turned off")
+plain = load(tris_to_quads=False)
 # Read everything now. The next load resets the file, and an object held
 # across that reset is already dead.
 base_v = verts_of(plain)
 base_sides = sides(plain)
 base_faces = len(plain.data.polygons)
 check(set(base_sides) == {3},
-      "a plain import is all triangles (%s)" % base_sides)
+      "with it off the import is all triangles (%s)" % base_sides)
 
-print("\n== it pairs the triangles")
-quad = load(tris_to_quads=True)
+print("\n== it is on by default, and pairs the triangles")
+quad = load()
 got = sides(quad)
 check(4 in got and got[4] > 0, "quads come out (%s)" % got)
 check(len(quad.data.polygons) < base_faces,

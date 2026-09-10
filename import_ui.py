@@ -43,7 +43,7 @@ PERSISTED_PROPS = (
     "tessellation_relative", "quality_preset", "lin_deflection_len",
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
     "eng_materials", "uv_mode", "uv_normalize", "uv_split_closed",
-    "box_uv_scale", "skip_construction", "import_curves",
+    "box_uv_scale", "tris_to_quads", "skip_construction", "import_curves",
     "group_in_collection", "separate_solids",
 )
 
@@ -213,6 +213,7 @@ def draw_import_dialog(op, layout, prefs):
         sub.active = op.uv_mode == "BOX"
         sub.prop(op, "box_uv_scale")
         body.prop(op, "uv_split_closed")
+        body.prop(op, "tris_to_quads")
 
     header, body = layout.panel("stepper_advanced", default_closed=True)
     header.label(text="Advanced")
@@ -295,6 +296,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "apply_scale": True, "skip_construction": False,
                 "uv_mode": "SURFACE", "uv_normalize": False,
                 "uv_split_closed": True, "box_uv_scale": 1.0,
+                "tris_to_quads": False,
                 "import_curves": False, "eng_materials": True,
                 "group_in_collection": False, "separate_solids": False}
         if prefs.remember_import_settings and prefs.last_import_settings:
@@ -305,7 +307,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
             if isinstance(stored, dict):
                 for key in ("apply_scale", "skip_construction", "uv_mode",
                             "uv_normalize", "uv_split_closed",
-                            "box_uv_scale", "import_curves",
+                            "box_uv_scale", "tris_to_quads", "import_curves",
                             "group_in_collection", "separate_solids",
                             "eng_materials"):
                     if key in stored:

@@ -651,6 +651,58 @@ def _assign_engineering_material(obj, mat_info):
             "material_index", np.zeros(n_polys, dtype=np.int32))
 
 
+def _tris_to_quads_objects(objs):
+    """Pair the tessellation triangles back into quads, on unique meshes.
+
+    OCCT tessellates to triangles, and a flat or lightly curved CAD face
+    comes out as long thin pairs that go back together cleanly. This is the
+    same work bpy.ops.mesh.tris_convert_to_quads does. It runs on the mesh
+    data instead of through the operator, because the operator needs edit
+    mode and one mode change per part costs more than the join.
+
+    Every comparison is on, so a pair is never joined across a material, a
+    UV island, a seam or a sharp edge. Both angle limits are open at 180
+    degrees. They exist to protect a hand-made mesh from ugly joins, and a
+    CAD tessellation has nothing to protect: its thin triangles are exactly
+    the ones that belong together.
+
+    Custom split normals survive, because bmesh carries the loop layer
+    through. The mesh keeps the exact CAD shading it was given.
+    """
+    import math
+
+    seen = set()
+    meshes = tris = quads = 0
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)):
+            continue
+        seen.add(o.data)
+        me = o.data
+        before = len(me.polygons)
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(me)
+            bmesh.ops.join_triangles(
+                bm, faces=bm.faces[:],
+                angle_face_threshold=math.pi, angle_shape_threshold=math.pi,
+                topology_influence=2.0, deselect_joined=False,
+                cmp_seam=True, cmp_sharp=True, cmp_uvs=True,
+                cmp_vcols=True, cmp_materials=True)
+            bm.to_mesh(me)
+            me.update()
+            meshes += 1
+            tris += before
+            quads += len(me.polygons)
+        except Exception as e:
+            print(f"Tris to quads failed on {me.name}: {e}")
+        finally:
+            bm.free()
+    if meshes:
+        print(f"Tris to quads: {meshes} mesh(es), {tris} faces -> {quads}")
+
+
 def _unwrap_uv_objects(objs, world_scale=None):
     """Angle-based unwrap with packed islands into the 'UVMap' layer.
 
@@ -1639,6 +1691,7 @@ def load_step(
     uv_normalize=True,
     uv_split_closed=True,
     box_uv_scale=1.0,
+    tris_to_quads=False,
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
@@ -1785,6 +1838,7 @@ def load_step(
         "uv_normalize": _uv_options["normalize"],
         "uv_split_closed": _uv_options["split_closed"],
         "box_uv_scale": _uv_options["box_scale"],
+        "tris_to_quads": tris_to_quads,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -2085,6 +2139,11 @@ def load_step(
     # Optional packed angle-based unwrap (unique meshes only. linked
     # copies share the datablock and get it for free). Meshes are still in
     # file units here, so real-world mode converts through unit_scale.
+    # Quads first: the unwrap then has about half the faces to flatten,
+    # and its UVs land on the mesh the user keeps.
+    if tris_to_quads:
+        _tris_to_quads_objects(created_names.values())
+
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -2576,6 +2635,17 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    tris_to_quads: bpy.props.BoolProperty(
+        name="Tris to Quads",
+        description="Pair the tessellation triangles back into quads after "
+                    "the import. A CAD tessellation cuts every flat face into "
+                    "thin triangle pairs, and this puts them back. It never "
+                    "joins across a material, a UV island, a seam or a sharp "
+                    "edge. It does not retopologize: the vertices do not move "
+                    "and the shape does not change",
+        default=False,
+    )
+
     box_uv_scale: bpy.props.FloatProperty(
         name="Box UV size",
         description="World size of one UV tile for the Box Project mode",
@@ -2661,6 +2731,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_normalize": self.uv_normalize,
             "uv_split_closed": self.uv_split_closed,
             "box_uv_scale": self.box_uv_scale,
+            "tris_to_quads": self.tris_to_quads,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -2735,6 +2806,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_normalize=self.uv_normalize,
                 uv_split_closed=self.uv_split_closed,
                 box_uv_scale=self.box_uv_scale,
+                tris_to_quads=self.tris_to_quads,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,

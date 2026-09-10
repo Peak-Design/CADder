@@ -422,6 +422,45 @@ def equalize_2d_points(pts):
     return pts
 
 
+def _uv_metric(prop, u_lo, u_hi, v_lo, v_hi):
+    """How much real length one unit of u and one unit of v cover.
+
+    OCC hands back raw parameter values. On a plane they are already
+    lengths, but on a cylinder u is an angle in radians and v is a length,
+    so a face can measure 6.28 by 500. Normalizing those two together makes
+    the island as thin as the ratio between them, which is why a drum shaped
+    face used to arrive tall and narrow.
+
+    Scaling each direction by the length of its own derivative puts both
+    back into length units. On a cylinder of radius r that turns u into arc
+    length, so the island comes out circumference by height, which is what
+    keeps a texture square on the part.
+
+    The derivative is not constant on a sphere, a torus or a NURBS patch, so
+    this samples a small grid and takes the median. It is an approximation
+    everywhere except the analytic cases, and a far better one than 1.0.
+
+    Returns (du, dv), both positive.
+    """
+    du_samples = []
+    dv_samples = []
+    for u in (u_lo, (u_lo + u_hi) * 0.5, u_hi):
+        for v in (v_lo, (v_lo + v_hi) * 0.5, v_hi):
+            try:
+                prop.SetParameters(float(u), float(v))
+                du_samples.append(prop.D1U().Magnitude())
+                dv_samples.append(prop.D1V().Magnitude())
+            except Exception:
+                continue
+    du = float(np.median(du_samples)) if du_samples else 1.0
+    dv = float(np.median(dv_samples)) if dv_samples else 1.0
+    if not (du > 1e-12) or not np.isfinite(du):
+        du = 1.0
+    if not (dv > 1e-12) or not np.isfinite(dv):
+        dv = 1.0
+    return du, dv
+
+
 @dataclass
 class ShapeTreeNode:
     """
@@ -1055,7 +1094,11 @@ class ReadSTEP:
         # per-face normalization, including real-world mode, see
         # _recompute_face_normals)
         if has_uvs:
-            span = max(Umax - Umin, Vmax - Vmin)
+            # Put u and v into length units first. Without this a cylinder
+            # arrives as a thin ribbon, because its u is an angle.
+            du, dv = _uv_metric(prop, Umin, Umax, Vmin, Vmax)
+            u0, v0 = Umin * du, Vmin * dv
+            span = max((Umax - Umin) * du, (Vmax - Vmin) * dv)
             if span > 1e-12:
                 if self.uv_world_scale is not None:
                     va = np.asarray(verts, dtype=np.float32)
@@ -1065,7 +1108,7 @@ class ReadSTEP:
                     s = 1.0 / span
             else:
                 s = 1.0
-            uvs = [((u - Umin) * s, (v - Vmin) * s) for (u, v) in uvs]
+            uvs = [((u * du - u0) * s, (v * dv - v0) * s) for (u, v) in uvs]
 
         # Read all triangles
         tris = [None] * d_nbtriangles
@@ -1663,9 +1706,15 @@ class ReadSTEP:
             # Default: fit to a 0-1 box.  World mode (uv_world_scale set):
             # scale so 1 UV unit == 1 scene unit, using the face's 3D extent
             # as the reference, so texel density then matches across parts.
-            u_min = float(u_vals.min())
-            v_min = float(v_vals.min())
-            span = max(float(u_vals.max()) - u_min, float(v_vals.max()) - v_min)
+            # Put u and v into length units first, so a cylinder does not
+            # arrive as a thin ribbon. See _uv_metric.
+            du, dv = _uv_metric(prop, float(u_vals.min()), float(u_vals.max()),
+                                float(v_vals.min()), float(v_vals.max()))
+            u_m = u_vals * du
+            v_m = v_vals * dv
+            u_min = float(u_m.min())
+            v_min = float(v_m.min())
+            span = max(float(u_m.max()) - u_min, float(v_m.max()) - v_min)
             if span > 1e-12:
                 if self.uv_world_scale is not None:
                     fv = all_verts[vs:vs + vc]
@@ -1675,8 +1724,8 @@ class ReadSTEP:
                     s = 1.0 / span
             else:
                 s = 1.0
-            all_uvs[vs:vs + vc, 0] = (u_vals - u_min) * s
-            all_uvs[vs:vs + vc, 1] = (v_vals - v_min) * s
+            all_uvs[vs:vs + vc, 0] = (u_m - u_min) * s
+            all_uvs[vs:vs + vc, 1] = (v_m - v_min) * s
 
         valid_indices = [j for j in range(len(face_refs))
                          if not failed_mask[j]]

@@ -139,6 +139,16 @@
 #     tessellation triangles back into quads, which takes 1000 parts from
 #     540,000 faces to 285,000 for about 2 percent of the import time. No
 #     vertex moves and the CAD shading is unchanged
+#   - New import option "Merge tangent": None, All or Smart. A sheet metal
+#     part is a plate, a bend and another plate, and none of those
+#     boundaries is sharp, so the run is one continuous surface that a
+#     press brake flattens into one rectangle. All joins such a run into
+#     one island, Smart does the same but leaves a long thin run alone,
+#     such as the edge of a plate
+#   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
+#     selected parts again with the same settings as the import dialog, so
+#     one part can get a treatment its neighbour does not. It replaces the
+#     Box Project UVs button, which is now one mode of its dropdown
 #   - The STEPper NEXT sidebar tab now sits after Item, Tool and View. A
 #     panel with no header registers in front of every panel that has one,
 #     whatever bl_order says, and that pulled the whole tab to the top

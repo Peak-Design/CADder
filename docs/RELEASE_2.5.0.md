@@ -22,6 +22,7 @@ leaves some stretch behind.
 | **Pack margin** | The space around each island. Raise it if a bake bleeds | none |
 | **Unwrap method** | Conformal (new default), Angle Based or Minimum Stretch | none |
 | **Closed surfaces** | Where a cylinder or torus closes on itself: None, Single seam (new default) or Split faces. Replaces "Split Closed Faces" | none |
+| **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart does the same but leaves a long thin run alone | +20% for All |
 
 ## UV fixes
 
@@ -33,6 +34,18 @@ leaves some stretch behind.
   now takes a small offset of its own.
 - Islands of one part could hold different texel densities. Every island of
   a part now divides by the same number.
+
+## New UV panel
+
+**STEPper NEXT: UV** in the sidebar makes the UV map of the selected parts
+again, with the same settings as the import dialog. One part can then get a
+treatment its neighbour does not: a bent bracket as one flat pattern, the
+block beside it face by face. It replaces the Box Project UVs button, which
+is now one mode of the dropdown.
+
+Box Project runs on the mesh as it is. The other modes read the source CAD
+file again and replace the mesh, the same way Regenerate does. The settings
+go on to each object, so a later Regenerate or Refresh keeps them.
 
 ## Interface
 

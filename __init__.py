@@ -99,13 +99,56 @@
 #   - Update notice in the sidebar with a download link for your platform,
 #     plus a Ko-fi link, and all user facing copy rewritten in Simplified
 #     Technical English
+#   - v2.5.0: the UV release. CAD Surface UVs now carry the proportions of
+#     the surface. OCC hands back raw parameters, and on a cylinder u is an
+#     angle while v is a length, so a drum arrived as a thin tall ribbon.
+#     Each direction is scaled by the length of its own derivative, which
+#     takes the median anisotropy on a 182 part assembly from 157 to 1.0
+#     and the share of surface stretched more than twice as far one way as
+#     the other from 55 percent to 0
+#   - Patches of one surface share one UV chart. A boolean through a
+#     cylinder leaves two or three faces on one surface, and each was
+#     fitted to its own box, so a drilled hole came out as three islands
+#     with a packing margin between parts of one tube (3,431 islands to
+#     2,827, none folded)
+#   - Two CAD faces no longer share one folded island. Every face was
+#     normalized into its own 0 to 1 box, so two flat faces of the same
+#     size wrote the same UVs and Blender read them as one island, folded
+#     on itself. Each face takes a small offset of its own (folded islands
+#     8 to 0)
+#   - Every island of a part now holds the same number of texels for each
+#     millimeter of surface. With Normalize UVs on, each face was fitted to
+#     the square on its own, so a 5 mm face and a 200 mm face came out the
+#     same size (9.2 to 1.0). Where the packer may resize, it averages the
+#     island scale first (Box Project 1.2 to 1.0, all parts in one tile
+#     17.2 to 1.0)
+#   - New import option "Unwrap method": Conformal (the default), Angle
+#     Based or Minimum Stretch. The unwrap was fixed at angle based, which
+#     can fold a long cylinder on to itself
+#   - New import option "Pack UVs": None, all parts together, each part on
+#     its own, or into a set number of UDIM tiles. The islands used to keep
+#     whatever place the UV mode gave them, which on 1000 parts spread them
+#     over 147 tiles and filled about 1 percent. A "Pack margin" setting
+#     comes with it, and the addon scales the margin down as more parts
+#     share a tile
+#   - "Split Closed Faces" becomes "Closed surfaces" with three choices:
+#     None, Single seam (the default) or Split faces. Single seam cuts a
+#     closed region until it is flat, so a hole unrolls into one island and
+#     its halves stay joined
+#   - New import option "Tris to Quads", on by default. It pairs the
+#     tessellation triangles back into quads, which takes 1000 parts from
+#     540,000 faces to 285,000 for about 2 percent of the import time. No
+#     vertex moves and the CAD shading is unchanged
+#   - The STEPper NEXT sidebar tab now sits after Item, Tool and View. A
+#     panel with no header registers in front of every panel that has one,
+#     whatever bl_order says, and that pulled the whole tab to the top
 
 bl_info = {
     "name": "STEPper NEXT",
     "author": "ambi, Peak-Design",
     "description": "STEP OpenCASCADE import",
     "blender": (5, 1, 0),
-    "version": (2, 4, 7),
+    "version": (2, 5, 0),
     "location": "3D View > Tools panel > STEPper NEXT",
     "category": "Import",
 }

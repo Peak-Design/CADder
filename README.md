@@ -198,7 +198,9 @@ the slowest. Measured on a 182 part assembly, by share of surface area
 stretched more than twice as far one way as the other: Conformal 0%, Angle
 Based 6%, Minimum Stretch 54%.
 
-**Normalize UVs** is off by default. When it is on, the addon fits the UVs to the 0-1 square. When it is off, the addon scales the UVs to real world scene units instead. The islands stay packed and the addon rescales them together. One shared material then shows its texture at the same physical size on every part. This is what most CAD work needs.
+**Normalize UVs** is off by default. When it is off, the addon scales the UVs to real world scene units. One UV unit is then one scene unit on every island, so one shared material shows its texture at the same physical size on every part. This is what most CAD work needs.
+
+When it is on, the addon fits the UVs to the 0-1 square. Every island of a part is divided by the same number, the largest island of that part. The islands keep their size against each other, so a 5 mm face gets a fifth of the UV length of a 25 mm face and both hold the same number of texels for each millimeter. Measured as the ratio between the densest and the sparsest island of a part: 1.0 in CAD Surface mode and in Unwrap mode.
 
 **Closed surfaces** chooses what happens where a cylinder, cone, sphere or torus closes on itself. CAD data marks no seam there, so an unwrap has nowhere to cut and returns a badly distorted island. None leaves it alone. Single seam, the default, cuts once, so a hole unrolls into one flat island and its two halves stay joined. Split faces cuts every boundary inside the closed region, so a hole made of two half cylinders becomes two islands.
 
@@ -239,6 +241,13 @@ it on the islands are scaled to fill the tile. With it off the packer only
 arranges them and every island keeps its real world size, so the packed
 result can be larger than one tile. UDIM tiles always resize, because their
 grid is fixed and an island that overruns one tile lands in the next.
+
+Where the packer may resize, it runs Average Islands Scale first. The packer
+applies one factor to the whole group, so on its own it keeps whatever size
+difference the islands arrive with. Averaging first gives every island in
+the group the same texel density. Box Project needs this most, because it
+flattens each face onto one of three planes and a face at an angle to all
+three arrives compressed.
 
 ### Tris to Quads
 

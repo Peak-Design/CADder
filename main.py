@@ -721,6 +721,11 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
     Selects and deselects only its own meshes. Clearing the whole scene on
     every call would make packing one tile per part cost the square of the
     part count, which on a real assembly is most of the run time.
+
+    When `scale` lets the packer resize, Average Islands Scale runs first.
+    The packer applies one factor to the whole group, so it keeps whatever
+    size difference the islands arrive with. Averaging gives every island in
+    the group the same texel density before that.
     """
     if not objs:
         return
@@ -731,6 +736,10 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
     try:
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
+        if scale:
+            # Each island keeps its own center, so the group stays in the
+            # tile the packer is about to read it from.
+            bpy.ops.uv.average_islands_scale()
         bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True,
                                 scale=scale,
                                 margin=_crowd_margin(margin, len(objs)))
@@ -2874,8 +2883,9 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
 
     uv_normalize: bpy.props.BoolProperty(
         name="Normalize UVs",
-        description="Fit the UVs to the 0-1 square. CAD Surface mode fits each "
-                    "CAD face. Unwrap mode packs the whole mesh. Turn this off "
+        description="Fit the UVs to the 0-1 square. Every island of a part is "
+                    "divided by the same number, so the islands keep their "
+                    "size against each other. Turn this off "
                     "to scale the UVs to real world scene units instead. The "
                     "islands stay packed and the addon rescales them together. "
                     "One material then shows a texture at the same size on "

@@ -22,6 +22,7 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
+import bmesh
 import bpy
 
 bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
@@ -78,6 +79,10 @@ def load(**kw):
     opts = dict(htypes="FLAT", up_as="Z", uv_mode="UNWRAP")
     opts.update(kw)
     m.load_step(bpy.context, STEP, **opts)
+    # matrix_world holds the value it had before the import until the
+    # depsgraph catches up. Any check that reads a world size has to force
+    # that here, or it measures the file units as if they were scene units.
+    bpy.context.view_layer.update()
     return [o for o in bpy.data.objects
             if o.type == "MESH" and o.data and len(o.data.polygons)]
 
@@ -266,6 +271,111 @@ check(abs(fitted - loose) > loose * 0.05,
 check(kept_over < 0.01,
       "and the islands still do not sit on each other (%.2f%%)"
       % (100.0 * kept_over))
+
+# ---- texel density inside one part ---------------------------------------
+# Two islands of one part have to hold the same number of texels for each
+# millimeter of surface. If they do not, one face of a part reads sharp and
+# the next reads blurred under the same texture. This is measured as the
+# ratio between the densest and the sparsest island of a part.
+print("\n== every island of a part has the same texel density")
+
+
+def island_density(o):
+    """sqrt(UV area / world area) for each UV island of one object."""
+    me = o.data
+    sc = o.matrix_world.to_scale()
+    lin = (abs(sc.x) * abs(sc.y) * abs(sc.z)) ** (1.0 / 3.0)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    seen = set()
+    out = []
+    for face in bm.faces:
+        if face.index in seen:
+            continue
+        stack, group = [face], [face]
+        seen.add(face.index)
+        while stack:
+            f = stack.pop()
+            for loop in f.loops:
+                a = loop[uvl].uv
+                b = loop.link_loop_next[uvl].uv
+                for other in loop.edge.link_faces:
+                    if other.index in seen:
+                        continue
+                    for ol in other.loops:
+                        oa, ob = ol[uvl].uv, ol.link_loop_next[uvl].uv
+                        if (((oa - a).length < 1e-6
+                             and (ob - b).length < 1e-6)
+                                or ((oa - b).length < 1e-6
+                                    and (ob - a).length < 1e-6)):
+                            seen.add(other.index)
+                            stack.append(other)
+                            group.append(other)
+                            break
+        a3 = sum(f.calc_area() for f in group) * lin * lin
+        a2 = 0.0
+        for f in group:
+            pts = [lp[uvl].uv for lp in f.loops]
+            tot = 0.0
+            for k in range(1, len(pts) - 1):
+                p, q, r = pts[0], pts[k], pts[k + 1]
+                tot += 0.5 * abs((q.x - p.x) * (r.y - p.y)
+                                 - (r.x - p.x) * (q.y - p.y))
+            a2 += tot
+        if a3 > 1e-14 and a2 > 1e-16:
+            out.append(np.sqrt(a2 / a3))
+    bm.free()
+    return out
+
+
+def worst_spread(objs):
+    """The widest density ratio found inside any one part, and the median."""
+    worst = 1.0
+    every = []
+    for o in objs:
+        d = island_density(o)
+        if len(d) > 1:
+            v = np.array(d)
+            worst = max(worst, float(np.percentile(v, 95)
+                                     / max(1e-12, np.percentile(v, 5))))
+        every.extend(d)
+    return worst, (float(np.median(every)) if every else 0.0)
+
+
+# A part normalized to the 0-1 square is divided by one number, so its
+# islands keep their size against each other. Before that each CAD face was
+# fitted to the square on its own, which put a 5 mm face and a 200 mm face
+# at the same size and measured near 10x here.
+for label, kw in (("Normalize UVs on, no packing",
+                   dict(uv_normalize=True, uv_pack="NONE")),
+                  ("Normalize UVs on, packed per part",
+                   dict(uv_normalize=True, uv_pack="OBJECT")),
+                  ("real world scale, no packing",
+                   dict(uv_normalize=False, uv_pack="NONE"))):
+    spread, median = worst_spread(load(uv_mode="SURFACE", **kw))
+    check(spread < 1.15,
+          "CAD Surface, %s: %.2fx between the densest and the sparsest "
+          "island of a part" % (label, spread))
+
+# Box projection flattens every face onto one of three planes, so a face at
+# an angle to all three arrives compressed. Packing may resize here, and
+# Average Islands Scale runs before it and takes that out.
+box_loose, _median = worst_spread(load(uv_mode="BOX", uv_normalize=True,
+                                       uv_pack="NONE"))
+box_packed, _median = worst_spread(load(uv_mode="BOX", uv_normalize=True,
+                                        uv_pack="OBJECT"))
+check(box_packed < 1.15 and box_packed < box_loose,
+      "box projection evens out when it is packed (%.2fx against %.2fx "
+      "loose)" % (box_packed, box_loose))
+
+# Real world scale means one UV unit is one scene unit, on every island.
+_spread, density = worst_spread(load(uv_mode="SURFACE", uv_normalize=False,
+                                     uv_pack="NONE"))
+check(abs(density - 1.0) < 0.05,
+      "and with Normalize UVs off one UV unit is one scene unit (%.4f)"
+      % density)
 
 # ---- the setting reaches a refresh ---------------------------------------
 print("\n== a refresh reproduces it")

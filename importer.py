@@ -434,8 +434,8 @@ UV_FACE_NUDGE = 0.001
 def _uv_nudge(center):
     """A small UV offset that belongs to this CAD face alone.
 
-    Every face is normalized into its own 0 to 1 box, so two flat faces of
-    the same size write exactly the same UVs. Where such faces meet, both
+    Every chart starts at the same UV origin, so two flat faces of the same
+    size write exactly the same UVs. Where such faces meet, both
     sides of the shared edge carry the same UV, and Blender reads that as
     one island rather than two. The island is then folded on itself, with
     the two faces on top of each other and their windings opposed. A box
@@ -455,17 +455,24 @@ def _uv_nudge(center):
     return hu * UV_FACE_NUDGE, hv * UV_FACE_NUDGE
 
 
-def _uv_scale(span, world_scale):
+def _uv_scale(norm, world_scale):
     """How to turn chart length units into UV units.
 
     In world mode the answer is simply the file-unit to scene-unit factor,
     because the chart is already in length units. That was not true before
     the metric went in, which is why this used to divide a 3D extent by the
     parameter span to guess at it.
+
+    In normalized mode `norm` is the largest chart of the whole part, not
+    the chart being written. One divisor for the part keeps the islands the
+    right size against each other, so a 5 mm face gets a fifth of the UV
+    length of a 25 mm face and the texel density is the same on both. A
+    per-chart divisor made every face fill the square, which put a 200 mm
+    face and a 2 mm face at the same size.
     """
     if world_scale is not None:
         return float(world_scale)
-    return 1.0 / span if span > 1e-12 else 1.0
+    return 1.0 / norm if norm > 1e-12 else 1.0
 
 
 def _surface_key(face):
@@ -559,7 +566,7 @@ class _Chart(object):
     Blender sees one island instead of two with a margin between them.
     """
 
-    __slots__ = ("du", "dv", "u0", "v0", "span", "nudge")
+    __slots__ = ("du", "dv", "u0", "v0", "span", "nudge", "norm")
 
     def __init__(self, du, dv, u0, v0, span, nudge):
         self.du = du
@@ -568,6 +575,9 @@ class _Chart(object):
         self.v0 = v0
         self.span = span
         self.nudge = nudge
+        # The divisor for normalized mode. Every chart of one part shares
+        # it, so the islands keep their size against each other.
+        self.norm = span
 
 
 def _build_charts(faces):
@@ -640,6 +650,15 @@ def _build_charts(faces):
         chart = _Chart(du, dv, u_lo * du, v_lo * dv, span, nudge)
         for i in members:
             charts[i] = chart
+
+    # Normalized mode divides by the largest chart of the part, not by each
+    # chart. The largest island then fills the square and every other one
+    # keeps its true size against it.
+    biggest = max((c.span for c in charts if c is not None), default=0.0)
+    if biggest > 1e-12:
+        for c in charts:
+            if c is not None:
+                c.norm = biggest
     return charts
 
 
@@ -1321,15 +1340,15 @@ class ReadSTEP:
                 # angle.
                 du, dv = _uv_metric(prop, Umin, Umax, Vmin, Vmax)
                 u0, v0 = Umin * du, Vmin * dv
-                span = max((Umax - Umin) * du, (Vmax - Vmin) * dv)
+                norm = max((Umax - Umin) * du, (Vmax - Vmin) * dv)
                 nudge = _uv_nudge(
                     np.asarray(verts, dtype=np.float64).mean(axis=0))
             else:
                 du, dv = chart.du, chart.dv
                 u0, v0 = chart.u0, chart.v0
-                span = chart.span
+                norm = chart.norm
                 nudge = chart.nudge
-            s = _uv_scale(span, self.uv_world_scale)
+            s = _uv_scale(norm, self.uv_world_scale)
             # Shrink by the nudge before adding it, so the chart still fits
             # inside its own box.
             k = 1.0 - UV_FACE_NUDGE
@@ -1937,9 +1956,10 @@ class ReadSTEP:
             # Normalize this face's UVs, preserving aspect ratio (raw OCC
             # parameter space has arbitrary per-face scaling).  Done after
             # the raw values were used for SetParameters above.
-            # Default: fit to a 0-1 box.  World mode (uv_world_scale set):
-            # scale so 1 UV unit == 1 scene unit, using the face's 3D extent
-            # as the reference, so texel density then matches across parts.
+            # Default: fit the part to a 0-1 box, all of its faces by the
+            # same divisor.  World mode (uv_world_scale set): scale so 1 UV
+            # unit == 1 scene unit, so the texel density matches across
+            # parts as well as inside one.
             chart = uv_charts[j] if j < len(uv_charts) else None
             if chart is None:
                 # No chart for this face: fall back to its own box.
@@ -1948,7 +1968,7 @@ class ReadSTEP:
                     float(v_vals.min()), float(v_vals.max()))
                 u_m, v_m = u_vals * du, v_vals * dv
                 u_min, v_min = float(u_m.min()), float(v_m.min())
-                span = max(float(u_m.max()) - u_min,
+                norm = max(float(u_m.max()) - u_min,
                            float(v_m.max()) - v_min)
                 nudge = _uv_nudge(all_verts[vs:vs + vc].mean(axis=0))
             else:
@@ -1956,9 +1976,9 @@ class ReadSTEP:
                 # in one frame and the shared edges meet exactly.
                 u_m, v_m = u_vals * chart.du, v_vals * chart.dv
                 u_min, v_min = chart.u0, chart.v0
-                span = chart.span
+                norm = chart.norm
                 nudge = chart.nudge
-            s = _uv_scale(span, self.uv_world_scale)
+            s = _uv_scale(norm, self.uv_world_scale)
             # Shrink by the nudge before adding it, so the chart still fits
             # inside its own box.
             k = 1.0 - UV_FACE_NUDGE

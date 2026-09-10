@@ -30,6 +30,7 @@ if file_dirname not in sys.path:
     sys.path.append(file_dirname)
 
 import importlib
+import math
 import os
 import threading
 from collections import defaultdict, OrderedDict
@@ -420,6 +421,38 @@ def equalize_2d_points(pts):
         pts[i] = (pts[i][0] * ratio1, pts[i][1])
 
     return pts
+
+
+# How far each CAD face is nudged in UV, to keep it off its neighbours.
+# Blender joins two faces into one UV island when their shared edge carries
+# the same UV on both sides, and it compares with a tolerance of 1e-4. This
+# has to be clearly larger than that and still small enough to be invisible:
+# 0.001 is one texel of a 1024 map.
+UV_FACE_NUDGE = 0.001
+
+
+def _uv_nudge(center):
+    """A small UV offset that belongs to this CAD face alone.
+
+    Every face is normalized into its own 0 to 1 box, so two flat faces of
+    the same size write exactly the same UVs. Where such faces meet, both
+    sides of the shared edge carry the same UV, and Blender reads that as
+    one island rather than two. The island is then folded on itself, with
+    the two faces on top of each other and their windings opposed. A box
+    with an open top shows it clearly.
+
+    The offset comes from the face's own center, so it is the same on every
+    import and after a refresh, and two different faces practically never
+    land on the same value.
+
+    Returns (du, dv), each in [0, UV_FACE_NUDGE).
+    """
+    x, y, z = float(center[0]), float(center[1]), float(center[2])
+    hu = x * 0.7548776662 + y * 0.5698402909 + z * 0.4301597090
+    hv = x * 0.3247179572 + y * 0.8191725134 + z * 0.6180339887
+    hu -= math.floor(hu)
+    hv -= math.floor(hv)
+    return hu * UV_FACE_NUDGE, hv * UV_FACE_NUDGE
 
 
 def _uv_metric(prop, u_lo, u_hi, v_lo, v_hi):
@@ -1108,7 +1141,13 @@ class ReadSTEP:
                     s = 1.0 / span
             else:
                 s = 1.0
-            uvs = [((u * du - u0) * s, (v * dv - v0) * s) for (u, v) in uvs]
+            # Shrink by the nudge before adding it, so the face still fits
+            # inside its own box.
+            va_c = np.asarray(verts, dtype=np.float64).mean(axis=0)
+            nu, nv = _uv_nudge(va_c)
+            k = 1.0 - UV_FACE_NUDGE
+            uvs = [(((u * du - u0) * s) * k + nu,
+                    ((v * dv - v0) * s) * k + nv) for (u, v) in uvs]
 
         # Read all triangles
         tris = [None] * d_nbtriangles
@@ -1724,8 +1763,12 @@ class ReadSTEP:
                     s = 1.0 / span
             else:
                 s = 1.0
-            all_uvs[vs:vs + vc, 0] = (u_m - u_min) * s
-            all_uvs[vs:vs + vc, 1] = (v_m - v_min) * s
+            # Shrink by the nudge before adding it, so the face still fits
+            # inside its own box.
+            nu, nv = _uv_nudge(all_verts[vs:vs + vc].mean(axis=0))
+            k = 1.0 - UV_FACE_NUDGE
+            all_uvs[vs:vs + vc, 0] = (u_m - u_min) * s * k + nu
+            all_uvs[vs:vs + vc, 1] = (v_m - v_min) * s * k + nv
 
         valid_indices = [j for j in range(len(face_refs))
                          if not failed_mask[j]]

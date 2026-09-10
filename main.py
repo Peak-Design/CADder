@@ -765,11 +765,11 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
     OBJECT  one tile per part, each packed on its own
     UDIM    the parts shared over a fixed number of tiles
 
-    With scale off the packer keeps every island the size it already is and
-    only arranges them, so a real-world UV scale survives the pack. The
-    result can then be larger than one tile, which is why UDIM always
-    scales: its tiles are a fixed grid and an island that overruns one lands
-    in the next.
+    `scale` comes from Normalize UVs. With it off the packer keeps every
+    island the size it already is and only arranges them, so the real-world
+    UV scale survives the pack. The result can then be larger than one tile,
+    which is why UDIM always scales: its tiles are a fixed grid and an
+    island that overruns one lands in the next.
     """
     if mode in (None, "NONE"):
         return
@@ -1110,6 +1110,43 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
+def _one_seam_per_region(edge_keys, mask, region_of, face_a, face_b):
+    """Pick one CAD face boundary in each region and return only its edges.
+
+    A closed region such as a hole made of two half cylinders has two
+    boundaries between its faces. Cutting both gives two half shells.
+    Cutting one opens the tube into a single flat island, which wastes less
+    texture and leaves no seam down the middle of the hole.
+
+    The longest boundary wins, so the cut runs the length of the hole rather
+    than around a fillet at one end.
+    """
+    keys = edge_keys[mask]
+    if not len(keys):
+        return keys
+    region = region_of[mask].astype(np.int64)
+    lo = np.minimum(face_a[mask], face_b[mask]).astype(np.int64)
+    hi = np.maximum(face_a[mask], face_b[mask]).astype(np.int64)
+    span = np.int64(max(int(hi.max()), int(lo.max())) + 1)
+    group = (region * span + lo) * span + hi
+
+    uniq, counts = np.unique(group, return_counts=True)
+    group_region = uniq // (span * span)
+    # Biggest boundary first, then one per region.
+    order = np.lexsort((-counts, group_region))
+    chosen = []
+    seen = set()
+    for i in order:
+        r = int(group_region[i])
+        if r in seen:
+            continue
+        seen.add(r)
+        chosen.append(uniq[i])
+    if not chosen:
+        return keys[:0]
+    return keys[np.isin(group, np.asarray(chosen, dtype=np.int64))]
+
+
 def _compute_edge_attributes(mesh):
     """Vectorized computation of seam and sharp edge sets.
 
@@ -1211,7 +1248,8 @@ def _compute_edge_attributes(mesh):
     # closure (the both-endpoints rule keeps collapsed poles, where every
     # touching edge has one discontinuous corner, out of the seam set).
     # Marked as UV seam only, never sharp: shading stays smooth.
-    if _uv_options.get("split_closed", True):
+    closed_mode = _uv_options.get("closed_seams", "SINGLE")
+    if closed_mode != "NONE":
         loop_uvs = None
         get_uvs = getattr(mesh, "get_loop_uvs", None)
         if get_uvs is not None:
@@ -1268,7 +1306,19 @@ def _compute_edge_attributes(mesh):
             if len(bad_ids):
                 cand = smooth_pair & cross_batch
                 edge_comp = labels[face_of[he0]]
-                extra = int_edge_keys[cand & np.isin(edge_comp, bad_ids)]
+                in_bad = cand & np.isin(edge_comp, bad_ids)
+                if closed_mode == "SPLIT":
+                    # Seam every boundary inside the region. A hole made of
+                    # two half cylinders becomes two islands.
+                    extra = int_edge_keys[in_bad]
+                else:
+                    # One cut is enough to open a tube. Seam the longest
+                    # boundary in each region and leave the rest joined, so
+                    # the hole unrolls into a single island instead of two
+                    # half shells.
+                    extra = _one_seam_per_region(
+                        int_edge_keys, in_bad, edge_comp,
+                        batches[face_of[he0]], batches[face_of[he1]])
                 if len(extra):
                     seam_keys = np.unique(
                         np.concatenate([seam_keys, extra]))
@@ -1867,13 +1917,12 @@ def load_step(
     skip_construction=False,
     uv_mode="SURFACE",
     uv_normalize=True,
-    uv_split_closed=True,
+    uv_closed_seams="SINGLE",
     box_uv_scale=1.0,
     tris_to_quads=False,
     uv_pack="NONE",
     uv_pack_tiles=4,
     uv_pack_margin=UV_PACK_MARGIN,
-    uv_pack_scale=True,
     uv_unwrap_method="CONFORMAL",
     import_curves=False,
     eng_materials=False,
@@ -1892,7 +1941,7 @@ def load_step(
     _uv_options["unwrap"] = uv_mode == "UNWRAP"
     _uv_options["box"] = uv_mode == "BOX"
     _uv_options["normalize"] = uv_normalize
-    _uv_options["split_closed"] = uv_split_closed
+    _uv_options["closed_seams"] = uv_closed_seams
     _uv_options["box_scale"] = box_uv_scale
 
     (hierarchy_flat, hierarchy_tree, hierarchy_empties,
@@ -2019,13 +2068,12 @@ def load_step(
         "skip_construction": skip_construction,
         "uv_mode": _uv_options["mode"],
         "uv_normalize": _uv_options["normalize"],
-        "uv_split_closed": _uv_options["split_closed"],
+        "uv_closed_seams": _uv_options["closed_seams"],
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
         "uv_pack_tiles": uv_pack_tiles,
         "uv_pack_margin": uv_pack_margin,
-        "uv_pack_scale": uv_pack_scale,
         "uv_unwrap_method": uv_unwrap_method,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
@@ -2334,8 +2382,11 @@ def load_step(
 
     # A pack that rescales islands would undo a real-world scale pass, so
     # that pass only runs when the scale is going to survive.
+    # Normalize UVs is the one answer to "may the islands be resized". With
+    # it off the pack keeps them at their real-world size instead.
     packing = uv_pack not in (None, "NONE")
-    rescales = packing and (uv_pack_scale or uv_pack == "UDIM")
+    pack_scale = bool(uv_normalize)
+    rescales = packing and (pack_scale or uv_pack == "UDIM")
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -2346,7 +2397,7 @@ def load_step(
 
     if packing:
         _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
-                         uv_pack_margin, uv_pack_scale)
+                         uv_pack_margin, pack_scale)
 
     # remove all temporary links
     for tobj in created_objs:
@@ -2808,7 +2859,9 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                     "to scale the UVs to real world scene units instead. The "
                     "islands stay packed and the addon rescales them together. "
                     "One material then shows a texture at the same size on "
-                    "every part",
+                    "every part. This also tells Pack UVs whether it may "
+                    "resize the islands. UDIM tiles always resize them, "
+                    "because their grid is fixed",
         default=False,
     )
 
@@ -2824,13 +2877,24 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
-    uv_split_closed: bpy.props.BoolProperty(
-        name="Split Closed Faces",
-        description="Mark a UV seam along the closure of cylinders and other "
-                    "closed surfaces. CAD data has no seam there, so the unwrap"
-                    " cannot flatten these faces without one. This does not "
-                    "change the shading",
-        default=True,
+    uv_closed_seams: bpy.props.EnumProperty(
+        items=[
+            ("NONE", "None",
+             "Leave closed surfaces alone. An unwrap cannot flatten them and "
+             "gives a badly distorted island", 0),
+            ("SINGLE", "Single seam",
+             "One seam along the closure. A hole unrolls into one flat "
+             "island and its two halves stay joined", 1),
+            ("SPLIT", "Split faces",
+             "A seam on every boundary inside a closed region. A hole made "
+             "of two half cylinders becomes two separate islands", 2),
+        ],
+        name="Closed surfaces",
+        description="What to do where a cylinder, cone, sphere or torus "
+                    "closes on itself. CAD data has no seam there, so an "
+                    "unwrap has nowhere to cut. This does not change the "
+                    "shading",
+        default="SINGLE",
     )
 
     uv_pack: bpy.props.EnumProperty(
@@ -2879,17 +2943,6 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         name="Unwrap method",
         description="How the Unwrap UV mode flattens each island",
         default="CONFORMAL",
-    )
-
-    uv_pack_scale: bpy.props.BoolProperty(
-        name="Scale islands to fit",
-        description="Let the packer resize the islands so they fill the "
-                    "tile. Turn it off to keep every island the size it "
-                    "already is, which is how a real world UV scale survives "
-                    "the pack. The packed result can then be bigger than one "
-                    "tile. UDIM tiles always scale, because their grid is "
-                    "fixed",
-        default=True,
     )
 
     uv_pack_margin: bpy.props.FloatProperty(
@@ -2999,13 +3052,12 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "skip_construction": self.skip_construction,
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
-            "uv_split_closed": self.uv_split_closed,
+            "uv_closed_seams": self.uv_closed_seams,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
             "uv_pack_tiles": self.uv_pack_tiles,
             "uv_pack_margin": self.uv_pack_margin,
-            "uv_pack_scale": self.uv_pack_scale,
             "uv_unwrap_method": self.uv_unwrap_method,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
@@ -3079,13 +3131,12 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 skip_construction=self.skip_construction,
                 uv_mode=self.uv_mode,
                 uv_normalize=self.uv_normalize,
-                uv_split_closed=self.uv_split_closed,
+                uv_closed_seams=self.uv_closed_seams,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,
                 uv_pack_tiles=self.uv_pack_tiles,
                 uv_pack_margin=self.uv_pack_margin,
-                uv_pack_scale=self.uv_pack_scale,
                 uv_unwrap_method=self.uv_unwrap_method,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,

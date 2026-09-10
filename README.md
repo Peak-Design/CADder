@@ -200,7 +200,9 @@ Based 6%, Minimum Stretch 54%.
 
 **Normalize UVs** is off by default. When it is on, the addon fits the UVs to the 0-1 square. When it is off, the addon scales the UVs to real world scene units instead. The islands stay packed and the addon rescales them together. One shared material then shows its texture at the same physical size on every part. This is what most CAD work needs.
 
-**Split Closed Faces** is on by default. It marks a UV seam along the closure of cylinders, cones and tori. It also marks one across smooth joined face groups that form closed tubes or rings. CAD data has no seam in these places, and an unwrap without one gives badly distorted islands. This does not change the shading.
+**Closed surfaces** chooses what happens where a cylinder, cone, sphere or torus closes on itself. CAD data marks no seam there, so an unwrap has nowhere to cut and returns a badly distorted island. None leaves it alone. Single seam, the default, cuts once, so a hole unrolls into one flat island and its two halves stay joined. Split faces cuts every boundary inside the closed region, so a hole made of two half cylinders becomes two islands.
+
+Measured on a 182 part assembly, by share of surface stretched more than five times as far one way as the other: None 45%, Single seam 0.2%, Split faces 0.1%. Single seam reaches that with 2,958 islands against 3,381 for Split faces, so it wastes less texture on island margins. None of these change the shading.
 
 ### Pack UVs
 
@@ -232,12 +234,11 @@ down as more parts share a tile. Without that correction the default margin
 fills only 6 percent of the tile on a 300 part import, against 80 percent
 with it. Raise the margin if a bake bleeds between islands.
 
-**Scale islands to fit** is on by default and lets the packer resize the
-islands so they fill the tile. Turn it off to keep every island the size it
-already is: the packer then only arranges them, and a real world UV scale
-survives the pack. The packed result can be larger than one tile. UDIM tiles
-always scale, because their grid is fixed and an island that overruns one
-tile lands in the next.
+**Normalize UVs** decides whether the packer may resize the islands. With
+it on the islands are scaled to fill the tile. With it off the packer only
+arranges them and every island keeps its real world size, so the packed
+result can be larger than one tile. UDIM tiles always resize, because their
+grid is fixed and an island that overruns one tile lands in the next.
 
 ### Tris to Quads
 

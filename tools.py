@@ -137,8 +137,10 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 m._uv_options["unwrap"] = uv_mode == "UNWRAP"
                 m._uv_options["box"] = uv_mode == "BOX"
                 m._uv_options["normalize"] = stored.get("uv_normalize", True)
-                m._uv_options["split_closed"] = stored.get(
-                    "uv_split_closed", True)
+                # Records written before the dropdown carry a boolean.
+                m._uv_options["closed_seams"] = stored.get(
+                    "uv_closed_seams",
+                    "SPLIT" if stored.get("uv_split_closed", True) else "NONE")
                 m._uv_options["box_scale"] = stored.get("box_uv_scale", 1.0)
                 m._uv_options["unit_scale"] = stored.get(
                     "unit_scale", obj.get("STEP_applied_scale", 0.0) or 1.0)

@@ -42,9 +42,9 @@ PERSISTED_PROPS = (
     "up_as", "hierarchy_types", "custom_scale", "user_scale", "apply_scale",
     "tessellation_relative", "quality_preset", "lin_deflection_len",
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
-    "eng_materials", "uv_mode", "uv_normalize", "uv_split_closed",
+    "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
     "box_uv_scale", "uv_unwrap_method", "uv_pack", "uv_pack_tiles",
-    "uv_pack_margin", "uv_pack_scale", "tris_to_quads",
+    "uv_pack_margin", "tris_to_quads",
     "skip_construction", "import_curves",
     "group_in_collection", "separate_solids",
 )
@@ -217,14 +217,11 @@ def draw_import_dialog(op, layout, prefs):
         sub = body.row()
         sub.active = op.uv_mode == "UNWRAP"
         sub.prop(op, "uv_unwrap_method")
-        body.prop(op, "uv_split_closed")
+        body.prop(op, "uv_closed_seams")
         body.prop(op, "uv_pack")
         sub = body.row()
         sub.active = op.uv_pack == "UDIM"
         sub.prop(op, "uv_pack_tiles")
-        sub = body.row()
-        sub.active = op.uv_pack != "NONE" and op.uv_pack != "UDIM"
-        sub.prop(op, "uv_pack_scale")
         sub = body.row()
         sub.active = op.uv_pack != "NONE"
         sub.prop(op, "uv_pack_margin")
@@ -310,10 +307,10 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "htypes": prefs.preferred_hierarchy,
                 "apply_scale": True, "skip_construction": False,
                 "uv_mode": "SURFACE", "uv_normalize": False,
-                "uv_split_closed": True, "box_uv_scale": 1.0,
+                "uv_closed_seams": "SINGLE", "box_uv_scale": 1.0,
                 "tris_to_quads": False, "uv_pack": "NONE",
                 "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
-                "uv_pack_scale": True, "uv_unwrap_method": "CONFORMAL",
+                "uv_unwrap_method": "CONFORMAL",
                 "import_curves": False, "eng_materials": True,
                 "group_in_collection": False, "separate_solids": False}
         if prefs.remember_import_settings and prefs.last_import_settings:
@@ -323,10 +320,10 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 stored = {}
             if isinstance(stored, dict):
                 for key in ("apply_scale", "skip_construction", "uv_mode",
-                            "uv_normalize", "uv_split_closed",
+                            "uv_normalize", "uv_closed_seams",
                             "box_uv_scale", "tris_to_quads", "uv_pack",
                             "uv_pack_tiles", "uv_pack_margin",
-                            "uv_pack_scale", "uv_unwrap_method",
+                            "uv_unwrap_method",
                             "import_curves",
                             "group_in_collection", "separate_solids",
                             "eng_materials"):

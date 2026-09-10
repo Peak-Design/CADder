@@ -147,6 +147,9 @@ def bounds(objs):
 
 
 # ---- what it looks like without packing -----------------------------------
+# At real world scale, which is the default, the unpacked islands spread out
+# over whatever tiles their size puts them in. That sprawl is the thing
+# packing is for, so it is measured at that setting.
 print("\n== without packing")
 objs = load(uv_pack="NONE", uv_normalize=False)
 lo, hi = bounds(objs)
@@ -155,30 +158,31 @@ lo, hi = bounds(objs)
 # islands sit in one small corner of a tile nobody else can use.
 region = (np.floor(lo), np.maximum(np.ceil(hi), np.floor(lo) + 1))
 before_used, before_over = coverage(triangles(objs), region)
-tiles = {tile_of(o) for o in objs}
+before_tiles = {tile_of(o) for o in objs}
 print("   spans u %.2f..%.2f v %.2f..%.2f over %d tile(s), "
       "%.1f%% of that tile space used"
-      % (lo[0], hi[0], lo[1], hi[1], len(tiles), 100.0 * before_used))
-check(True, "measured the unpacked layout (%.1f%% used, %.1f%% doubled)"
-      % (100.0 * before_used, 100.0 * before_over))
+      % (lo[0], hi[0], lo[1], hi[1], len(before_tiles),
+         100.0 * before_used))
+check(True, "measured the unpacked layout (%d tile(s), %.1f%% used)"
+      % (len(before_tiles), 100.0 * before_used))
 
 # ---- All parts together ---------------------------------------------------
 print("\n== All parts together")
-objs = load(uv_pack="ALL", uv_normalize=False)
+objs = load(uv_pack="ALL", uv_normalize=True)
 tiles = {tile_of(o) for o in objs}
 used, over = coverage(triangles(objs), ((0, 0), (1, 1)))
 check(tiles == {(0, 0)},
       "every part lands in tile 0 (%s)" % sorted(tiles))
 check(used > 0.4, "the tile is filled (%.0f%% used)" % (100.0 * used))
-check(used > before_used * 2.0,
-      "it uses far more of the tile than the unpacked layout "
-      "(%.0f%% against %.0f%%)" % (100.0 * used, 100.0 * before_used))
+check(len(tiles) <= len(before_tiles),
+      "it needs no more tiles than the unpacked layout (%d against %d)"
+      % (len(tiles), len(before_tiles)))
 check(over < 0.01, "the islands do not sit on each other (%.2f%% doubled)"
       % (100.0 * over))
 
 # ---- Each part on its own -------------------------------------------------
 print("\n== Each part on its own")
-objs = load(uv_pack="OBJECT", uv_normalize=False)
+objs = load(uv_pack="OBJECT", uv_normalize=True)
 check(all(tile_of(o) == (0, 0) for o in objs),
       "every part gets its own 0-1 tile")
 worst_used, worst_over = 1.0, 0.0
@@ -194,7 +198,7 @@ check(worst_over < 0.01,
 # ---- Into UDIM tiles ------------------------------------------------------
 print("\n== Into UDIM tiles")
 for want in (2, 3):
-    objs = load(uv_pack="UDIM", uv_pack_tiles=want, uv_normalize=False)
+    objs = load(uv_pack="UDIM", uv_pack_tiles=want, uv_normalize=True)
     tiles = sorted({tile_of(o) for o in objs})
     check(len(tiles) == want,
           "%d tiles asked, %d used (%s)" % (want, len(tiles), tiles))
@@ -213,7 +217,7 @@ for want in (2, 3):
           % (100.0 * thin))
 
 # ---- keeping the island scale --------------------------------------------
-# Packing does not have to resize anything. With "Scale islands to fit" off
+# Packing does not have to resize anything. With Normalize UVs off
 # the packer only arranges them, so a real world UV scale survives it. This
 # is the reason the option exists.
 print("\n== packing can keep the island scale")
@@ -244,7 +248,7 @@ def texel_ratio(objs):
 loose = texel_ratio(load(uv_pack="NONE", uv_normalize=False))
 # Measure everything about this import before the next load, which resets
 # the file and leaves the objects dead.
-kept = load(uv_pack="ALL", uv_pack_scale=False, uv_normalize=False)
+kept = load(uv_pack="ALL", uv_normalize=False)
 kept_ratio = texel_ratio(kept)
 kept_tris = triangles(kept)
 lo, hi = np.array([1e30, 1e30]), np.array([-1e30, -1e30])
@@ -252,14 +256,13 @@ for tri in kept_tris:
     lo = np.minimum(lo, tri.min(axis=0))
     hi = np.maximum(hi, tri.max(axis=0))
 _used, kept_over = coverage(kept_tris, (lo, hi), grid=384)
-fitted = texel_ratio(load(uv_pack="ALL", uv_pack_scale=True,
-                          uv_normalize=False))
+fitted = texel_ratio(load(uv_pack="ALL", uv_normalize=True))
 check(abs(kept_ratio - loose) <= loose * 0.02,
-      "with scaling off the texel size is unchanged (%.5g against %.5g)"
-      % (kept_ratio, loose))
+      "with Normalize UVs off the texel size is unchanged (%.5g against "
+      "%.5g)" % (kept_ratio, loose))
 check(abs(fitted - loose) > loose * 0.05,
-      "with scaling on the packer does resize the islands (%.5g against "
-      "%.5g)" % (fitted, loose))
+      "with Normalize UVs on the packer does resize the islands (%.5g "
+      "against %.5g)" % (fitted, loose))
 check(kept_over < 0.01,
       "and the islands still do not sit on each other (%.2f%%)"
       % (100.0 * kept_over))
@@ -270,7 +273,7 @@ objs = load(uv_pack="UDIM", uv_pack_tiles=3)
 rec = str(objs[0].get("STEP_import_settings")
           or objs[0].get("import_record_json") or "")
 check(all(k in rec for k in ("uv_pack", "uv_pack_tiles", "uv_pack_margin",
-                            "uv_pack_scale", "uv_unwrap_method")),
+                            "uv_unwrap_method")),
       "every packing setting is stamped on the object")
 
 if FAILS:

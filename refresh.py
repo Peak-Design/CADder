@@ -782,7 +782,7 @@ if bpy is not None:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "STEPper NEXT"
-        bl_order = 1005
+        bl_order = 1006
 
         def draw(self, context):
             layout = self.layout

@@ -290,6 +290,23 @@ custom split normals from the CAD surface come through, so the shading does
 not change. On 1000 parts it costs about 2 percent of the import and takes
 the face count from 540,000 to 285,000.
 
+### The UV panel
+
+The **STEPper NEXT: UV** panel in the sidebar makes the UV map of the
+selected parts again. It holds the same settings as the import dialog, so
+one part can get a treatment its neighbour does not. A bent bracket can be
+one flat pattern while the machined block beside it stays face by face.
+
+Box Project reads the mesh and nothing else, so it runs on the parts as they
+are. The other modes need the parametric surfaces, so the addon reads the
+source CAD file again and replaces the mesh, the same way **Regenerate**
+does. Work you did on the mesh itself does not survive that. Transforms,
+parenting, modifiers, materials and custom properties do.
+
+The settings go on to each object. A **Regenerate** or a **Refresh from
+disk** later makes the UV map you chose in the panel, not the one the import
+made.
+
 ## Import Defaults
 
 **Remember import settings** is on by default. The addon saves the import dialog options after every import and restores them in your next Blender session. Blender writes them out with its normal preferences save, so keep *Save Preferences on Quit* on. You can also save the preferences by hand. Turn the option off to use the fixed defaults in the preferences instead.

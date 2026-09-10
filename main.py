@@ -658,6 +658,71 @@ UDIM_ROW = 10
 UV_PACK_MARGIN = 0.005
 
 
+# The UV dropdowns are offered twice: in the import dialog and in the UV
+# panel, which makes the same map again for parts that are already in the
+# scene. One definition, so the two can never drift apart.
+UV_MODE_ITEMS = [
+    ("NONE", "None", "Do not create a UV map", 0),
+    ("SURFACE", "CAD Surface",
+     "One island per CAD face from the parametric surface "
+     "coordinates (fast)", 1),
+    ("UNWRAP", "Unwrap",
+     "Blender's angle-based unwrap with packed islands. Sharp CAD "
+     "edges act as seams. Slower on large assemblies", 2),
+    ("BOX", "Box Project",
+     "Triplanar box projection with a world-unit tile size", 3),
+]
+
+UV_UNWRAP_ITEMS = [
+    ("CONFORMAL", "Conformal",
+     "Keeps angles. Blender's own default, and the steadiest on the "
+     "long curved faces of a CAD part", 0),
+    ("ANGLE_BASED", "Angle Based",
+     "Spreads the error over the whole island. Good on organic "
+     "shapes, and it can fold a long cylinder on to itself", 1),
+    ("MINIMUM_STRETCH", "Minimum Stretch",
+     "Works to even out the stretch. The slowest of the three", 2),
+]
+
+UV_CLOSED_ITEMS = [
+    ("NONE", "None",
+     "Leave closed surfaces alone. An unwrap cannot flatten them and "
+     "gives a badly distorted island", 0),
+    ("SINGLE", "Single seam",
+     "One seam along the closure. A hole unrolls into one flat "
+     "island and its two halves stay joined", 1),
+    ("SPLIT", "Split faces",
+     "A seam on every boundary inside a closed region. A hole made "
+     "of two half cylinders becomes two separate islands", 2),
+]
+
+UV_MERGE_ITEMS = [
+    ("NONE", "None",
+     "Leave the islands as the UV mode makes them. CAD Surface gives "
+     "one island for each CAD face, which packs tightly", 0),
+    ("ALL", "All",
+     "Join every run of tangent faces into one island. A bent sheet "
+     "metal part comes out as one flat pattern", 1),
+    ("SMART", "Smart",
+     "Join tangent faces, but leave a long thin run as separate "
+     "faces. The edge of a plate then packs at full density", 2),
+]
+
+UV_PACK_ITEMS = [
+    ("NONE", "None", "Leave the islands where the UV mode put them", 0),
+    ("ALL", "All parts together",
+     "Pack every part into one 0-1 tile. Merge the parts afterwards "
+     "and the whole import is ready to texture as one piece", 1),
+    ("OBJECT", "Each part on its own",
+     "Give every part its own 0-1 tile, packed on its own. The "
+     "slowest choice: the packer has to run once for each part", 2),
+    ("UDIM", "Into UDIM tiles",
+     "Share the parts over a set number of tiles and pack each tile. "
+     "A middle way between one texture for everything and one for "
+     "each part", 3),
+]
+
+
 def _uv_array(me):
     """The active UV layer as an (n, 2) array, or None."""
     layer = me.uv_layers.active
@@ -3004,6 +3069,51 @@ class PG_Stepper(bpy.types.PropertyGroup):
         subtype="FILE_PATH",
     )
 
+    # UV panel: make the map again for parts already in the scene. The
+    # defaults match the import dialog, so the panel opens on the layout the
+    # parts most likely have.
+    uv_mode: bpy.props.EnumProperty(
+        items=UV_MODE_ITEMS, name="UV Map",
+        description="What to put in the UVMap layer of the selected parts",
+        default="SURFACE")
+    uv_normalize: bpy.props.BoolProperty(
+        name="Normalize UVs",
+        description="Fit the UVs to the 0-1 square. Turn this off to scale "
+                    "them to real world scene units instead",
+        default=False)
+    uv_unwrap_method: bpy.props.EnumProperty(
+        items=UV_UNWRAP_ITEMS, name="Unwrap method",
+        description="How the Unwrap mode flattens each island",
+        default="CONFORMAL")
+    uv_closed_seams: bpy.props.EnumProperty(
+        items=UV_CLOSED_ITEMS, name="Closed surfaces",
+        description="What to do where a cylinder, cone, sphere or torus "
+                    "closes on itself. This does not change the shading",
+        default="SINGLE")
+    uv_merge_tangent: bpy.props.EnumProperty(
+        items=UV_MERGE_ITEMS, name="Merge tangent",
+        description="What to do where two CAD faces meet smoothly, such as "
+                    "a plate and its bend. This does not change the shading",
+        default="NONE")
+    box_uv_scale: bpy.props.FloatProperty(
+        name="Box UV size", unit="LENGTH",
+        description="World size of one UV tile for the Box Project mode",
+        default=1.0, min=0.0001)
+    uv_pack: bpy.props.EnumProperty(
+        items=UV_PACK_ITEMS, name="Pack UVs",
+        description="Arrange the islands of the selected parts after the UV "
+                    "map is made",
+        default="NONE")
+    uv_pack_tiles: bpy.props.IntProperty(
+        name="Tile count",
+        description="How many UDIM tiles to share the parts over",
+        default=4, min=1, max=100)
+    uv_pack_margin: bpy.props.FloatProperty(
+        name="Pack margin",
+        description="Space left around each island. The addon scales this "
+                    "down as more parts share a tile",
+        default=UV_PACK_MARGIN, min=0.0, max=0.25, precision=4)
+
     # Material database UI state
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
     mat_db_active_index: bpy.props.IntProperty(default=0)
@@ -3170,17 +3280,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_mode: bpy.props.EnumProperty(
-        items=[
-            ("NONE", "None", "Do not create a UV map", 0),
-            ("SURFACE", "CAD Surface",
-             "One island per CAD face from the parametric surface "
-             "coordinates (fast)", 1),
-            ("UNWRAP", "Unwrap",
-             "Blender's angle-based unwrap with packed islands. Sharp CAD "
-             "edges act as seams. Slower on large assemblies", 2),
-            ("BOX", "Box Project",
-             "Triplanar box projection with a world-unit tile size", 3),
-        ],
+        items=UV_MODE_ITEMS,
         name="UV Map",
         description="How the addon fills the UVMap layer",
         default="SURFACE",
@@ -3213,17 +3313,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_closed_seams: bpy.props.EnumProperty(
-        items=[
-            ("NONE", "None",
-             "Leave closed surfaces alone. An unwrap cannot flatten them and "
-             "gives a badly distorted island", 0),
-            ("SINGLE", "Single seam",
-             "One seam along the closure. A hole unrolls into one flat "
-             "island and its two halves stay joined", 1),
-            ("SPLIT", "Split faces",
-             "A seam on every boundary inside a closed region. A hole made "
-             "of two half cylinders becomes two separate islands", 2),
-        ],
+        items=UV_CLOSED_ITEMS,
         name="Closed surfaces",
         description="What to do where a cylinder, cone, sphere or torus "
                     "closes on itself. CAD data has no seam there, so an "
@@ -3233,17 +3323,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_merge_tangent: bpy.props.EnumProperty(
-        items=[
-            ("NONE", "None",
-             "Leave the islands as the UV mode makes them. CAD Surface gives "
-             "one island for each CAD face, which packs tightly", 0),
-            ("ALL", "All",
-             "Join every run of tangent faces into one island. A bent sheet "
-             "metal part comes out as one flat pattern", 1),
-            ("SMART", "Smart",
-             "Join tangent faces, but leave a long thin run as separate "
-             "faces. The edge of a plate then packs at full density", 2),
-        ],
+        items=UV_MERGE_ITEMS,
         name="Merge tangent",
         description="What to do where two CAD faces meet smoothly, such as "
                     "a plate and its bend. This does not change the shading",
@@ -3251,20 +3331,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_pack: bpy.props.EnumProperty(
-        items=[
-            ("NONE", "None", "Leave the islands where the UV mode put them",
-             0),
-            ("ALL", "All parts together",
-             "Pack every part into one 0-1 tile. Merge the parts afterwards "
-             "and the whole import is ready to texture as one piece", 1),
-            ("OBJECT", "Each part on its own",
-             "Give every part its own 0-1 tile, packed on its own. The "
-             "slowest choice: the packer has to run once for each part", 2),
-            ("UDIM", "Into UDIM tiles",
-             "Share the parts over a set number of tiles and pack each tile. "
-             "A middle way between one texture for everything and one for "
-             "each part", 3),
-        ],
+        items=UV_PACK_ITEMS,
         name="Pack UVs",
         description="Pack the UV islands after the UV map is made. Packing "
                     "scales the islands to fill the tile, so it replaces the "
@@ -3283,16 +3350,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_unwrap_method: bpy.props.EnumProperty(
-        items=[
-            ("CONFORMAL", "Conformal",
-             "Keeps angles. Blender's own default, and the steadiest on the "
-             "long curved faces of a CAD part", 0),
-            ("ANGLE_BASED", "Angle Based",
-             "Spreads the error over the whole island. Good on organic "
-             "shapes, and it can fold a long cylinder on to itself", 1),
-            ("MINIMUM_STRETCH", "Minimum Stretch",
-             "Works to even out the stretch. The slowest of the three", 2),
-        ],
+        items=UV_UNWRAP_ITEMS,
         name="Unwrap method",
         description="How the Unwrap UV mode flattens each island",
         default="CONFORMAL",
@@ -4043,7 +4101,7 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
-    bl_order = 1003
+    bl_order = 1004
 
     def draw(self, context):
         layout = self.layout
@@ -4157,10 +4215,8 @@ class STEP_PT_STEPper(bpy.types.Panel):
                      icon='X')
         row.operator("stepper.prune_restore", text="Restore",
                      icon='LOOP_BACK')
-        row = col.row(align=True)
-        row.operator("stepper.mesh_cleanup", text="Clean Up Meshes",
+        col.operator("stepper.mesh_cleanup", text="Clean Up Meshes",
                      icon='MESH_DATA')
-        row.operator("stepper.add_box_uv", text="Box Project UVs", icon='UV')
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
@@ -4168,7 +4224,7 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
-    bl_order = 1002
+    bl_order = 1003
 
     def draw(self, context):
         layout = self.layout
@@ -4188,12 +4244,51 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
         row.label(text=f"Cached files: {len(global_file_cache)}/{MAX_FILE_CACHE}")
 
 
+class STEP_PT_STEPper_UV(bpy.types.Panel):
+    bl_label = "STEPper NEXT: UV"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "STEPper NEXT"
+    bl_order = 1002
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        prg = context.scene.stepper
+        layout = self.layout
+        col = layout.column()
+        col.prop(prg, "uv_mode")
+        sub = col.row()
+        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
+        sub.prop(prg, "uv_normalize")
+        sub = col.row()
+        sub.active = prg.uv_mode == "BOX"
+        sub.prop(prg, "box_uv_scale")
+        sub = col.row()
+        sub.active = prg.uv_mode == "UNWRAP"
+        sub.prop(prg, "uv_unwrap_method")
+        sub = col.row()
+        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
+        sub.prop(prg, "uv_closed_seams")
+        sub = col.row()
+        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
+        sub.prop(prg, "uv_merge_tangent")
+        col.prop(prg, "uv_pack")
+        sub = col.row()
+        sub.active = prg.uv_pack == "UDIM"
+        sub.prop(prg, "uv_pack_tiles")
+        sub = col.row()
+        sub.active = prg.uv_pack != "NONE"
+        sub.prop(prg, "uv_pack_margin")
+        layout.operator("stepper.reapply_uv", text="Apply to Selected",
+                        icon="UV")
+
+
 class STEP_PT_STEPper_Debug(bpy.types.Panel):
     bl_label = "STEPper NEXT: Debug"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
-    bl_order = 1004
+    bl_order = 1005
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -4513,6 +4608,7 @@ classes = (
     STEP_PT_STEPper,
     STEP_PT_STEPper_Reload,
     STEP_PT_MaterialDB,
+    STEP_PT_STEPper_UV,
     STEP_PT_STEPper_Debug,
 ) + (import_ui.classes + uv_mod.classes + tools_mod.classes
      + curves_mod.classes + formats_classes + analyzer_mod.classes

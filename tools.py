@@ -448,10 +448,105 @@ class STEPPER_OT_add_box_uv(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class STEPPER_OT_reapply_uv(bpy.types.Operator):
+    """Make the UVMap layer of the selected parts again with the settings in
+    this panel. Box Project works on the mesh as it is. The other modes need
+    the CAD data, so the addon reads the source file again and replaces the
+    mesh, the same way Regenerate does. The settings go on to each object, so
+    a later Regenerate or Refresh keeps them."""
+    bl_idname = "stepper.reapply_uv"
+    bl_label = "Apply UVs to Selected"
+    bl_options = {"REGISTER", "UNDO"}
+
+    # Every UV key of the import record this panel is allowed to change.
+    KEYS = ("uv_mode", "uv_normalize", "uv_unwrap_method", "uv_closed_seams",
+            "uv_merge_tangent", "box_uv_scale", "uv_pack", "uv_pack_tiles",
+            "uv_pack_margin")
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT" and any(
+            o.type == "MESH" for o in context.selected_objects)
+
+    def execute(self, context):
+        from . import main as m
+
+        prg = context.scene.stepper
+        want = {k: getattr(prg, k) for k in self.KEYS}
+
+        targets = []
+        seen = set()
+        for obj in context.selected_objects:
+            if obj.type != "MESH" or obj.data is None or obj.data in seen:
+                continue
+            seen.add(obj.data)
+            targets.append(obj)
+        if not targets:
+            self.report({"WARNING"}, "Select a mesh first")
+            return {"CANCELLED"}
+
+        # The settings travel with the object, so a Regenerate or a Refresh
+        # later keeps the UV map chosen here instead of the one the import
+        # made.
+        for obj in targets:
+            try:
+                rec = json.loads(obj.get("STEP_import_settings", "{}"))
+            except Exception:
+                rec = {}
+            if not isinstance(rec, dict):
+                rec = {}
+            rec.update(want)
+            obj["STEP_import_settings"] = json.dumps(rec)
+
+        if want["uv_mode"] == "BOX":
+            # Box projection reads the mesh and nothing else, so the CAD
+            # file stays closed and the mesh the user has is kept.
+            n = 0
+            for obj in targets:
+                if uv_mod.add_box_uv(obj.data, scale=want["box_uv_scale"]):
+                    n += 1
+            made = "box projected %d mesh(es)" % n
+        else:
+            from_cad = [o for o in targets
+                        if "STEP_file" in o and "STEP_tag" in o]
+            if not from_cad:
+                self.report({"WARNING"},
+                            "This mode needs the CAD data. Select parts that "
+                            "came from a STEP file")
+                return {"CANCELLED"}
+            for obj in context.selected_objects:
+                obj.select_set(obj in from_cad)
+            context.view_layer.objects.active = from_cad[0]
+            bpy.ops.stepper.regenerate(use_scene_settings=False)
+            targets = from_cad
+            made = "rebuilt %d mesh(es) from the CAD data" % len(from_cad)
+
+        # The passes the import runs after the UV map is written. The quad
+        # setting comes from the record, so a part keeps the pairing it was
+        # imported with.
+        try:
+            rec = json.loads(targets[0].get("STEP_import_settings", "{}"))
+        except Exception:
+            rec = {}
+        if rec.get("tris_to_quads") and want["uv_mode"] != "BOX":
+            m._tris_to_quads_objects(targets)
+        if want["uv_mode"] == "SURFACE" and want["uv_merge_tangent"] != "NONE":
+            m._flatten_merged_objects(targets,
+                                      method=want["uv_unwrap_method"])
+        if want["uv_pack"] != "NONE":
+            m._pack_uv_objects(targets, want["uv_pack"],
+                               want["uv_pack_tiles"], want["uv_pack_margin"],
+                               bool(want["uv_normalize"]))
+
+        self.report({"INFO"}, "UV: " + made)
+        return {"FINISHED"}
+
+
 classes = (
     STEPPER_OT_regenerate,
     STEPPER_OT_prune_hierarchy,
     STEPPER_OT_prune_restore,
     STEPPER_OT_mesh_cleanup,
     STEPPER_OT_add_box_uv,
+    STEPPER_OT_reapply_uv,
 )

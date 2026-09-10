@@ -715,7 +715,7 @@ def _crowd_margin(margin, count):
     return margin / math.sqrt(max(1, count))
 
 
-def _pack_group(objs, margin=UV_PACK_MARGIN):
+def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
     """Pack one set of meshes into tile 0, together.
 
     Selects and deselects only its own meshes. Clearing the whole scene on
@@ -732,7 +732,7 @@ def _pack_group(objs, margin=UV_PACK_MARGIN):
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True,
-                                scale=True,
+                                scale=scale,
                                 margin=_crowd_margin(margin, len(objs)))
         bpy.ops.object.mode_set(mode="OBJECT")
     finally:
@@ -758,15 +758,18 @@ def _balance(objs, groups):
     return [g for g in out if g]
 
 
-def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN):
+def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
     """Pack the UV islands. Unique meshes only, so linked copies come free.
 
     ALL     one tile for the whole import, ready to merge and texture as one
     OBJECT  one tile per part, each packed on its own
     UDIM    the parts shared over a fixed number of tiles
 
-    Packing rescales the islands to fill the tile, so it replaces any
-    real-world UV scale. The two cannot both be true at once.
+    With scale off the packer keeps every island the size it already is and
+    only arranges them, so a real-world UV scale survives the pack. The
+    result can then be larger than one tile, which is why UDIM always
+    scales: its tiles are a fixed grid and an island that overruns one lands
+    in the next.
     """
     if mode in (None, "NONE"):
         return
@@ -789,7 +792,7 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN):
         if mode == "ALL":
             for o in targets:
                 _uv_home(o.data)
-            _pack_group(targets, margin)
+            _pack_group(targets, margin, scale)
             used = 1
         elif mode == "OBJECT":
             # One pack for each part. This is the slow one by nature: the
@@ -797,14 +800,17 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN):
             # tile of its own.
             for o in targets:
                 _uv_home(o.data)
-                _pack_group([o], margin)
+                _pack_group([o], margin, scale)
             used = len(targets)
         else:
+            if not scale:
+                print("UV pack: UDIM tiles need scaling, so island scale is "
+                      "not kept for this mode")
             groups = _balance(targets, max(1, int(tiles)))
             for i, group in enumerate(groups):
                 for o in group:
                     _uv_home(o.data)
-                _pack_group(group, margin)
+                _pack_group(group, margin, True)
                 du, dv = i % UDIM_ROW, i // UDIM_ROW
                 if du or dv:
                     for o in group:
@@ -870,7 +876,7 @@ def _tris_to_quads_objects(objs):
         print(f"Tris to quads: {meshes} mesh(es), {tris} faces -> {quads}")
 
 
-def _unwrap_uv_objects(objs, world_scale=None):
+def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
     """Angle-based unwrap with packed islands into the 'UVMap' layer.
 
     Runs Blender's unwrap operator once over all given objects in
@@ -914,12 +920,17 @@ def _unwrap_uv_objects(objs, world_scale=None):
         view_layer.objects.active = targets[0]
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.005)
+        # no_flip keeps a face from turning itself inside out, which is
+        # what leaves an island folded on top of itself.
+        try:
+            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True)
+        except TypeError:
+            bpy.ops.uv.unwrap(method=method, margin=0.005)
         bpy.ops.object.mode_set(mode="OBJECT")
         if world_scale is not None:
             for o in targets:
                 _scale_unwrap_to_world(o.data, world_scale)
-        print(f"UVMap unwrap: {len(targets)} mesh(es)"
+        print(f"UVMap unwrap ({method.lower()}): {len(targets)} mesh(es)"
               + ("" if world_scale is None else " (real-world scale)"))
     except Exception as e:
         print(f"UVMap unwrap failed: {e}")
@@ -1862,6 +1873,8 @@ def load_step(
     uv_pack="NONE",
     uv_pack_tiles=4,
     uv_pack_margin=UV_PACK_MARGIN,
+    uv_pack_scale=True,
+    uv_unwrap_method="CONFORMAL",
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
@@ -2012,6 +2025,8 @@ def load_step(
         "uv_pack": uv_pack,
         "uv_pack_tiles": uv_pack_tiles,
         "uv_pack_margin": uv_pack_margin,
+        "uv_pack_scale": uv_pack_scale,
+        "uv_unwrap_method": uv_unwrap_method,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -2317,18 +2332,21 @@ def load_step(
     if tris_to_quads:
         _tris_to_quads_objects(created_names.values())
 
+    # A pack that rescales islands would undo a real-world scale pass, so
+    # that pass only runs when the scale is going to survive.
+    packing = uv_pack not in (None, "NONE")
+    rescales = packing and (uv_pack_scale or uv_pack == "UDIM")
     if _uv_options.get("unwrap"):
-        # Packing rescales every island, so a real-world scale pass before
-        # it would only be undone. Skip it and let the packer decide.
         _unwrap_uv_objects(
             created_names.values(),
             world_scale=(None if (_uv_options.get("normalize", True)
-                                  or uv_pack not in (None, "NONE"))
-                         else _uv_options["unit_scale"]))
+                                  or rescales)
+                         else _uv_options["unit_scale"]),
+            method=uv_unwrap_method)
 
-    if uv_pack not in (None, "NONE"):
+    if packing:
         _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
-                         uv_pack_margin)
+                         uv_pack_margin, uv_pack_scale)
 
     # remove all temporary links
     for tobj in created_objs:
@@ -2847,6 +2865,33 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         max=100,
     )
 
+    uv_unwrap_method: bpy.props.EnumProperty(
+        items=[
+            ("CONFORMAL", "Conformal",
+             "Keeps angles. Blender's own default, and the steadiest on the "
+             "long curved faces of a CAD part", 0),
+            ("ANGLE_BASED", "Angle Based",
+             "Spreads the error over the whole island. Good on organic "
+             "shapes, and it can fold a long cylinder on to itself", 1),
+            ("MINIMUM_STRETCH", "Minimum Stretch",
+             "Works to even out the stretch. The slowest of the three", 2),
+        ],
+        name="Unwrap method",
+        description="How the Unwrap UV mode flattens each island",
+        default="CONFORMAL",
+    )
+
+    uv_pack_scale: bpy.props.BoolProperty(
+        name="Scale islands to fit",
+        description="Let the packer resize the islands so they fill the "
+                    "tile. Turn it off to keep every island the size it "
+                    "already is, which is how a real world UV scale survives "
+                    "the pack. The packed result can then be bigger than one "
+                    "tile. UDIM tiles always scale, because their grid is "
+                    "fixed",
+        default=True,
+    )
+
     uv_pack_margin: bpy.props.FloatProperty(
         name="Pack margin",
         description="Space left around each UV island, as a fraction of the "
@@ -2960,6 +3005,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_pack": self.uv_pack,
             "uv_pack_tiles": self.uv_pack_tiles,
             "uv_pack_margin": self.uv_pack_margin,
+            "uv_pack_scale": self.uv_pack_scale,
+            "uv_unwrap_method": self.uv_unwrap_method,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -3038,6 +3085,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_pack=self.uv_pack,
                 uv_pack_tiles=self.uv_pack_tiles,
                 uv_pack_margin=self.uv_pack_margin,
+                uv_pack_scale=self.uv_pack_scale,
+                uv_unwrap_method=self.uv_unwrap_method,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,

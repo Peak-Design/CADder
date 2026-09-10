@@ -186,9 +186,17 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 | Mode | Description |
 |------|-------------|
 | **CAD Surface** | One island per CAD face, taken from the parametric surface coordinates. Fast, and the default. |
-| **Unwrap** | Blender's angle-based unwrap with packed islands. Sharp CAD edges act as seams. Slower on large assemblies. |
+| **Unwrap** | Blender's unwrap with packed islands. Sharp CAD edges act as seams. Slower on large assemblies. |
 | **Box Project** | Triplanar projection with a world-unit tile size. |
 | **None** | No UV layer. |
+
+**Unwrap method** chooses how the Unwrap mode flattens each island.
+Conformal is the default and keeps angles. Angle Based spreads the error
+over the whole island, which suits organic shapes but can fold a long
+cylinder on to itself. Minimum Stretch works to even out the stretch and is
+the slowest. Measured on a 182 part assembly, by share of surface area
+stretched more than twice as far one way as the other: Conformal 0%, Angle
+Based 6%, Minimum Stretch 54%.
 
 **Normalize UVs** is off by default. When it is on, the addon fits the UVs to the 0-1 square. When it is off, the addon scales the UVs to real world scene units instead. The islands stay packed and the addon rescales them together. One shared material then shows its texture at the same physical size on every part. This is what most CAD work needs.
 
@@ -224,8 +232,12 @@ down as more parts share a tile. Without that correction the default margin
 fills only 6 percent of the tile on a 300 part import, against 80 percent
 with it. Raise the margin if a bake bleeds between islands.
 
-Packing scales the islands to fill the tile, so it replaces the real world UV
-scale. The two cannot both be true at once.
+**Scale islands to fit** is on by default and lets the packer resize the
+islands so they fill the tile. Turn it off to keep every island the size it
+already is: the packer then only arranges them, and a real world UV scale
+survives the pack. The packed result can be larger than one tile. UDIM tiles
+always scale, because their grid is fixed and an island that overruns one
+tile lands in the next.
 
 ### Tris to Quads
 

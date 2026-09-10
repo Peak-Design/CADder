@@ -212,13 +212,66 @@ for want in (2, 3):
     check(thin > 0.3, "every tile is filled (emptiest %.0f%%)"
           % (100.0 * thin))
 
+# ---- keeping the island scale --------------------------------------------
+# Packing does not have to resize anything. With "Scale islands to fit" off
+# the packer only arranges them, so a real world UV scale survives it. This
+# is the reason the option exists.
+print("\n== packing can keep the island scale")
+
+
+def texel_ratio(objs):
+    """Median UV length for one unit of 3D length, over every triangle."""
+    out = []
+    for o in objs:
+        me = o.data
+        uv = loop_uvs(me)
+        co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        vidx = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("vertex_index", vidx)
+        for poly in me.polygons:
+            idx = list(poly.loop_indices)
+            for k in range(len(idx)):
+                a, b = idx[k], idx[(k + 1) % len(idx)]
+                d3 = np.linalg.norm(co[vidx[a]] - co[vidx[b]])
+                d2 = np.linalg.norm(uv[a] - uv[b])
+                if d3 > 1e-9 and d2 > 1e-12:
+                    out.append(d2 / d3)
+    return float(np.median(out)) if out else 0.0
+
+
+loose = texel_ratio(load(uv_pack="NONE", uv_normalize=False))
+# Measure everything about this import before the next load, which resets
+# the file and leaves the objects dead.
+kept = load(uv_pack="ALL", uv_pack_scale=False, uv_normalize=False)
+kept_ratio = texel_ratio(kept)
+kept_tris = triangles(kept)
+lo, hi = np.array([1e30, 1e30]), np.array([-1e30, -1e30])
+for tri in kept_tris:
+    lo = np.minimum(lo, tri.min(axis=0))
+    hi = np.maximum(hi, tri.max(axis=0))
+_used, kept_over = coverage(kept_tris, (lo, hi), grid=384)
+fitted = texel_ratio(load(uv_pack="ALL", uv_pack_scale=True,
+                          uv_normalize=False))
+check(abs(kept_ratio - loose) <= loose * 0.02,
+      "with scaling off the texel size is unchanged (%.5g against %.5g)"
+      % (kept_ratio, loose))
+check(abs(fitted - loose) > loose * 0.05,
+      "with scaling on the packer does resize the islands (%.5g against "
+      "%.5g)" % (fitted, loose))
+check(kept_over < 0.01,
+      "and the islands still do not sit on each other (%.2f%%)"
+      % (100.0 * kept_over))
+
 # ---- the setting reaches a refresh ---------------------------------------
 print("\n== a refresh reproduces it")
 objs = load(uv_pack="UDIM", uv_pack_tiles=3)
 rec = str(objs[0].get("STEP_import_settings")
           or objs[0].get("import_record_json") or "")
-check("uv_pack" in rec and "uv_pack_tiles" in rec,
-      "both settings are stamped on the object")
+check(all(k in rec for k in ("uv_pack", "uv_pack_tiles", "uv_pack_margin",
+                            "uv_pack_scale", "uv_unwrap_method")),
+      "every packing setting is stamped on the object")
 
 if FAILS:
     print("\nuv_pack_smoke: FAILED (%d)\n  %s"

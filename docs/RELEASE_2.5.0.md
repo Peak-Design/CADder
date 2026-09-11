@@ -22,7 +22,7 @@ leaves some stretch behind.
 | **Pack margin** | The space around each island. Raise it if a bake bleeds | none |
 | **Unwrap method** | Conformal (new default), Angle Based or Minimum Stretch | none |
 | **Closed surfaces** | Where a cylinder or torus closes on itself: None, Single seam (new default) or Split faces. Replaces "Split Closed Faces" | none |
-| **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart does the same but leaves the thin plate edges as separate faces | +25% to +50% |
+| **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart joins faces one at a time and keeps only the joins that do not overlap and still fit the UV tile, so a rounded block no longer lands on itself | +30% |
 
 ## UV fixes
 

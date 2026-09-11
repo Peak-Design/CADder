@@ -77,6 +77,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         done = 0
         failed = []
         unwrap_objs = []
+        smart_objs = []
+        smart_pack = ("NONE", 4)
+        all_objs = []
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
@@ -181,8 +184,21 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     })
                 if m._uv_options["unwrap"]:
                     unwrap_objs.append(obj)
+                # Merge tangent, as the object was imported. Smart runs
+                # before the unwrap, All after it on CAD Surface parts.
+                merge = stored.get("uv_merge_tangent", "NONE")
+                if uv_mode in ("SURFACE", "UNWRAP") and merge == "SMART":
+                    smart_objs.append(obj)
+                    smart_pack = (stored.get("uv_pack", "NONE"),
+                                  stored.get("uv_pack_tiles", 4))
+                elif uv_mode == "SURFACE" and merge == "ALL":
+                    all_objs.append((obj, stored.get("uv_unwrap_method",
+                                                     "CONFORMAL")))
                 done += 1
                 wm.progress_update(done)
+
+        if smart_objs:
+            m._smart_merge_objects(smart_objs, *smart_pack)
 
         if unwrap_objs:
             # Regenerated meshes are already scaled to scene units, so
@@ -191,6 +207,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 unwrap_objs,
                 world_scale=(None if m._uv_options.get("normalize", True)
                              else 1.0))
+
+        for obj, method in all_objs:
+            m._flatten_merged_objects([obj], method=method)
 
         wm.progress_end()
 
@@ -530,9 +549,6 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             rec = {}
         if rec.get("tris_to_quads") and want["uv_mode"] != "BOX":
             m._tris_to_quads_objects(targets)
-        if want["uv_mode"] == "SURFACE" and want["uv_merge_tangent"] != "NONE":
-            m._flatten_merged_objects(targets,
-                                      method=want["uv_unwrap_method"])
         if want["uv_pack"] != "NONE":
             m._pack_uv_objects(targets, want["uv_pack"],
                                want["uv_pack_tiles"], want["uv_pack_margin"],

@@ -143,8 +143,9 @@
 #     part is a plate, a bend and another plate, and none of those
 #     boundaries is sharp, so the run is one continuous surface that a
 #     press brake flattens into one rectangle. All joins such a run into
-#     one island, Smart does the same but leaves a long thin run alone,
-#     such as the edge of a plate
+#     one island. Smart builds the islands one face at a time, the way a
+#     paper model is cut out, and keeps a join only if the island does not
+#     land on itself and still fits the UV tile (uv.smart_merge)
 #   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
 #     selected parts again with the same settings as the import dialog, so
 #     one part can get a treatment its neighbour does not. It replaces the

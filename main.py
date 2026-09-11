@@ -684,6 +684,8 @@ UV_UNWRAP_ITEMS = [
      "Works to even out the stretch. The slowest of the three", 2),
 ]
 
+# Merge tangent Smart builds a net and cuts where the net needs it, so it
+# overrides this setting, and the dialog shows it inactive under Smart.
 UV_CLOSED_ITEMS = [
     ("NONE", "None",
      "Leave closed surfaces alone. An unwrap cannot flatten them and "
@@ -704,8 +706,8 @@ UV_MERGE_ITEMS = [
      "Join every run of tangent faces into one island. A bent sheet "
      "metal part comes out as one flat pattern", 1),
     ("SMART", "Smart",
-     "Join tangent faces, but leave a long thin run as separate "
-     "faces. The edge of a plate then packs at full density", 2),
+     "Join tangent faces one at a time, largest first, and keep only "
+     "the joins that do not overlap and still fit the UV tile", 2),
 ]
 
 UV_PACK_ITEMS = [
@@ -1213,6 +1215,51 @@ def _flatten_merged_objects(objs, method="CONFORMAL"):
                 pass
 
 
+def _smart_merge_objects(objs, pack="NONE", tiles=4):
+    """Grow the Smart UV islands on every unique mesh.
+
+    The tile an island has to fit comes from Pack UVs. One tile for each
+    part, or no packing, gives every part its own. All parts together puts
+    the whole import in one tile, so an island may be far longer before it
+    stops fitting, and UDIM shares the import over the tiles asked for.
+    """
+    targets = []
+    seen = set()
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        targets.append(o)
+    if not targets:
+        return
+    side = None
+    if pack in ("ALL", "UDIM"):
+        total = 0.0
+        for o in targets:
+            a = np.empty(len(o.data.polygons), dtype=np.float64)
+            o.data.polygons.foreach_get("area", a)
+            total += float(a.sum())
+        if pack == "UDIM":
+            total /= max(1, int(tiles))
+        side = math.sqrt(total / uv_mod.SMART_FILL)
+    t0 = time.time()
+    charts = islands = 0
+    for o in targets:
+        try:
+            c, n = uv_mod.smart_merge(o.data, side_3d=side)
+        except Exception as e:
+            print(f"UV smart merge failed on {o.name}: {e}")
+            continue
+        charts += c
+        islands += n
+    print("UV smart merge: %d tangent chart(s) into %d island(s) on %d "
+          "mesh(es) in %.2fs" % (charts, islands, len(targets),
+                                 time.time() - t0))
+
+
 def _scale_unwrap_to_world(me, world_scale):
     """Rescale the packed unwrapped 'UVMap' so 1 UV unit ~= 1 scene unit.
 
@@ -1383,21 +1430,6 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
-# Above this ratio between its length and its width, a merged island is
-# too skinny to be worth merging. The edge of a sheet metal plate is the
-# case this exists for: it is one long tangent strip a couple of millimeters
-# wide, and it packs far better as the separate faces it came from.
-MERGE_MAX_ASPECT = 8.0
-
-# A long region is only a strip when it is also narrow against the part it
-# belongs to. On real sheet metal the edge strips are one sheet thickness
-# wide, 10 or 16 mm, and the flat patterns are 800 mm and more. Their
-# ratios overlap: a long flat pattern reached 12.7 to 1, which the ratio
-# alone called a strip. Width does not overlap, so a strip also has to be
-# narrower than this share of the widest region of the part.
-MERGE_STRIP_WIDTH = 0.25
-
-
 def _region_labels(a, b, n):
     """Connected components over the triangle pairs (a, b).
 
@@ -1452,48 +1484,6 @@ def _boundary_loops(labels, face_of, he0, he1, open_he, va, vb, max_v,
     comp = _region_labels(inv[:k], inv[k:], len(nodes))[inv[:k]]
     _ids, loop_of = np.unique(comp, return_inverse=True)
     return hes, reg, loop_of
-
-
-def _skinny_regions(labels, area, perim, n):
-    """Which regions are too long and thin to merge.
-
-    Area and perimeter both survive the flattening of a developable surface,
-    so a bent strip can be measured before anything is unwrapped. For a
-    rectangle L by W the two are L*W and 2(L+W), which gives L and W as the
-    roots of x^2 - (P/2)x + A. Other shapes are not rectangles, but the
-    answer stays close enough to tell a plate from a strip.
-
-    `perim` is the length of the outline of each region, by region id. The
-    holes are not part of it. A plate with fifty holes has fifty extra
-    loops of boundary, and counting them made every such plate read as a
-    long thin strip.
-
-    A region is a strip when it is both long, over MERGE_MAX_ASPECT, and
-    narrow against the widest region of the same part. The ratio alone
-    cannot do it: a long flat pattern can be as elongated as a short edge.
-    """
-    a = np.bincount(labels, weights=area, minlength=n)
-    p = perim
-    half = p * 0.5
-    disc = half * half - 4.0 * a
-    out = np.zeros(n, dtype=bool)
-    ok = (disc > 0) & (a > 1e-12)
-    if not ok.any():
-        return out
-    root = np.sqrt(disc[ok])
-    long_side = (half[ok] + root) * 0.5
-    short_side = (half[ok] - root) * 0.5
-    ratio = long_side / np.maximum(short_side, 1e-12)
-    # The mean width of a region: area over half the outline. On a strip it
-    # is the strip width exactly, bends and all. On a plate with a ragged
-    # outline it reads low, but it stays far above one sheet thickness.
-    has = p > 1e-12
-    width = np.zeros(n, dtype=np.float64)
-    width[has] = 2.0 * a[has] / p[has]
-    widest = float(width.max()) if has.any() else 0.0
-    narrow = width[ok] < MERGE_STRIP_WIDTH * widest
-    out[np.where(ok)[0]] = (ratio > MERGE_MAX_ASPECT) & narrow
-    return out
 
 
 # A boundary loop wraps round the part when the surface normal turns
@@ -1703,44 +1693,12 @@ def _compute_edge_attributes(mesh):
     sharp_keys = int_edge_keys[discontinuous]
     seam_keys = sharp_keys  # seams only where normals actually split
 
-    # --- Tangent faces: one island, or one for each CAD face ---------------
-    # A sheet metal part is a plate, a bend, another plate. The faces meet
-    # smoothly, so none of those boundaries is sharp and the whole run stays
-    # one region. Merging it gives the flat pattern a press brake would
-    # make.
-    #
-    # Only Smart changes the seams. None leaves them where the sharp edges
-    # put them, which is what both UV modes already did. Cutting every CAD
-    # face boundary here would also undo the Closed surfaces setting: a hole
-    # made of two half cylinders can only stay in one island while the
-    # boundary between its halves carries no seam.
-    merge_mode = _uv_options.get("merge_tangent", "NONE")
-    if merge_mode == "SMART" and cross_batch.any():
-        smooth_pair = ~np.isin(int_edge_keys, seam_keys)
-        labels = _region_labels(face_of[he0][smooth_pair],
-                                face_of[he1][smooth_pair], T)
-        e0 = verts[faces[:, 0]].astype(np.float64)
-        e1 = verts[faces[:, 1]].astype(np.float64)
-        e2 = verts[faces[:, 2]].astype(np.float64)
-        tri_area = 0.5 * np.linalg.norm(np.cross(e1 - e0, e2 - e0), axis=1)
-        # The outline of a region is its longest boundary loop. The other
-        # loops are holes, and a hole does not make a plate any thinner.
-        he_len = np.linalg.norm(
-            (verts[va] - verts[vb]).astype(np.float64), axis=1)
-        open_he = order[group_starts[np.where(counts == 1)[0]]]
-        hes, reg, lid = _boundary_loops(labels, face_of, he0, he1, open_he,
-                                        va, vb, max_v)
-        perim = np.zeros(T, dtype=np.float64)
-        if len(hes):
-            loop_len = np.bincount(lid, weights=he_len[hes])
-            loop_reg = np.zeros(len(loop_len), dtype=np.int64)
-            loop_reg[lid] = reg
-            np.maximum.at(perim, loop_reg, loop_len)
-        skinny = _skinny_regions(labels, tri_area, perim, T)
-        extra = int_edge_keys[cross_batch & skinny[labels[face_of[he0]]]]
-        if len(extra):
-            seam_keys = np.unique(np.concatenate([seam_keys, extra]))
-
+    # Merge tangent does not change the seams here. None and All leave them
+    # where the sharp edges put them, and Smart decides its own later, once
+    # the mesh exists and its charts can be laid out. Cutting every CAD face
+    # boundary here would also undo Closed surfaces: a hole made of two half
+    # cylinders can only stay in one island while the boundary between its
+    # halves carries no seam.
     # --- Parametric closure seams (closed cylinders/cones/tori/splines) ---
     # A closed face has NO sharp edge along its parametric seam, so unwrap
     # has nowhere to cut and produces a degenerate result. Detection: OCC
@@ -2920,6 +2878,10 @@ def load_step(
     packing = uv_pack not in (None, "NONE")
     pack_scale = bool(uv_normalize)
     rescales = packing and (pack_scale or uv_pack == "UDIM")
+    # Smart lays the charts out as a net and puts the seams on its edges.
+    # In Unwrap mode those seams then decide what the unwrap flattens.
+    if uv_mode in ("SURFACE", "UNWRAP") and uv_merge_tangent == "SMART":
+        _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -2928,10 +2890,10 @@ def load_step(
                          else _uv_options["unit_scale"]),
             method=uv_unwrap_method)
 
-    # CAD Surface writes one chart for each surface. Where the user asked
-    # for tangent faces to merge, the regions that span more than one
-    # surface have to be flattened, because no parameter space covers two.
-    if uv_mode == "SURFACE" and uv_merge_tangent != "NONE":
+    # CAD Surface writes one chart for each surface. All flattens every
+    # region that spans more than one surface, because no parameter space
+    # covers two.
+    if uv_mode == "SURFACE" and uv_merge_tangent == "ALL":
         _flatten_merged_objects(created_names.values(),
                                 method=uv_unwrap_method)
 
@@ -4408,7 +4370,8 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
         sub.active = prg.uv_mode == "UNWRAP"
         sub.prop(prg, "uv_unwrap_method")
         sub = col.row()
-        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
+        sub.active = (prg.uv_mode in {"SURFACE", "UNWRAP"}
+                      and prg.uv_merge_tangent != "SMART")
         sub.prop(prg, "uv_closed_seams")
         sub = col.row()
         sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}

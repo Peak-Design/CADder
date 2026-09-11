@@ -218,7 +218,9 @@ def draw_import_dialog(op, layout, prefs):
         sub = body.row()
         sub.active = op.uv_mode == "UNWRAP"
         sub.prop(op, "uv_unwrap_method")
-        body.prop(op, "uv_closed_seams")
+        sub = body.row()
+        sub.active = op.uv_merge_tangent != "SMART"
+        sub.prop(op, "uv_closed_seams")
         sub = body.row()
         sub.active = op.uv_mode in {"SURFACE", "UNWRAP"}
         sub.prop(op, "uv_merge_tangent")

@@ -217,32 +217,64 @@ flattens into one rectangle.
 |---------|--------|
 | **None** | The layout each UV mode already makes. CAD Surface gives one island for each CAD face. This is the default and it packs the tightest |
 | **All** | Every run of tangent faces becomes one island. A bent plate comes out as its flat pattern |
-| **Smart** | The same, except a long thin run stays in separate faces |
+| **Smart** | Joins tangent faces one at a time and keeps each join only if the island does not overlap itself and still fits the UV tile |
+
+All flattens every tangent run in one piece. That is right for sheet metal,
+which is developable and unfolds flat. A block with rounded edges is tangent
+all the way round, and a closed surface flattened in one piece lands on
+itself.
+
+Smart builds each island the way a paper model is cut out. CAD Surface
+already gives each face a flat chart of its own. A plane chart is exact, and
+a cylinder chart is the surface rolled out, circumference by height. So a
+face joins the island without a solver: the addon turns its chart until the
+shared edge lies on the island. Smart starts from the largest face of the
+part and tries its tangent neighbours, largest first. A face joins only when
+all of these are true:
+
+- Its shared edge fits the island. A sphere or torus chart is only close to
+  its true shape, and a poor fit would bend the face to close the gap.
+- It does not land on the island.
+- The island still fits the UV tile.
+
+A face that fails waits for a later island. The next island starts from the
+largest face that is left, until no face is left.
+
+The tile comes from **Pack UVs**. With **None** or **Each part on its own**,
+the tile is the square the part packs into by itself. With **All parts
+together**, it is one tile for the whole import, so an island can grow much
+longer. **Into UDIM tiles** shares the import over the tiles you ask for. A
+tile is never smaller than the longest single face, because the addon never
+splits a CAD face.
+
+Smart makes its own cuts, so the **Closed surfaces** setting has no effect
+with it. The dialog shows that setting inactive when Smart is on.
 
 CAD Surface takes its UVs from the parametric coordinates of the surface,
-and two different surfaces have no common parameter space. A merged region
-is therefore flattened by an unwrap instead, and the addon then puts it back
-at the texel density of the rest of the part. A region that is one CAD face
-keeps its parametric UVs.
+and two different surfaces have no common parameter space. All therefore
+flattens a merged region with an unwrap, and then puts it back at the texel
+density of the rest of the part. Smart needs no unwrap: it only turns and
+moves charts, so the density does not change. In Unwrap mode, Smart puts
+the seams on the edges of its islands, and the unwrap flattens each one.
 
-Smart exists for the edge of a plate. That edge is one tangent run the full
-length of the profile and only as thick as the metal, so merging it gives a
-long thin island that wastes the tile. Smart measures the area and the
-outline of each region, which both survive flattening. It leaves a region
-in separate faces when it is longer than 8 to 1 and also narrower than a
-quarter of the widest region of the part. The second test matters: a long
-flat pattern can be as elongated as a short edge, but it is always the
-widest region of its part, and an edge is one sheet thickness wide.
+Measured results:
 
-Measured on a sheet metal part with about 4 square meters of surface: None
-gives 250 islands. All gives 71, and the inside and the outside each come
-out as one flat pattern of about half the surface. Smart gives 196, with the
-same two flat patterns and the edges back in separate faces.
+| Part | None | All | Smart |
+|------|------|-----|-------|
+| Block with rounded edges | 26 islands | 2 islands, one 85% on top of itself | 5 islands, none overlapping, the largest 92% of the surface |
+| Sheet metal part, 4 m² | 250 islands | 71 islands, two whole flat patterns | 92 islands, none overlapping |
+| Machined assembly, 182 parts, Unwrap mode | 2 islands on top of themselves, up to 98% | the same as None | none overlapping |
+
+On the sheet metal part, Smart cuts the flat patterns at a bend. They
+measure 3,338 by 977 mm, and the part packs into a 2,419 mm square on its
+own. Kept whole, they would force a 3,425 mm tile and fill at most 35
+percent of it. Cut, they give about twice the texel density. Set **Pack
+UVs** to **All parts together** to keep them whole, or use **All**.
 
 | Assembly | None | All | Smart |
 |----------|------|-----|-------|
-| Sheet metal skid, 1,113 parts | 6.4 s | 8.3 s (+29%) | 8.1 s (+26%) |
-| Machined assembly, 182 parts | 1.0 s | 1.5 s (+48%) | 1.7 s (+68%) |
+| Sheet metal skid, 1,113 parts | 5.1 s | 6.5 s (+27%) | 6.6 s (+30%) |
+| Machined assembly, 182 parts | 1.0 s | 1.3 s (+30%) | 1.3 s (+28%) |
 
 ### Pack UVs
 

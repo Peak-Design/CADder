@@ -147,11 +147,143 @@ def write_pipe(path):
     w.Write(path)
 
 
+def write_block(path):
+    """A block with every edge rounded: all tangent, and not developable.
+
+    The faces join smoothly all the way round, so All makes the whole block
+    one region, and a closed surface flattened in one piece lands on
+    itself. Smart has to stop before that.
+    """
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopoDS import TopoDS
+    from OCP.gp import gp_Pnt
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TDataStd import TDataStd_Name
+
+    box = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 100, 60, 40).Shape()
+    fil = BRepFilletAPI_MakeFillet(box)
+    ex = TopExp_Explorer(box, TopAbs_EDGE)
+    while ex.More():
+        fil.Add(8.0, TopoDS.Edge_s(ex.Current()))
+        ex.Next()
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    lab = tool.AddShape(fil.Shape(), False)
+    TDataStd_Name.Set_s(lab, TCollection_ExtendedString("rounded_block"))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
+STAIR_STEPS = 7
+STAIR_RUN = 80.0
+STAIR_WIDTH = 50.0
+STAIR_PROFILE = STAIR_STEPS * STAIR_RUN + (STAIR_STEPS - 1) * 5.0 * math.pi / 2
+
+
+def write_stair(path):
+    """A sheet bent into a staircase, next to a large plate.
+
+    The flat pattern of the stair is about 607 mm by 50 mm, longer than the
+    square the stair would pack into on its own, while each of its faces is
+    only 80 mm. So in a tile of its own the pattern has to be cut, and in a
+    tile shared with the plate there is room for it whole.
+    """
+    from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeEdge,
+                                    BRepBuilderAPI_MakeWire)
+    from OCP.GC import GC_MakeArcOfCircle
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeBox
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeThickSolid
+    from OCP.gp import gp_Pnt, gp_Vec
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TDataStd import TDataStd_Name
+
+    r = 5.0
+    s2 = math.sqrt(0.5)
+    mk = BRepBuilderAPI_MakeWire()
+    x = y = 0.0
+    for i in range(STAIR_STEPS):
+        along_x = i % 2 == 0
+        end = (x + STAIR_RUN, y) if along_x else (x, y + STAIR_RUN)
+        mk.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(x, y, 0),
+                                       gp_Pnt(end[0], end[1], 0)).Edge())
+        x, y = end
+        if i == STAIR_STEPS - 1:
+            break
+        if along_x:
+            # Left turn, from +x to +y, round a center above the path.
+            cx, cy = x, y + r
+            mid = (cx + r * s2, cy - r * s2)
+            nxt = (cx + r, cy)
+        else:
+            # Right turn, from +y to +x, round a center to the right.
+            cx, cy = x + r, y
+            mid = (cx - r * s2, cy + r * s2)
+            nxt = (cx, cy + r)
+        arc = GC_MakeArcOfCircle(gp_Pnt(x, y, 0), gp_Pnt(mid[0], mid[1], 0),
+                                 gp_Pnt(nxt[0], nxt[1], 0)).Value()
+        mk.Add(BRepBuilderAPI_MakeEdge(arc).Edge())
+        x, y = nxt
+    shell = BRepPrimAPI_MakePrism(mk.Wire(),
+                                  gp_Vec(0, 0, STAIR_WIDTH)).Shape()
+    thick = BRepOffsetAPI_MakeThickSolid()
+    thick.MakeThickSolidBySimple(shell, 2.0)
+    thick.Build()
+    plate = BRepPrimAPI_MakeBox(gp_Pnt(-1500, 0, 0), 1000, 1000, 10).Shape()
+
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    for shape, name in ((thick.Shape(), "stair"), (plate, "big_plate")):
+        lab = tool.AddShape(shape, False)
+        TDataStd_Name.Set_s(lab, TCollection_ExtendedString(name))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
 LONG_WIDTH = 1500.0
 LONG_STEP = os.path.join(tmp, "long_plate.step")
 write_step(LONG_STEP, LONG_WIDTH)
 PIPE_STEP = os.path.join(tmp, "pipe.step")
 write_pipe(PIPE_STEP)
+BLOCK_STEP = os.path.join(tmp, "rounded_block.step")
+write_block(BLOCK_STEP)
+STAIR_STEP = os.path.join(tmp, "stair.step")
+write_stair(STAIR_STEP)
+
+
+def overlap_share(tris, grid=256):
+    """Share of an island's UV area that two of its triangles both cover."""
+    if len(tris) < 2:
+        return 0.0
+    lo = tris.reshape(-1, 2).min(axis=0)
+    span = max(float((tris.reshape(-1, 2).max(axis=0) - lo).max()), 1e-12)
+    g = (tris - lo) / (span / grid)
+    count = np.zeros((grid + 2, grid + 2), dtype=np.int32)
+    for tri in g:
+        a = np.clip(np.floor(tri.min(axis=0)).astype(int), 0, grid + 1)
+        b = np.clip(np.ceil(tri.max(axis=0)).astype(int) + 1, 0, grid + 2)
+        if b[0] <= a[0] or b[1] <= a[1]:
+            continue
+        gx, gy = np.meshgrid(np.arange(a[0], b[0]) + 0.5,
+                             np.arange(a[1], b[1]) + 0.5)
+        (ax, ay), (bx, by), (cx, cy) = tri
+        det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(det) < 1e-12:
+            continue
+        l1 = ((by - cy) * (gx - cx) + (cx - bx) * (gy - cy)) / det
+        l2 = ((cy - ay) * (gx - cx) + (ax - cx) * (gy - cy)) / det
+        count[a[1]:b[1], a[0]:b[0]] += (l1 > 0) & (l2 > 0) & (l1 + l2 < 1)
+    return float((count > 1).sum()) / max(int((count > 0).sum()), 1)
 
 
 def load(step=None, **kw):
@@ -162,14 +294,19 @@ def load(step=None, **kw):
     opts = dict(htypes="FLAT", up_as="Z", tris_to_quads=False,
                 uv_normalize=False)
     opts.update(kw)
+    opts.pop("_only", None)
     m.load_step(bpy.context, step, **opts)
     bpy.context.view_layer.update()
     return [o for o in bpy.data.objects if o.type == "MESH" and o.data
-            and len(o.data.polygons) and len(o.data.uv_layers)]
+            and len(o.data.polygons) and len(o.data.uv_layers)
+            and o.name.startswith(kw.get("_only", ""))]
 
 
-def islands(objs):
-    """(world area in mm2, UV area in mm2) for each UV island."""
+def islands(objs, want_tris=False):
+    """(world area in mm2, UV area in mm2) for each UV island.
+
+    With want_tris, each row also carries the island's UV triangles.
+    """
     out = []
     for o in objs:
         sc = o.matrix_world.to_scale()
@@ -204,15 +341,20 @@ def islands(objs):
                                 break
             a3 = sum(f.calc_area() for f in group) * lin * lin
             a2 = 0.0
+            tris = []
             for f in group:
                 q = [lp[uvl].uv for lp in f.loops]
                 for k in range(1, len(q) - 1):
                     p, s, r = q[0], q[k], q[k + 1]
                     a2 += 0.5 * abs((s.x - p.x) * (r.y - p.y)
                                     - (r.x - p.x) * (s.y - p.y))
+                    tris.append(((p.x, p.y), (s.x, s.y), (r.x, r.y)))
             # The meshes arrive in scene units. Report both in mm2 so the
             # numbers can be read against the fixture.
-            out.append((a3 * 1e6, a2 * 1e6))
+            row = (a3 * 1e6, a2 * 1e6)
+            if want_tris:
+                row += (np.array(tris, dtype=np.float64),)
+            out.append(row)
         bm.free()
     return out
 
@@ -248,21 +390,18 @@ if big:
     check(worst < 0.02,
           "and each holds its surface area within %.1f%%" % (100.0 * worst))
 
-# ---- Smart keeps the plate and drops the strip ---------------------------
-# The edge of the plate is one tangent run 113 mm long and 2 mm thick.
-# Merging it makes an island 56 times longer than it is wide, which wastes
-# the tile. Smart leaves that one in separate faces.
-print("\n== Smart merges the plate but not its edge")
+# ---- Smart on the bent plate ---------------------------------------------
+# Nothing on this plate overlaps and everything fits its tile, so Smart has
+# no reason to cut anything that All joins. It used to cut the thin edge on
+# a length to width rule, even where the tile had room for it.
+print("\n== Smart merges what fits")
 surf_smart = islands(load(uv_mode="SURFACE", uv_merge_tangent="SMART"))
 big = [a3 for a3, _a2 in surf_smart if a3 > FLAT_AREA * 0.8]
 check(len(big) == 2,
-      "the plate faces are still merged (%d found)" % len(big))
-check(len(surf_smart) > len(surf_all),
-      "the thin edge is not (%d islands against %d for All)"
+      "the plate faces are merged (%d found)" % len(big))
+check(len(surf_smart) == len(surf_all),
+      "and so is the thin edge, which fits (%d islands against %d for All)"
       % (len(surf_smart), len(surf_all)))
-check(len(surf_smart) < len(surf_none),
-      "and it still beats None (%d against %d)"
-      % (len(surf_smart), len(surf_none)))
 
 # ---- the density survives the flattening ---------------------------------
 # The flattened islands are packed into 0-1 by the unwrap, which has nothing
@@ -277,9 +416,9 @@ for label, rows in (("All", surf_all), ("Smart", surf_smart)):
           % (label, spread))
 
 # ---- Smart keeps a long flat pattern --------------------------------------
-# A plate 1500 mm wide flattens to about 113 by 1500 mm, which is 13 to 1.
-# That is longer than the strip limit, and a ratio alone called it a strip.
-# It is also the widest region of its part, which a strip never is.
+# A plate 1500 mm wide flattens to about 113 by 1500 mm. Each leg is one CAD
+# face 1500 mm long, and a CAD face is never split, so the tile can never be
+# smaller than that. The whole pattern then fits it.
 print("\n== Smart keeps a long flat pattern whole")
 long_area = PROFILE * LONG_WIDTH
 rows = islands(load(LONG_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART"))
@@ -389,6 +528,100 @@ for label, kw in (("Unwrap", dict(uv_mode="UNWRAP")),
     check(share < 0.02 and n == 0,
           "%s: %.1f%% of the surface stretched over 5x, %d folded"
           % (label, 100.0 * share, n))
+
+# ---- Smart does not melt a rounded block ---------------------------------
+# A rounded block is tangent all the way round. All makes it one region and
+# flattens it, and a closed surface in one piece has to land on itself.
+# Smart builds a net one face at a time, the way a paper model is cut, and a
+# net never needs the closed surface in one piece.
+print("\n== Smart does not melt a rounded block")
+worst_all = max(overlap_share(r[2]) for r in
+                islands(load(BLOCK_STEP, uv_mode="SURFACE",
+                             uv_merge_tangent="ALL"), want_tris=True))
+check(worst_all > 0.10,
+      "All overlaps the block on itself (%.0f%% of an island), so the test "
+      "has something to catch" % (100.0 * worst_all))
+rows = islands(load(BLOCK_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART"),
+               want_tris=True)
+worst = max(overlap_share(r[2]) for r in rows)
+check(worst < 0.01, "Smart leaves no island on itself (worst %.1f%%)"
+      % (100.0 * worst))
+n_none = len(islands(load(BLOCK_STEP, uv_mode="SURFACE",
+                          uv_merge_tangent="NONE")))
+total = sum(r[0] for r in rows)
+check(len(rows) < n_none and max(r[0] for r in rows) > 0.8 * total,
+      "and it still joins most of it (%d islands against %d, the largest "
+      "%.0f%% of the surface)"
+      % (len(rows), n_none, 100.0 * max(r[0] for r in rows) / total))
+
+# ---- Smart refuses a join that overlaps -----------------------------------
+# Five squares round one corner add up to 450 degrees. Laid flat one after
+# another they go round once and the fifth lands on the first, whatever
+# order they come in. This is built as a mesh on purpose, with nothing
+# sharp, so the overlap test is the only thing that can stop it.
+print("\n== Smart refuses a join that lands on the island")
+from STEPper_NEXT import uv as uv_mod
+
+
+def saddle():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    n = 5
+    verts = [(0.0, 0.0, 0.0)]
+    for i in range(n):
+        a = 2.0 * math.pi * i / n
+        verts.append((math.cos(a), math.sin(a), 0.0))
+    for i in range(n):
+        a = 2.0 * math.pi * (i + 0.5) / n
+        z = 0.5 if i % 2 == 0 else -0.5
+        verts.append((1.4 * math.cos(a), 1.4 * math.sin(a), z))
+    faces = [(0, 1 + i, 1 + n + i, 1 + (i + 1) % n) for i in range(n)]
+    me = bpy.data.meshes.new("saddle")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    layer = me.uv_layers.new(name="UVMap")
+    # Every square gets the same unit square, so each is a chart of its
+    # own: the corner they share is (0, 0) in all of them, but the far end
+    # of each shared edge is (0, 1) on one side and (1, 0) on the other.
+    square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    uvs = [c for _ in range(n) for c in square]
+    layer.uv.foreach_set("vector", [x for c in uvs for x in c])
+    return me
+
+
+me = saddle()
+charts, made = uv_mod.smart_merge(me)
+uv = np.empty(len(me.loops) * 2, dtype=np.float64)
+me.uv_layers.active.uv.foreach_get("vector", uv)
+uv = uv.reshape(-1, 2)
+obj = bpy.data.objects.new("saddle", me)
+bpy.context.scene.collection.objects.link(obj)
+bpy.context.view_layer.update()
+rows = islands([obj], want_tris=True)
+worst = max(overlap_share(r[2]) for r in rows)
+check(charts == 5 and len(rows) == 2,
+      "the five squares make two islands, not one (%d)" % len(rows))
+check(worst < 0.01,
+      "and neither lands on itself (worst %.1f%%)" % (100.0 * worst))
+
+# ---- Smart trims only what does not fit the tile -------------------------
+# The stair's flat pattern is longer than the square the stair packs into
+# on its own. Packed per part, it has to be cut. Packed together with a
+# large plate the tile is far bigger, and the same pattern stays whole.
+print("\n== Smart trims a pattern only when it does not fit")
+stair_flat = STAIR_PROFILE * STAIR_WIDTH
+alone = islands(load(STAIR_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART",
+                     uv_pack="OBJECT", _only="stair"))
+shared = islands(load(STAIR_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART",
+                      uv_pack="ALL", _only="stair"))
+biggest_alone = max(a3 for a3, _a2 in alone)
+whole_shared = [a3 for a3, _a2 in shared if a3 > 0.85 * stair_flat]
+check(biggest_alone < 0.8 * stair_flat,
+      "in a tile of its own the %.0f mm pattern is cut (largest piece %.0f "
+      "of %.0f mm2)" % (STAIR_PROFILE, biggest_alone, stair_flat))
+check(len(whole_shared) == 2,
+      "in a tile shared with the plate both sides stay whole (%d found)"
+      % len(whole_shared))
 
 # ---- a refresh reproduces it ---------------------------------------------
 print("\n== the setting is stamped on the object")

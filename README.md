@@ -187,7 +187,7 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 |------|-------------|
 | **None** | No UV layer. |
 | **CAD Surfaces** | One island per CAD face, taken from the parametric surface coordinates. The fastest mode, and the default. |
-| **CAD Surfaces (Smart)** | Joins CAD faces that meet smoothly into larger islands, and bends a face to fit where it has to. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands. See below. |
+| **CAD Surfaces (Smart)** | Joins CAD faces that meet smoothly into larger islands, bends a face to fit where it has to, and cuts an island where its pieces pack better. It can join across sharp edges too. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands. See below. |
 | **Unwrap (Conformal)** | Blender's unwrap with packed islands. Sharp CAD edges act as seams. Keeps the angles. |
 | **Unwrap (Angle Based)** | The same unwrap with the angle based method. It can fold a long cylinder on to itself. |
 | **Unwrap (Minimum Stretch)** | The same unwrap with the minimum stretch method. The slowest mode. |
@@ -252,6 +252,23 @@ island, because that edge can fit better. A face that never fits waits for
 a later island. The next island starts from the largest face that is left,
 until no face is left.
 
+**Join sharp edges** runs a second pass after the smooth one. It joins the
+islands of the first pass across sharp edges, with the same tests. A join
+across a fold is the same turn as a join across a smooth edge, because each
+chart is flat already. A gearbox or a machined part has faces with sharp
+edges all round, so without this option most of them stay islands of their
+own. The option is off by default, because it adds about 25 percent to a
+large import and does not always pack tighter.
+
+Last, Smart cuts an island that has grown into an awkward shape. Every
+island is a tree of faces, joined one at a time, so it can be cut along any
+join, and each piece keeps its layout. A net shaped like a V, or with a long
+arm out at an angle, leaves most of the rectangle round it empty. Smart
+tries each join and makes the cut that makes the rectangles of the pieces
+smallest, if that saves at least 10 percent. The margin the packer leaves
+round each island counts too, so Smart does not cut off small pieces. Then
+it tries the pieces again.
+
 The tile comes from **Pack UVs**. With **None** or **Each part on its own**,
 the tile is the square the part packs into by itself. With **All parts
 together**, it is one tile for the whole import, so an island can grow much
@@ -263,16 +280,25 @@ Smart makes its own cuts, so the **Closed surfaces** setting does not apply
 to it. A turn does not change the texel density, and a bend changes it only
 within the limit.
 
-Measured results, with no island overlapping itself in any of them:
+Measured results, with no island overlapping itself in any of them.
+Coverage is the share of the UV tile the islands fill after Blender packs
+each part into its own tile, so higher is better texel density:
 
-| Part | CAD Surfaces | CAD Surfaces (Smart) |
-|------|--------------|----------------------|
-| Cylinder 60 mm across, both rims rounded | 5 islands | 3: the wall with both rims, and the two caps |
-| The same with a 30 mm bore | 6 islands | 2: the outside, and the bore |
-| Plate and boss, rounded all round, with a bore | 31 islands | 3 |
-| Block with rounded edges | 26 islands | 2, the largest 94% of the surface |
-| Sheet metal part, 4 m² | 250 islands | 92 |
-| Gear motor, 10 parts | 2,282 islands | 1,887. Most of its faces have sharp edges all round |
+| Part | CAD Surfaces | Smart | Smart, Join sharp edges |
+|------|--------------|-------|-------------------------|
+| Cylinder 60 mm across, both rims rounded | 5 islands, 56% | 3 islands, 57% | 3 islands, 57% |
+| The same with a 30 mm bore | 6 islands, 73% | 2 islands, 79% | 2 islands, 79% |
+| Plate and boss, rounded all round, with a bore | 31 islands, 58% | 3 islands, 86% | 3 islands, 86% |
+| Block with rounded edges | 26 islands, 88% | 4 islands, 75% | 4 islands, 75% |
+| Hydraulic part | 138 islands, 58% | 122 islands, 59% | 30 islands, 62% |
+| Buoyancy module | 171 islands, 70% | 56 islands, 72% | 40 islands, 72% |
+| Gear motor, 10 parts | 2,282 islands, 43% | 1,899 islands, 43% | 507 islands, 51% |
+| Machined assembly, 182 parts | 440 islands, 57% | 340 islands, 57% | 151 islands, 53% |
+| Sheet metal skid, 1,113 parts | 3,032 islands, 51% | 1,428 islands, 51% | 692 islands, 51% |
+
+Small flat faces pack very tightly on their own. That is why CAD Surfaces
+fills the tile best on the block with rounded edges, which is 26 plain
+faces, while Smart gives four clean islands.
 
 On the sheet metal part, Smart cuts the flat patterns at a bend. They
 measure 3,338 by 977 mm, and the part packs into a 2,419 mm square on its
@@ -280,8 +306,9 @@ own. Kept whole, they would force a 3,425 mm tile and fill at most 35
 percent of it. Cut, they give about twice the texel density. Set **Pack
 UVs** to **All parts together** to keep them whole.
 
-Smart adds its own pass to the import: about 35% on a sheet metal skid of
-1,113 parts, and about 40% on a machined assembly of 182 parts.
+Smart adds its own pass to the import: about 35% on the sheet metal skid,
+and about 40% on the machined assembly. Join sharp edges adds about 25% more
+on the skid.
 
 ### Pack UVs
 

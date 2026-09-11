@@ -139,13 +139,29 @@ SMART_FILL = 0.7
 # each other, which this resolves many times over. Finer only costs time.
 SMART_CELLS = 60000
 
+# The same test inside one island is never coarser than this many cells
+# across its first chart. Growth goes largest first, so every chart that
+# joins is smaller than the first one. An island of small faces, such as
+# the head of a bolt, would otherwise be tested on cells larger than its
+# faces, and faces smaller than a cell cover no cell at all.
+SMART_SEED_CELLS = 2000
+
+# A chart that covers fewer cells than this is tested again on a grid of
+# its own, SMART_SEED_CELLS across it, against the part of the island round
+# it. A small face joining a large island covers only a cell or two of the
+# island's grid, and the test cannot see where in those cells it lands.
+SMART_FINE_KEYS = 200
+
 # How badly a shared edge may fit before the face is bent instead of only
 # turned, as a share of the edge length. A plane and a cylinder fit exactly.
 SMART_MAX_MISFIT = 0.02
 
 # How much of a face may land on the island before the join counts as an
 # overlap, as a share of the face. A little is allowed for the grid itself,
-# which is coarse where two faces meet.
+# which is coarse where two faces meet. The grid is only off along the
+# shared edge, so the allowance is never more than one cell for each cell
+# of edge length either. A whole island joined across a sharp edge would
+# otherwise be allowed to land on the other by 2% of its area.
 SMART_MAX_OVERLAP = 0.02
 
 # How far apart two islands are set. The net turns charts into new places,
@@ -173,6 +189,16 @@ SMART_STRETCH_CAP = 10.0
 # fold, which a texture shows as a tear, so nearly none is allowed.
 SMART_MAX_FLIP = 0.002
 
+# When an island is cut in two because the pieces pack better. A cut has to
+# save this share of the rectangle round the whole island, counting the
+# margin the packer leaves round each piece. Below it the island stays
+# whole: fewer islands are worth a little packing space.
+SMART_SPLIT_GAIN = 0.10
+
+# The margin round every island, as a share of the side of the UV tile.
+# Blender leaves 0.005 of the tile on each side of an island.
+SMART_SPLIT_MARGIN = 0.01
+
 _KEY_OFF = 1 << 30
 
 
@@ -192,66 +218,67 @@ def _labels(a, b, n):
             return labels
 
 
+# Directions for the outline of an island, and for the rectangle round it.
+# The outline keeps the extreme point in each of 64 directions, and the
+# rectangle is the smallest of 45 turned ones. Both are within a fraction
+# of a percent of the exact answer, which the tests below never need, and
+# both are one numpy product instead of a loop over the points.
+_OUTLINE = np.stack([np.cos(np.arange(64) * (np.pi / 32.0)),
+                     np.sin(np.arange(64) * (np.pi / 32.0))], axis=1)
+_RECT_ANGLES = np.linspace(0.0, np.pi / 2.0, 46)[:-1]
+_RECT_DIRS = np.stack([np.cos(_RECT_ANGLES), np.sin(_RECT_ANGLES)], axis=1)
+_RECT_NORMS = np.stack([-np.sin(_RECT_ANGLES), np.cos(_RECT_ANGLES)], axis=1)
+
+
 def _hull(pts):
-    """Convex hull of 2D points, counter-clockwise (monotone chain)."""
-    pts = np.unique(np.asarray(pts, dtype=np.float64), axis=0)
-    if len(pts) < 3:
+    """The outline of 2D points: the extreme point in each direction."""
+    pts = np.asarray(pts, dtype=np.float64)
+    if len(pts) <= 3:
         return pts
-    p = [tuple(x) for x in pts]
-
-    def turn(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower = []
-    for q in p:
-        while len(lower) >= 2 and turn(lower[-2], lower[-1], q) <= 0:
-            lower.pop()
-        lower.append(q)
-    upper = []
-    for q in reversed(p):
-        while len(upper) >= 2 and turn(upper[-2], upper[-1], q) <= 0:
-            upper.pop()
-        upper.append(q)
-    return np.array(lower[:-1] + upper[:-1], dtype=np.float64)
+    return pts[np.unique(np.argmax(pts @ _OUTLINE.T, axis=0))]
 
 
-def _long_side(hull):
-    """Long side of the smallest rectangle round a convex hull.
+def _rect(pts, margin=0.0):
+    """Sides of the smallest rectangle round points, a margin added to both.
 
     The packer turns islands to fit them, so what has to fit the tile is
     this rectangle, not the box the island happens to sit in.
     """
-    if len(hull) < 2:
-        return 0.0
-    if len(hull) == 2:
-        return float(np.linalg.norm(hull[1] - hull[0]))
-    e = np.roll(hull, -1, axis=0) - hull
-    ln = np.linalg.norm(e, axis=1)
-    keep = ln > 1e-15
-    if not keep.any():
-        return 0.0
-    d = e[keep] / ln[keep, None]
-    n = np.stack([-d[:, 1], d[:, 0]], axis=1)
-    pu = hull @ d.T
-    pv = hull @ n.T
-    w = pu.max(axis=0) - pu.min(axis=0)
-    h = pv.max(axis=0) - pv.min(axis=0)
+    if len(pts) < 2:
+        return margin, margin
+    w = np.ptp(pts @ _RECT_DIRS.T, axis=0) + margin
+    h = np.ptp(pts @ _RECT_NORMS.T, axis=0) + margin
     k = int(np.argmin(w * h))
-    return float(max(w[k], h[k]))
+    return float(w[k]), float(h[k])
 
 
-def _raster(tris, cell):
+def _long_side(hull):
+    """Long side of the smallest rectangle round an outline."""
+    w, h = _rect(hull)
+    return max(w, h)
+
+
+def _raster(tris, cell, window=None):
     """The grid cells whose centers fall inside the triangles, as keys.
 
     Testing cell centers, not cell areas, is what lets two faces share an
     edge without counting as an overlap: a center lies on one side of the
-    edge or the other, never on both.
+    edge or the other, never on both. `window`, as (low, high) cell
+    numbers, keeps only the cells inside it, so a large chart can be tested
+    on a fine grid where a small one lands.
     """
     if not len(tris):
         return np.zeros(0, dtype=np.int64)
     g = tris / cell
     mn = np.floor(g.min(axis=1)).astype(np.int64)
     mx = np.floor(g.max(axis=1)).astype(np.int64)
+    if window is not None:
+        mn = np.maximum(mn, window[0])
+        mx = np.minimum(mx, window[1])
+        keep = (mx >= mn).all(axis=1)
+        if not keep.any():
+            return np.zeros(0, dtype=np.int64)
+        g, mn, mx = g[keep], mn[keep], mx[keep]
     w = mx[:, 0] - mn[:, 0] + 1
     h = mx[:, 1] - mn[:, 1] + 1
     cnt = w * h
@@ -617,7 +644,97 @@ def _copies(key, u, near):
     return copy
 
 
-def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
+def _rect_area(pts, margin=0.0):
+    """Area of the smallest rectangle round points, with a margin round it.
+
+    The margin stands for the space the packer leaves round every island.
+    """
+    w, h = _rect(pts, margin)
+    return w * h
+
+
+def _split_islands(members, edges, hull_pts, area, margin, gain):
+    """Cut awkward islands along their joins, where the pieces pack better.
+
+    Every island is a tree of charts, joined one at a time. Cutting a join
+    splits it in two, and each piece keeps the layout it has. A net that
+    grew into a V, or has a long arm out at an angle, fills little of the
+    rectangle round it, and its pieces fill theirs far better. So the cut
+    that makes the pieces' rectangles smallest together is made, as long as
+    it saves at least `gain` of the rectangle of the whole, and the pieces
+    are tried again. The margin round every island counts too, so cutting
+    off a small piece costs what the packer will leave round it.
+
+    members: {island: [charts]}. edges: tree joins as (chart, chart).
+    hull_pts: {chart: (k, 2) hull}. area: UV area of each chart.
+    Returns {chart: piece} with a new number for every piece.
+    """
+    adj = {}
+    for a, b in edges:
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    out = {}
+    counter = [0]
+
+    def pts_of(charts):
+        return np.vstack([hull_pts[c] for c in charts])
+
+    def piece(charts):
+        pid = counter[0]
+        counter[0] += 1
+        for c in charts:
+            out[c] = pid
+
+    stack = [list(ch) for ch in members.values()]
+    while stack:
+        charts = stack.pop()
+        if len(charts) < 2:
+            piece(charts)
+            continue
+        whole = _rect_area(pts_of(charts), margin)
+        fill = sum(area[c] for c in charts) / max(whole, 1e-30)
+        # No cut can save more than the rectangle the island leaves empty.
+        if 1.0 - fill < gain:
+            piece(charts)
+            continue
+        inside = set(charts)
+        root = max(charts, key=lambda c: area[c])
+        # Depth first from the largest chart: the order, and each chart's
+        # parent, so every subtree is a run of the order.
+        order, parent = [], {root: None}
+        todo = [root]
+        while todo:
+            c = todo.pop()
+            order.append(c)
+            for n in adj.get(c, []):
+                if n in inside and n not in parent:
+                    parent[n] = c
+                    todo.append(n)
+        below = {c: [c] for c in order}
+        for c in reversed(order):
+            p = parent[c]
+            if p is not None:
+                below[p].extend(below[c])
+        best, cut = whole * (1.0 - gain), None
+        for c in order[1:]:
+            part = below[c]
+            rest = inside.difference(part)
+            if not rest:
+                continue
+            cost = (_rect_area(pts_of(part), margin)
+                    + _rect_area(pts_of(rest), margin))
+            if cost < best:
+                best, cut = cost, part
+        if cut is None:
+            piece(charts)
+            continue
+        cut = set(cut)
+        stack.append([c for c in charts if c in cut])
+        stack.append([c for c in charts if c not in cut])
+    return out
+
+
+def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False):
     """Grow UV islands out of the CAD charts of one mesh.
 
     Starts from the largest chart and joins its tangent neighbors one at a
@@ -629,13 +746,20 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
     for a later island. The next island starts from the largest chart
     still left, until none is left.
 
+    With `sharp`, a second pass does the same across sharp edges, with each
+    island of the first pass as one piece. The smooth joins come first, so
+    a sharp edge is only crossed where the smooth ones left a gap.
+
+    Last, an island that grew into an awkward shape is cut along its joins
+    where the pieces pack better (_split_islands).
+
     `side_3d` is the side of the UV tile, in the mesh's own length units.
     None means one tile for this part alone, which is the side of the square
     its surface would pack into. The tile is never smaller than the longest
     chart, because a CAD face is never split.
 
     Writes the UVs and puts the seams on the island boundaries. Returns
-    (charts, islands) for the charts that had a tangent neighbor.
+    (charts, islands) for the charts that had a neighbor to join.
     """
     layer = me.uv_layers.active
     nl = len(me.loops)
@@ -656,8 +780,8 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
     parea = np.empty(npoly, dtype=np.float64)
     me.polygons.foreach_get("area", parea)
     ne = len(me.edges)
-    sharp = np.zeros(ne, dtype=bool)
-    me.edges.foreach_get("use_edge_sharp", sharp)
+    sharp_e = np.zeros(ne, dtype=bool)
+    me.edges.foreach_get("use_edge_sharp", sharp_e)
 
     pol = np.repeat(np.arange(npoly), totals)
     nxt = np.arange(nl) + 1
@@ -676,6 +800,7 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
     a1, b1 = l1, nxt[l1]
     a2 = np.where(back, nxt[l2], l2)
     b2 = np.where(back, l2, nxt[l2])
+    p1, p2 = pol[l1], pol[l2]
 
     span = float(np.ptp(uv, axis=0).max()) if nl else 1.0
     tol = max(span, 1e-12) * 1e-7
@@ -684,12 +809,12 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
         return ((np.abs(u[a1] - u[a2]).sum(axis=1) <= tol)
                 & (np.abs(u[b1] - u[b2]).sum(axis=1) <= tol))
 
-    # Charts: the faces the parametric UVs already hold together.
-    cont = joined(uv)
-    p1, p2 = pol[l1], pol[l2]
-    _ids, chart = np.unique(_labels(p1[cont], p2[cont], npoly),
-                            return_inverse=True)
-    nc = int(chart.max()) + 1
+    def charts_of(u):
+        """The faces the UVs hold together, as a chart number per polygon."""
+        cont = joined(u)
+        _ids, lab = np.unique(_labels(p1[cont], p2[cont], npoly),
+                              return_inverse=True)
+        return lab.ravel()
 
     # Fan triangles of every polygon, for areas and the overlap test.
     tcount = totals - 2
@@ -704,97 +829,24 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
         return 0.5 * ((u[t1, 0] - u[t0, 0]) * (u[t2, 1] - u[t0, 1])
                       - (u[t2, 0] - u[t0, 0]) * (u[t1, 1] - u[t0, 1]))
 
-    # Every chart the same way up. A face whose surface runs the other way
-    # arrives mirrored, and a mirrored chart cannot be turned into place.
-    tchart = chart[tp]
-    csign = np.bincount(tchart, weights=signed(uv), minlength=nc)
-    flip = csign < 0
-    lchart = chart[pol]
-    uv[flip[lchart], 0] *= -1.0
-    carea_uv = np.abs(np.bincount(tchart, weights=signed(uv), minlength=nc))
-    carea_3d = np.bincount(chart, weights=parea, minlength=nc)
-
-    # Tangent joins: an edge between two charts that is not sharp.
-    between = (chart[p1] != chart[p2]) & ~sharp[man]
-    if not between.any():
-        me.edges.foreach_set("use_seam", _seams(ne, man, ~cont))
-        return 0, 0
-    ja, jb = chart[p1][between], chart[p2][between]
-    ja1, jb1, ja2, jb2 = a1[between], b1[between], a2[between], b2[between]
-    comp = _labels(ja, jb, nc)
-    sizes = np.bincount(comp, minlength=nc)
-    busy = sizes[comp] > 1
-    work = np.where(busy)[0]
-    if not len(work):
-        me.edges.foreach_set("use_seam", _seams(ne, man, ~cont))
-        return 0, 0
-
-    # For each pair of charts, the loops that meet along their shared edge:
-    # (loop in the lower chart, loop in the higher chart), both ends.
-    joins = {}
-    for i in range(len(ja)):
-        a, b = int(ja[i]), int(jb[i])
-        if a < b:
-            rec = ((ja1[i], ja2[i]), (jb1[i], jb2[i]))
-        else:
-            a, b = b, a
-            rec = ((ja2[i], ja1[i]), (jb2[i], jb1[i]))
-        joins.setdefault((a, b), []).append(rec)
-    nbrs = {}
-    for a, b in joins:
-        nbrs.setdefault(a, []).append(b)
-        nbrs.setdefault(b, []).append(a)
-    # Both arrays hold the first ends of the shared edges, then the second
-    # ends in the same order, so an edge is item i and item i + half.
-    pairs = {}
-    for key, recs in joins.items():
-        lo = np.array([r[0][0] for r in recs] + [r[1][0] for r in recs])
-        hi = np.array([r[0][1] for r in recs] + [r[1][1] for r in recs])
-        pairs[key] = (lo, hi)
-
-    # Loops and triangles of each chart that takes part.
-    lorder = np.argsort(lchart, kind="stable")
-    lcnt = np.bincount(lchart, minlength=nc)
-    lfirst = np.concatenate([[0], np.cumsum(lcnt)[:-1]])
-    torder = np.argsort(tchart, kind="stable")
-    tcnt = np.bincount(tchart, minlength=nc)
-    tfirst = np.concatenate([[0], np.cumsum(tcnt)[:-1]])
-
-    def loops_of(c):
-        return lorder[lfirst[c]:lfirst[c] + lcnt[c]]
-
-    def tri_ids(c):
-        return torder[tfirst[c]:tfirst[c] + tcnt[c]]
-
-    def tris_of(c, u=uv):
-        idx = tri_ids(c)
-        return np.stack([u[t0[idx]], u[t1[idx]], u[t2[idx]]], axis=1)
-
-    hulls = {int(c): _hull(uv[loops_of(c)]) for c in work}
-
-    # The tile. It is never smaller than the longest chart of the part,
-    # because a chart is one CAD face and is never split.
-    density = np.sqrt(carea_uv.sum() / max(carea_3d.sum(), 1e-30))
+    # The charts the CAD surfaces give. Every one the same way up: a face
+    # whose surface runs the other way arrives mirrored, and a mirrored
+    # chart cannot be turned into place.
+    base_chart = charts_of(uv)
+    n_base = int(base_chart.max()) + 1
+    csign = np.bincount(base_chart[tp], weights=signed(uv), minlength=n_base)
+    uv[(csign < 0)[base_chart[pol]], 0] *= -1.0
+    base_area = np.abs(np.bincount(base_chart[tp], weights=signed(uv),
+                                   minlength=n_base))
+    base_3d = np.bincount(base_chart, weights=parea, minlength=n_base)
+    density = np.sqrt(base_area.sum() / max(base_3d.sum(), 1e-30))
     if side_3d is None:
-        side_3d = np.sqrt(carea_3d.sum() / SMART_FILL)
-    longest = max((_long_side(h) for h in hulls.values()), default=0.0)
-    alone = np.where(~busy)[0]
-    if len(alone):
-        lo = np.full((nc, 2), np.inf)
-        hi = np.full((nc, 2), -np.inf)
-        np.minimum.at(lo, lchart, uv)
-        np.maximum.at(hi, lchart, uv)
-        ext = (hi - lo)[alone]
-        longest = max(longest, float(ext.max()))
-    limit = max(side_3d * density, longest)
-    cell = np.sqrt(carea_uv[work].sum() / SMART_CELLS)
-    if not (cell > 0.0):
-        me.edges.foreach_set("use_seam", _seams(ne, man, ~cont))
-        return 0, 0
+        side_3d = np.sqrt(base_3d.sum() / SMART_FILL)
 
     # The 3D shape of every triangle, for the stretch of a bent chart: the
     # length of its first edge, and its second edge along and across it.
     frame = None
+    tarea = None
     if distortion > 0.0:
         co = np.empty(len(me.vertices) * 3, dtype=np.float64)
         me.vertices.foreach_get("co", co)
@@ -805,173 +857,318 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
         f_ex = (e1 * e2).sum(axis=1) / np.maximum(f_l1, 1e-300)
         f_ey = np.linalg.norm(np.cross(e1, e2), axis=1) / np.maximum(f_l1,
                                                                     1e-300)
-        tarea = 0.5 * f_l1 * f_ey
         good = (f_l1 > 0.0) & (f_ey > 1e-9 * np.maximum(f_l1, 1e-300))
         frame = (np.where(good, f_l1, 1.0), f_ex, np.where(good, f_ey, 1.0))
-        tarea = np.where(good, tarea, 0.0)
+        tarea = np.where(good, 0.5 * f_l1 * f_ey, 0.0)
 
-    def bend(c, mine, theirs, u):
-        """Bend chart c against the island. New UVs of its loops, or None."""
-        half = len(mine) // 2
-        ma, mb = mine[:half].copy(), mine[half:].copy()
-        ta, tb = theirs[:half].copy(), theirs[half:].copy()
-        # Every edge the way chart c winds, so the chart lies on its left.
-        fwd = nxt[ma] == mb
-        ma[~fwd], mb[~fwd] = mb[~fwd], ma[~fwd].copy()
-        ta[~fwd], tb[~fwd] = tb[~fwd], ta[~fwd].copy()
-        pa, pb = u[ma], u[mb]
-        qa, qb = u[ta], u[tb]
-        if np.linalg.norm(pb - pa, axis=1).min() <= 0.0:
-            return None
-        chains, (np_s, np_e, nq_s, nq_e), one_run = _chains(
-            pa, pb, qa, qb, lv[ma], lv[mb], tol * 10.0, tol * 10.0)
-        if not one_run:
-            return None
-        idx = loops_of(c)
-        return _bend_chart(u[idx], pol[idx], pa, pb, np_s, np_e,
-                           qa, qb, nq_s, nq_e, chains)
+    # Every join any pass makes, as a pair of the charts above. Together
+    # they are the tree each island grew as, which the split walks.
+    tree = []
+    took_part = set()
 
-    def too_bent(c, u):
-        """Whether a bent chart stretches, squashes or folds too much."""
-        idx = tri_ids(c)
-        w = tarea[idx]
-        tot = w.sum()
-        if not (tot > 0.0):
-            return True
-        s1, s2, mirrored = _stretch(u, t0[idx], t1[idx], t2[idx],
-                                    tuple(f[idx] for f in frame), density)
-        if w[mirrored].sum() > SMART_MAX_FLIP * tot:
-            return True
-        stretch = SMART_STRETCH_WEIGHT * np.maximum(s1 - 1.0, 0.0)
-        squash = np.maximum(1.0 / np.maximum(s2, 1e-9) - 1.0, 0.0)
-        score = np.minimum(stretch + squash, SMART_STRETCH_CAP)
-        return float((score * w).sum() / tot) > distortion
+    def grow(allow_sharp):
+        """One pass of the growth, over the charts the UVs now hold."""
+        chart = charts_of(uv)
+        nc = int(chart.max()) + 1
+        tchart = chart[tp]
+        lchart = chart[pol]
+        carea_uv = np.abs(np.bincount(tchart, weights=signed(uv),
+                                      minlength=nc))
+        carea_3d = np.bincount(chart, weights=parea, minlength=nc)
 
-    def attempt(c, n, bent_ok, occ, hull, long_now):
-        """Join chart c to the island along its edge with placed chart n.
+        between = chart[p1] != chart[p2]
+        if not allow_sharp:
+            between &= ~sharp_e[man]
+        if not between.any():
+            return
+        ja, jb = chart[p1][between], chart[p2][between]
+        ja1, jb1 = a1[between], b1[between]
+        ja2, jb2 = a2[between], b2[between]
+        comp = _labels(ja, jb, nc)
+        sizes = np.bincount(comp, minlength=nc)
+        busy = sizes[comp] > 1
+        work = np.where(busy)[0]
+        if not len(work):
+            return
 
-        Tries a turn first. With `bent_ok`, a chart that does not fit that
-        way is bent instead. Returns what the island needs to take the chart
-        in, or None, and leaves the UVs as they were when it fails.
-        """
-        lo, hi = pairs[(min(c, n), max(c, n))]
-        mine, theirs = (lo, hi) if c < n else (hi, lo)
-        src = uv[mine]
-        dst = uv[theirs]
-        half = len(src) // 2
-        edge = float(np.linalg.norm(src[:half] - src[half:], axis=1).sum())
-        if edge <= 0.0:
-            return None
-        idx = loops_of(c)
-        r, s, err = _fit(src, dst)
-        if err <= SMART_MAX_MISFIT * edge:
-            is_bent = False
-            chull = hulls[c] @ r.T + s
-        elif bent_ok:
-            new = bend(c, mine, theirs, uv)
-            if new is None or not np.isfinite(new).all():
+        # For each pair of charts, the loops that meet along their shared
+        # edge: (loop in the lower chart, loop in the higher chart), both
+        # ends.
+        joins = {}
+        for i in range(len(ja)):
+            a, b = int(ja[i]), int(jb[i])
+            if a < b:
+                rec = ((ja1[i], ja2[i]), (jb1[i], jb2[i]))
+            else:
+                a, b = b, a
+                rec = ((ja2[i], ja1[i]), (jb2[i], jb1[i]))
+            joins.setdefault((a, b), []).append(rec)
+        nbrs = {}
+        for a, b in joins:
+            nbrs.setdefault(a, []).append(b)
+            nbrs.setdefault(b, []).append(a)
+        # Both arrays hold the first ends of the shared edges, then the
+        # second ends in the same order, so an edge is item i and item
+        # i + half.
+        pairs = {}
+        for key, recs in joins.items():
+            lo = np.array([r[0][0] for r in recs] + [r[1][0] for r in recs])
+            hi = np.array([r[0][1] for r in recs] + [r[1][1] for r in recs])
+            pairs[key] = (lo, hi)
+
+        # Loops and triangles of each chart that takes part.
+        lorder = np.argsort(lchart, kind="stable")
+        lcnt = np.bincount(lchart, minlength=nc)
+        lfirst = np.concatenate([[0], np.cumsum(lcnt)[:-1]])
+        torder = np.argsort(tchart, kind="stable")
+        tcnt = np.bincount(tchart, minlength=nc)
+        tfirst = np.concatenate([[0], np.cumsum(tcnt)[:-1]])
+
+        def loops_of(c):
+            return lorder[lfirst[c]:lfirst[c] + lcnt[c]]
+
+        def tri_ids(c):
+            return torder[tfirst[c]:tfirst[c] + tcnt[c]]
+
+        def tris_of(c, u=uv):
+            idx = tri_ids(c)
+            return np.stack([u[t0[idx]], u[t1[idx]], u[t2[idx]]], axis=1)
+
+        hulls = {int(c): _hull(uv[loops_of(c)]) for c in work}
+
+        # The tile. It is never smaller than the longest chart of the part,
+        # because a chart is one CAD face and is never split.
+        longest = max((_long_side(h) for h in hulls.values()), default=0.0)
+        alone = np.where(~busy)[0]
+        if len(alone):
+            lo = np.full((nc, 2), np.inf)
+            hi = np.full((nc, 2), -np.inf)
+            np.minimum.at(lo, lchart, uv)
+            np.maximum.at(hi, lchart, uv)
+            ext = (hi - lo)[alone]
+            longest = max(longest, float(ext.max()))
+        limit = max(side_3d * density, longest)
+        cell = np.sqrt(carea_uv[work].sum() / SMART_CELLS)
+        if not (cell > 0.0):
+            return
+
+        def bend(c, mine, theirs, u):
+            """Bend chart c against the island. New UVs of its loops, or
+            None."""
+            half = len(mine) // 2
+            ma, mb = mine[:half].copy(), mine[half:].copy()
+            ta, tb = theirs[:half].copy(), theirs[half:].copy()
+            # Every edge the way chart c winds, so the chart lies on its
+            # left.
+            fwd = nxt[ma] == mb
+            ma[~fwd], mb[~fwd] = mb[~fwd], ma[~fwd].copy()
+            ta[~fwd], tb[~fwd] = tb[~fwd], ta[~fwd].copy()
+            pa, pb = u[ma], u[mb]
+            qa, qb = u[ta], u[tb]
+            if np.linalg.norm(pb - pa, axis=1).min() <= 0.0:
                 return None
-            is_bent = True
-            chull = _hull(new)
-        else:
-            return None
-        # The cheap tests first. The tile only needs the outline.
-        grown = _hull(np.vstack([hull, chull]))
-        ls = _long_side(grown)
-        if ls > max(limit, long_now) * (1.0 + 1e-9):
-            return None
-        old = uv[idx].copy()
-        uv[idx] = new if is_bent else old @ r.T + s
-        ok = not (is_bent and too_bent(c, uv))
-        if ok:
-            keys = _raster(tris_of(c), cell)
-            # A bent chart can land on itself, which an unbent one cannot.
-            # Count the cells it covers twice.
-            if is_bent:
-                own = len(keys) - len(np.unique(keys))
-                ok = own <= SMART_MAX_OVERLAP * len(keys) + 2
-        if ok:
-            hit = len(occ.intersection(keys.tolist()))
-            ok = hit <= SMART_MAX_OVERLAP * len(keys) + 2
-        if not ok:
-            uv[idx] = old
-            return None
-        return keys, grown, ls, is_bent
+            chains, (np_s, np_e, nq_s, nq_e), one_run = _chains(
+                pa, pb, qa, qb, lv[ma], lv[mb], tol * 10.0, tol * 10.0)
+            if not one_run:
+                return None
+            idx = loops_of(c)
+            return _bend_chart(u[idx], pol[idx], pa, pb, np_s, np_e,
+                               qa, qb, nq_s, nq_e, chains)
 
-    import heapq
-    island = {}
-    rank = {}
-    parent = {}
-    n_islands = 0
-    # Which joins were tried already, as (chart, placed neighbor, bent).
-    # A chart refused against one neighbor is tried again when another of
-    # its neighbors joins the island, because that edge may fit better.
-    tried = set()
-    for seed in sorted((int(c) for c in work), key=lambda c: -carea_3d[c]):
-        if seed in island:
-            continue
-        kid = n_islands
-        n_islands += 1
-        island[seed] = kid
-        rank[seed] = len(rank)
-        occ = set(_raster(tris_of(seed), cell).tolist())
-        hull = hulls[seed]
-        long_now = _long_side(hull)
-        heap = [(-carea_3d[c], c) for c in nbrs.get(seed, [])
-                if c not in island]
-        heapq.heapify(heap)
-        while heap:
-            _neg, c = heapq.heappop(heap)
-            if c in island:
+        def too_bent(c, u):
+            """Whether a bent chart stretches, squashes or folds too much."""
+            idx = tri_ids(c)
+            w = tarea[idx]
+            tot = w.sum()
+            if not (tot > 0.0):
+                return True
+            s1, s2, mirrored = _stretch(u, t0[idx], t1[idx], t2[idx],
+                                        tuple(f[idx] for f in frame), density)
+            if w[mirrored].sum() > SMART_MAX_FLIP * tot:
+                return True
+            stretch = SMART_STRETCH_WEIGHT * np.maximum(s1 - 1.0, 0.0)
+            squash = np.maximum(1.0 / np.maximum(s2, 1e-9) - 1.0, 0.0)
+            score = np.minimum(stretch + squash, SMART_STRETCH_CAP)
+            return float((score * w).sum() / tot) > distortion
+
+        def attempt(c, n, bent_ok, occ, hull, long_now, cell_i):
+            """Join chart c to the island along its edge with placed chart n.
+
+            Tries a turn first. With `bent_ok`, a chart that does not fit
+            that way is bent instead. Returns what the island needs to take
+            the chart in, or None, and leaves the UVs as they were when it
+            fails.
+            """
+            lo, hi = pairs[(min(c, n), max(c, n))]
+            mine, theirs = (lo, hi) if c < n else (hi, lo)
+            src = uv[mine]
+            dst = uv[theirs]
+            half = len(src) // 2
+            edge = float(np.linalg.norm(src[:half] - src[half:],
+                                        axis=1).sum())
+            if edge <= 0.0:
+                return None
+            idx = loops_of(c)
+            r, s, err = _fit(src, dst)
+            if err <= SMART_MAX_MISFIT * edge:
+                is_bent = False
+                chull = hulls[c] @ r.T + s
+            elif bent_ok:
+                new = bend(c, mine, theirs, uv)
+                if new is None or not np.isfinite(new).all():
+                    return None
+                is_bent = True
+                chull = _hull(new)
+            else:
+                return None
+            # The cheap tests first. The tile only needs the outline.
+            grown = _hull(np.vstack([hull, chull]))
+            ls = _long_side(grown)
+            if ls > max(limit, long_now) * (1.0 + 1e-9):
+                return None
+            old = uv[idx].copy()
+            uv[idx] = new if is_bent else old @ r.T + s
+            ok = not (is_bent and too_bent(c, uv))
+            if ok:
+                keys = _raster(tris_of(c), cell_i)
+                allow = min(SMART_MAX_OVERLAP * len(keys), edge / cell_i) + 2
+                # A bent chart can land on itself, which an unbent one
+                # cannot. Count the cells it covers twice.
+                if is_bent:
+                    own = len(keys) - len(np.unique(keys))
+                    ok = own <= allow
+            if ok:
+                hit = len(occ.intersection(keys.tolist()))
+                ok = hit <= allow
+            if ok and len(keys) < SMART_FINE_KEYS:
+                ok = not lands_small(c, edge)
+            if not ok:
+                uv[idx] = old
+                return None
+            return keys, grown, ls, (mine, theirs)
+
+        def lands_small(c, edge):
+            """Whether a small chart lands on the island, on a grid of its
+            own. Only the island charts whose box meets the chart's box are
+            rastered, and only inside that box."""
+            tri_c = tris_of(c)
+            fine = float(np.sqrt(max(carea_uv[c], 0.0) / SMART_SEED_CELLS))
+            if not (fine > 0.0):
+                return False
+            pts = tri_c.reshape(-1, 2)
+            lo, hi = pts.min(axis=0), pts.max(axis=0)
+            win = (np.floor(lo / fine).astype(np.int64) - 1,
+                   np.floor(hi / fine).astype(np.int64) + 1)
+            ck = _raster(tri_c, fine)
+            if not len(ck):
+                return False
+            b_lo = np.array([box[m][0] for m in members])
+            b_hi = np.array([box[m][1] for m in members])
+            meet = ((b_lo <= hi).all(axis=1) & (b_hi >= lo).all(axis=1))
+            ik = set()
+            for j in np.where(meet)[0]:
+                ik.update(_raster(placed_tris[members[j]], fine, win).tolist())
+            hit = len(ik.intersection(ck.tolist()))
+            return hit > min(SMART_MAX_OVERLAP * len(ck), edge / fine) + 2
+
+        import heapq
+        island = {}
+        rank = {}
+        parent = {}
+        n_islands = 0
+        # Which joins were tried already, as (chart, placed neighbor, bent).
+        # A chart refused against one neighbor is tried again when another
+        # of its neighbors joins the island, because that edge may fit
+        # better.
+        tried = set()
+        for seed in sorted((int(c) for c in work),
+                           key=lambda c: -carea_3d[c]):
+            if seed in island:
                 continue
-            placed = [n for n in nbrs[c] if island.get(n) == kid]
-            # The longest shared edge first, and every turn before any
-            # bend: a chart that fits one of its neighbors exactly is never
-            # bent to fit another.
-            placed.sort(key=lambda n: -len(pairs[(min(c, n), max(c, n))][0]))
-            got = None
-            for bent_ok in ((False, True) if frame is not None
-                            else (False,)):
-                for n in placed:
-                    if (c, n, bent_ok) in tried:
-                        continue
-                    tried.add((c, n, bent_ok))
-                    got = attempt(c, n, bent_ok, occ, hull, long_now)
+            kid = n_islands
+            n_islands += 1
+            island[seed] = kid
+            rank[seed] = len(rank)
+            cell_i = min(cell, float(np.sqrt(carea_uv[seed] / SMART_SEED_CELLS)))
+            if not (cell_i > 0.0):
+                cell_i = cell
+            occ = set(_raster(tris_of(seed), cell_i).tolist())
+            # The charts of this island and the box round each, for the
+            # fine test of a small chart.
+            members = [seed]
+            sl = uv[loops_of(seed)]
+            box = {seed: (sl.min(axis=0), sl.max(axis=0))}
+            placed_tris = {seed: tris_of(seed)}
+            hull = hulls[seed]
+            long_now = _long_side(hull)
+            heap = [(-carea_3d[c], c) for c in nbrs.get(seed, [])
+                    if c not in island]
+            heapq.heapify(heap)
+            while heap:
+                _neg, c = heapq.heappop(heap)
+                if c in island:
+                    continue
+                placed = [n for n in nbrs[c] if island.get(n) == kid]
+                # The longest shared edge first, and every turn before any
+                # bend: a chart that fits one of its neighbors exactly is
+                # never bent to fit another.
+                placed.sort(
+                    key=lambda n: -len(pairs[(min(c, n), max(c, n))][0]))
+                got = None
+                for bent_ok in ((False, True) if frame is not None
+                                else (False,)):
+                    for n in placed:
+                        if (c, n, bent_ok) in tried:
+                            continue
+                        tried.add((c, n, bent_ok))
+                        got = attempt(c, n, bent_ok, occ, hull, long_now,
+                                      cell_i)
+                        if got is not None:
+                            got = got + (n,)
+                            break
                     if got is not None:
-                        got = got + (n,)
                         break
-                if got is not None:
-                    break
-            if got is None:
-                continue
-            keys, hull, long_now, _bent, n = got
-            island[c] = kid
-            rank[c] = len(rank)
-            parent[c] = n
-            occ.update(keys.tolist())
-            for m2 in nbrs[c]:
-                if m2 not in island:
-                    heapq.heappush(heap, (-carea_3d[m2], m2))
+                if got is None:
+                    continue
+                keys, hull, long_now, (mine, theirs), n = got
+                island[c] = kid
+                rank[c] = len(rank)
+                parent[c] = n
+                occ.update(keys.tolist())
+                members.append(c)
+                cl = uv[loops_of(c)]
+                box[c] = (cl.min(axis=0), cl.max(axis=0))
+                placed_tris[c] = tris_of(c)
+                # The join in terms of the CAD charts, for the split.
+                tree.append((int(base_chart[pol[mine[0]]]),
+                             int(base_chart[pol[theirs[0]]])))
+                for m2 in nbrs[c]:
+                    if m2 not in island:
+                        heapq.heappush(heap, (-carea_3d[m2], m2))
 
-    # Weld each joined edge, so its two sides carry one UV and Blender sees
-    # one island. An edge between two charts of one island that the net did
-    # not use is welded too when it already fits, and stays a cut when it
-    # does not. The welds are joined up first and each group takes the UV of
-    # its earliest chart: a corner where three charts meet then closes, where
-    # welding edge by edge would leave a gap at it. A chart can hold one
-    # vertex twice, on both sides of a cut, so a weld works on each UV copy
-    # of a vertex on its own.
-    weld_tol = cell * 0.25
-    wa, wb = [], []
-    for (a, b), (lo, hi) in pairs.items():
-        if island.get(a) is None or island.get(a) != island.get(b):
-            continue
-        tree = parent.get(a) == b or parent.get(b) == a
-        if not tree and np.abs(uv[lo] - uv[hi]).max() > weld_tol:
-            continue
-        wa.append(lo)
-        wb.append(hi)
-    if wa:
+        for c in work:
+            took_part.update(np.unique(base_chart[pol[loops_of(c)]]).tolist())
+
+        # Weld each joined edge, so its two sides carry one UV and Blender
+        # sees one island. An edge between two charts of one island that the
+        # net did not use is welded too when it already fits, and stays a
+        # cut when it does not. The welds are joined up first and each group
+        # takes the UV of its earliest chart: a corner where three charts
+        # meet then closes, where welding edge by edge would leave a gap at
+        # it. A chart can hold one vertex twice, on both sides of a cut, so a
+        # weld works on each UV copy of a vertex on its own.
+        weld_tol = cell * 0.25
+        wa, wb = [], []
+        for (a, b), (lo, hi) in pairs.items():
+            if island.get(a) is None or island.get(a) != island.get(b):
+                continue
+            is_tree = parent.get(a) == b or parent.get(b) == a
+            if not is_tree and np.abs(uv[lo] - uv[hi]).max() > weld_tol:
+                continue
+            wa.append(lo)
+            wb.append(hi)
+        if not wa:
+            return
         wa = np.concatenate(wa)
         wb = np.concatenate(wb)
         base = int(lv.max()) + 1
@@ -982,8 +1179,23 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
         ckey = lkey * width + copy
         ka, kb = ckey[wa], ckey[wb]
         nodes, inv = np.unique(np.concatenate([ka, kb]), return_inverse=True)
+        inv = inv.ravel()
         m = len(wa)
         grp = _labels(inv[:m], inv[m:], len(nodes))
+        # A group must not hold two copies of one vertex of one chart. That
+        # happens where a chart is cut at a vertex and its neighbor meets it
+        # on both sides of the cut through one corner: welding would drag
+        # one side of the cut across the island. In such a group only the
+        # pairs that already lie together stay welded.
+        vkey = nodes // width
+        o2 = np.lexsort((vkey, grp))
+        twice = ((grp[o2][1:] == grp[o2][:-1])
+                 & (vkey[o2][1:] == vkey[o2][:-1]))
+        if twice.any():
+            torn = np.isin(grp[inv[:m]], grp[o2][1:][twice])
+            close = np.abs(uv[wa] - uv[wb]).sum(axis=1) <= 4.0 * weld_tol
+            keep = ~torn | close
+            grp = _labels(inv[:m][keep], inv[m:][keep], len(nodes))
         ref = np.empty(len(nodes), dtype=np.int64)
         ref[inv] = np.concatenate([wa, wb])
         rank_of = np.full(nc, np.iinfo(np.int64).max, dtype=np.int64)
@@ -1003,18 +1215,61 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
         for i in range(len(nodes)):
             uv[korder[lo_i[i]:hi_i[i]]] = target[int(grp[i])]
 
+    grow(False)
+    if sharp:
+        grow(True)
+
+    if not took_part:
+        me.edges.foreach_set("use_seam", _seams(ne, man, ~joined(uv)))
+        return 0, 0
+
+    # The islands the joins made, over the CAD charts.
+    ta = np.array([a for a, _b in tree], dtype=np.int64)
+    tb = np.array([b for _a, b in tree], dtype=np.int64)
+    comp = _labels(ta, tb, n_base)
+    members = {}
+    for c in sorted(took_part):
+        members.setdefault(int(comp[c]), []).append(c)
+
+    # Cut the islands that grew into shapes that pack badly.
+    lbase = base_chart[pol]
+    lorder = np.argsort(lbase, kind="stable")
+    lcnt = np.bincount(lbase, minlength=n_base)
+    lfirst = np.concatenate([[0], np.cumsum(lcnt)[:-1]])
+    hull_pts = {}
+    for chs in members.values():
+        if len(chs) < 2:
+            continue
+        for c in chs:
+            hull_pts[c] = _hull(uv[lorder[lfirst[c]:lfirst[c] + lcnt[c]]])
+    area_now = np.abs(np.bincount(base_chart[tp], weights=signed(uv),
+                                  minlength=n_base))
+    margin = SMART_SPLIT_MARGIN * side_3d * density
+    pieces = _split_islands({i: chs for i, chs in members.items()
+                             if len(chs) > 1},
+                            tree, hull_pts, area_now, margin,
+                            SMART_SPLIT_GAIN)
+    final = {}
+    n_out = 0
+    for i, chs in members.items():
+        if len(chs) < 2:
+            final[chs[0]] = n_out
+            n_out += 1
+    for c, p in pieces.items():
+        final[c] = n_out + p
+    n_out += (max(pieces.values()) + 1) if pieces else 0
+
     # Every island a place of its own, so no two can touch by accident.
-    if island:
-        lisland = np.full(nl, -1, dtype=np.int64)
-        for c, kid in island.items():
-            lisland[loops_of(c)] = kid
-        on = lisland >= 0
-        step = (lisland[on] + 1).astype(np.float64)[:, None]
-        uv[on] += step * np.array([0.8, 0.6]) * SMART_ISLAND_NUDGE
+    lisland = np.full(nl, -1, dtype=np.int64)
+    for c, kid in final.items():
+        lisland[lorder[lfirst[c]:lfirst[c] + lcnt[c]]] = kid
+    on = lisland >= 0
+    step = (lisland[on] + 1).astype(np.float64)[:, None]
+    uv[on] += step * np.array([0.8, 0.6]) * SMART_ISLAND_NUDGE
 
     layer.uv.foreach_set("vector", uv.astype(np.float32).ravel())
     me.edges.foreach_set("use_seam", _seams(ne, man, ~joined(uv)))
-    return int(len(work)), n_islands
+    return len(took_part), n_out
 
 
 def _seams(ne, man, cut):

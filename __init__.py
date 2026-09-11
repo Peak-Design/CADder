@@ -151,7 +151,9 @@
 #     (uv.smart_merge). A face that does not fit by a turn, such as a
 #     rounded rim or the end ring of a tube, is bent along the island's
 #     edge, within the new "Smart distortion" limit. A rounded tube comes
-#     out as two islands instead of six
+#     out as two islands instead of six. The new option "Join sharp edges"
+#     runs a second pass across sharp edges, and Smart cuts an island along
+#     its joins where the pieces pack better (uv._split_islands)
 #   - Regenerate pairs the triangles into quads again and unwraps with the
 #     method the part was imported with. It left the triangles and always
 #     used Conformal

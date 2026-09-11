@@ -247,6 +247,36 @@ def write_turned(path, kind):
     w.Write(path)
 
 
+def write_bracket(path):
+    """An L shaped block with a hole through it: every edge is sharp.
+
+    Smart joins only smooth edges unless Join sharp edges is on, so this
+    part is the same with Smart as without, until that option is on.
+    """
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+    from OCP.gp import gp_Pnt, gp_Ax2, gp_Dir
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TDataStd import TDataStd_Name
+
+    foot = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 80, 40, 15).Shape()
+    wall = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 15, 40, 60).Shape()
+    shape = BRepAlgoAPI_Fuse(foot, wall).Shape()
+    hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(50, 20, -1), gp_Dir(0, 0, 1)), 8, 20).Shape()
+    shape = BRepAlgoAPI_Cut(shape, hole).Shape()
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    lab = tool.AddShape(shape, False)
+    TDataStd_Name.Set_s(lab, TCollection_ExtendedString("bracket"))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
 STAIR_STEPS = 7
 STAIR_RUN = 80.0
 STAIR_WIDTH = 50.0
@@ -325,6 +355,8 @@ BLOCK_STEP = os.path.join(tmp, "rounded_block.step")
 write_block(BLOCK_STEP)
 STAIR_STEP = os.path.join(tmp, "stair.step")
 write_stair(STAIR_STEP)
+BRACKET_STEP = os.path.join(tmp, "bracket.step")
+write_bracket(BRACKET_STEP)
 TURNED = {}
 for _kind in ("cylinder", "tube", "casting"):
     TURNED[_kind] = os.path.join(tmp, _kind + ".step")
@@ -587,9 +619,11 @@ check(worst < 0.01, "Smart leaves no island on itself (worst %.1f%%)"
       % (100.0 * worst))
 n_none = len(islands(load(BLOCK_STEP, uv_mode="SURFACE")))
 total = sum(r[0] for r in rows)
-check(len(rows) <= 3 and max(r[0] for r in rows) > 0.8 * total,
-      "and it still joins most of it (%d islands against %d, the largest "
-      "%.0f%% of the surface)"
+# The whole block joins as one net, and the split then cuts that net where
+# its pieces pack better, so a few islands come out, not one.
+check(len(rows) <= 5,
+      "and it still joins it into a few islands (%d against %d, the "
+      "largest %.0f%% of the surface)"
       % (len(rows), n_none, 100.0 * max(r[0] for r in rows) / total))
 
 # ---- Smart bends a face that does not fit by a turn -----------------------
@@ -687,6 +721,95 @@ check(len(rows) <= 4,
       "%d islands against %d for CAD Surfaces" % (len(rows), n_face))
 check(worst < 0.01 and n_fold == 0,
       "nothing lands on itself or folds (worst %.1f%%)" % (100.0 * worst))
+
+# ---- Join sharp edges -------------------------------------------------------
+# A second pass joins across sharp edges, with each island of the first pass
+# as one piece. A join across a fold is the same turn as a join across a
+# smooth edge, because every chart is flat already, so the net stays true
+# to size and never lands on itself.
+print("\n== Join sharp edges unfolds a block that has only sharp edges")
+n_face = len(islands(load(BRACKET_STEP, uv_mode="SURFACE")))
+n_smart = len(islands(load(BRACKET_STEP, uv_mode="SMART")))
+objs = load(BRACKET_STEP, uv_mode="SMART", uv_smart_sharp=True)
+rows = islands(objs, want_tris=True)
+n_fold = folded(objs)
+check(n_smart >= n_face - 2,
+      "Smart on its own leaves the sharp edges alone (%d islands against "
+      "%d)" % (n_smart, n_face))
+check(len(rows) <= n_face // 2,
+      "with the option on the block needs far fewer islands (%d against "
+      "%d)" % (len(rows), n_face))
+worst = max(overlap_share(r[2]) for r in rows)
+check(worst < 0.01 and n_fold == 0,
+      "nothing lands on itself or folds (worst %.1f%%)" % (100.0 * worst))
+d = [math.sqrt(a2 / a3) for a3, a2, _t in rows if a3 > 1e-9 and a2 > 1e-12]
+spread = max(d) / min(d) if len(d) > 1 else 1.0
+check(spread < 1.05,
+      "and every island keeps the same texel density (%.2fx)" % spread)
+
+# ---- Smart cuts an island that packs badly ---------------------------------
+# The net is a tree of charts, so an island can be cut along any join and
+# each piece keeps its layout. An arm out of the corner of a square leaves
+# most of the rectangle round the two of them empty, and cut off it packs
+# far better. A strip along a whole edge fills that rectangle, and stays.
+print("\n== Smart cuts an island that packs badly, and keeps one that packs well")
+
+
+def flat_pieces(arm):
+    """A square face, and a second face next to it, each its own chart.
+
+    The two lie flat side by side, so the edge between them is smooth, and
+    the UVs of each face are its own coordinates, moved apart, so each is a
+    chart of its own that Smart can join.
+    """
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    if arm:
+        # A 10 by 10 square, and a 20 by 1 arm out of its corner.
+        verts = [(0, 0, 0), (10, 0, 0), (10, 1, 0), (10, 10, 0), (0, 10, 0),
+                 (30, 0, 0), (30, 1, 0)]
+        faces = [(0, 1, 2, 3, 4), (1, 5, 6, 2)]
+    else:
+        # The same square, and a 2 by 10 strip along its whole edge.
+        verts = [(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0),
+                 (12, 0, 0), (12, 10, 0)]
+        faces = [(0, 1, 2, 3), (1, 4, 5, 2)]
+    me = bpy.data.meshes.new("pieces")
+    me.from_pydata([tuple(float(x) for x in v) for v in verts], [], faces)
+    me.update()
+    layer = me.uv_layers.new(name="UVMap")
+    uvs = []
+    for k, f in enumerate(faces):
+        for v in f:
+            uvs += [verts[v][0] + 100.0 * k, verts[v][1] + 50.0 * k]
+    layer.uv.foreach_set("vector", uvs)
+    return me
+
+
+def pieces_after(arm, gain=None):
+    me = flat_pieces(arm)
+    from STEPper_NEXT import uv as live
+    old = live.SMART_SPLIT_GAIN
+    if gain is not None:
+        live.SMART_SPLIT_GAIN = gain
+    try:
+        # A tile larger than the arm and the square together, so the tile
+        # never decides.
+        _charts, made = live.smart_merge(me, side_3d=40.0)
+    finally:
+        live.SMART_SPLIT_GAIN = old
+    obj = bpy.data.objects.new("pieces", me)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.update()
+    return len(islands([obj]))
+
+
+check(pieces_after(True, gain=9.0) == 1,
+      "the arm joins the square when nothing cuts it")
+check(pieces_after(True) == 2,
+      "and the cut takes it off again, because the two pack better apart")
+check(pieces_after(False) == 1,
+      "a strip along the whole edge stays joined")
 
 # ---- Smart refuses a join that overlaps -----------------------------------
 # Five squares round one corner add up to 450 degrees. Laid flat one after

@@ -193,6 +193,16 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 | **Unwrap (Minimum Stretch)** | The same unwrap with the minimum stretch method. The slowest mode. |
 | **Box Project** | Triplanar projection with a world-unit tile size. |
 
+> **Recommended settings for large models:** import with **UV Map** set to
+> **CAD Surfaces** and **Pack UVs** set to **None**. CAD Surfaces takes its
+> UVs from the CAD surface while the part is meshed, so it adds almost no
+> time.
+>
+> The other UV modes and packing add a lot of time on a large model. For
+> example, Smart adds about 35% and packing each part on its own adds about
+> 86%. Use them on single parts: select the parts, then click **Apply UVs
+> to Selected** in the **STEPper NEXT: UV** panel.
+
 The three unwrap modes are slower on large assemblies. Measured on a 182
 part assembly, by share of surface area stretched more than twice as far one
 way as the other: Conformal 0%, Angle Based 6%, Minimum Stretch 54%. The

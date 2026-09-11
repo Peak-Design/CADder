@@ -13,6 +13,17 @@ unrolls to its circumference by its height and a plane stays a plane. Unwrap
 has to flatten a mesh that is already triangles, which takes longer and
 leaves some stretch behind.
 
+## Recommended settings for large models
+
+Import with **UV Map** set to **CAD Surfaces** and **Pack UVs** set to
+**None**. CAD Surfaces takes its UVs from the CAD surface while the part is
+meshed, so it adds almost no time.
+
+The other UV modes and packing add a lot of time on a large model. For
+example, Smart adds about 35% and packing each part on its own adds about
+86%. Use them on single parts: select the parts, then click **Apply UVs to
+Selected** in the **STEPper NEXT: UV** panel.
+
 ## New import options
 
 | Option | What it does | Cost |

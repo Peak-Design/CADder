@@ -267,7 +267,8 @@ arm out at an angle, leaves most of the rectangle round it empty. Smart
 tries each join and makes the cut that makes the rectangles of the pieces
 smallest, if that saves at least 10 percent. The margin the packer leaves
 round each island counts too, so Smart does not cut off small pieces. Then
-it tries the pieces again.
+it tries the pieces again. **Optimize island shape** controls this cut. It
+is on by default. Clear it to keep every island as large as it grew.
 
 The tile comes from **Pack UVs**. With **None** or **Each part on its own**,
 the tile is the square the part packs into by itself. With **All parts

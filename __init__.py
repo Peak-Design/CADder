@@ -153,7 +153,8 @@
 #     edge, within the new "Smart distortion" limit. A rounded tube comes
 #     out as two islands instead of six. The new option "Join sharp edges"
 #     runs a second pass across sharp edges, and Smart cuts an island along
-#     its joins where the pieces pack better (uv._split_islands)
+#     its joins where the pieces pack better (uv._split_islands). The option
+#     "Optimize island shape" controls that cut
 #   - Regenerate pairs the triangles into quads again and unwraps with the
 #     method the part was imported with. It left the triangles and always
 #     used Conformal

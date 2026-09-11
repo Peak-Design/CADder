@@ -734,7 +734,8 @@ def _split_islands(members, edges, hull_pts, area, margin, gain):
     return out
 
 
-def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False):
+def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False,
+                split=True):
     """Grow UV islands out of the CAD charts of one mesh.
 
     Starts from the largest chart and joins its tangent neighbors one at a
@@ -750,8 +751,8 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False):
     island of the first pass as one piece. The smooth joins come first, so
     a sharp edge is only crossed where the smooth ones left a gap.
 
-    Last, an island that grew into an awkward shape is cut along its joins
-    where the pieces pack better (_split_islands).
+    Last, with `split`, an island that grew into an awkward shape is cut
+    along its joins where the pieces pack better (_split_islands).
 
     `side_3d` is the side of the UV tile, in the mesh's own length units.
     None means one tile for this part alone, which is the side of the square
@@ -1236,19 +1237,21 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False):
     lorder = np.argsort(lbase, kind="stable")
     lcnt = np.bincount(lbase, minlength=n_base)
     lfirst = np.concatenate([[0], np.cumsum(lcnt)[:-1]])
-    hull_pts = {}
-    for chs in members.values():
-        if len(chs) < 2:
-            continue
-        for c in chs:
-            hull_pts[c] = _hull(uv[lorder[lfirst[c]:lfirst[c] + lcnt[c]]])
-    area_now = np.abs(np.bincount(base_chart[tp], weights=signed(uv),
-                                  minlength=n_base))
-    margin = SMART_SPLIT_MARGIN * side_3d * density
-    pieces = _split_islands({i: chs for i, chs in members.items()
-                             if len(chs) > 1},
-                            tree, hull_pts, area_now, margin,
-                            SMART_SPLIT_GAIN)
+    multi = {i: chs for i, chs in members.items() if len(chs) > 1}
+    if split:
+        hull_pts = {}
+        for chs in multi.values():
+            for c in chs:
+                hull_pts[c] = _hull(
+                    uv[lorder[lfirst[c]:lfirst[c] + lcnt[c]]])
+        area_now = np.abs(np.bincount(base_chart[tp], weights=signed(uv),
+                                      minlength=n_base))
+        margin = SMART_SPLIT_MARGIN * side_3d * density
+        pieces = _split_islands(multi, tree, hull_pts, area_now, margin,
+                                SMART_SPLIT_GAIN)
+    else:
+        # Every island stays as it grew: one piece each.
+        pieces = {c: k for k, chs in enumerate(multi.values()) for c in chs}
     final = {}
     n_out = 0
     for i, chs in members.items():

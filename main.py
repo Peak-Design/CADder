@@ -1035,11 +1035,13 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
 
 
 def _smart_merge_objects(objs, pack="NONE", tiles=4,
-                         distortion=UV_SMART_DISTORTION, sharp=False):
+                         distortion=UV_SMART_DISTORTION, sharp=False,
+                         split=True):
     """Grow the Smart UV islands on every unique mesh.
 
     `distortion` is the Smart distortion setting in percent. `sharp` lets
-    Smart join across sharp edges as well.
+    Smart join across sharp edges as well. `split` lets Smart cut an island
+    where its pieces pack better.
 
     The tile an island has to fit comes from Pack UVs. One tile for each
     part, or no packing, gives every part its own. All parts together puts
@@ -1074,7 +1076,8 @@ def _smart_merge_objects(objs, pack="NONE", tiles=4,
         try:
             c, n = uv_mod.smart_merge(o.data, side_3d=side,
                                       distortion=distortion / 100.0,
-                                      sharp=bool(sharp))
+                                      sharp=bool(sharp),
+                                      split=bool(split))
         except Exception as e:
             print(f"UV smart merge failed on {o.name}: {e}")
             continue
@@ -2232,6 +2235,7 @@ def load_step(
     uv_closed_seams="SINGLE",
     uv_smart_distortion=UV_SMART_DISTORTION,
     uv_smart_sharp=False,
+    uv_smart_split=True,
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
@@ -2383,6 +2387,7 @@ def load_step(
         "uv_closed_seams": _uv_options["closed_seams"],
         "uv_smart_distortion": uv_smart_distortion,
         "uv_smart_sharp": uv_smart_sharp,
+        "uv_smart_split": uv_smart_split,
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
@@ -2703,7 +2708,8 @@ def load_step(
     # Smart lays the charts out as a net and puts the seams on its edges.
     if uv_mode == "SMART":
         _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
-                             uv_smart_distortion, uv_smart_sharp)
+                             uv_smart_distortion, uv_smart_sharp,
+                             uv_smart_split)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -3019,6 +3025,13 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "overlap the island and the island still fits the UV "
                     "tile. This gives fewer and larger islands",
         default=False)
+    uv_smart_split: bpy.props.BoolProperty(
+        name="Optimize island shape",
+        description="Cut an island along a join where the pieces pack "
+                    "better. An island shaped like a V, or with a long arm, "
+                    "fills little of the rectangle around it. Clear this "
+                    "option to keep every island whole",
+        default=True)
     box_uv_scale: bpy.props.FloatProperty(
         name="Box UV size", unit="LENGTH",
         description="World size of one UV tile for the Box Project mode",
@@ -3259,6 +3272,15 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    uv_smart_split: bpy.props.BoolProperty(
+        name="Optimize island shape",
+        description="Cut an island along a join where the pieces pack "
+                    "better. An island shaped like a V, or with a long arm, "
+                    "fills little of the rectangle around it. Clear this "
+                    "option to keep every island whole",
+        default=True,
+    )
+
     uv_closed_seams: bpy.props.EnumProperty(
         items=UV_CLOSED_ITEMS,
         name="Closed surfaces",
@@ -3398,6 +3420,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_closed_seams": self.uv_closed_seams,
             "uv_smart_distortion": self.uv_smart_distortion,
             "uv_smart_sharp": self.uv_smart_sharp,
+            "uv_smart_split": self.uv_smart_split,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
@@ -3478,6 +3501,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_closed_seams=self.uv_closed_seams,
                 uv_smart_distortion=self.uv_smart_distortion,
                 uv_smart_sharp=self.uv_smart_sharp,
+                uv_smart_split=self.uv_smart_split,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,

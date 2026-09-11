@@ -182,7 +182,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                          stored.get("uv_pack_tiles", 4),
                          stored.get("uv_smart_distortion",
                                     m.UV_SMART_DISTORTION),
-                         bool(stored.get("uv_smart_sharp", False))),
+                         bool(stored.get("uv_smart_sharp", False)),
+                         bool(stored.get("uv_smart_split", True))),
                         []).append(obj)
                 done += 1
                 wm.progress_update(done)
@@ -541,8 +542,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
     # Every UV key of the import record this panel is allowed to change.
     KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
-            "uv_smart_distortion", "uv_smart_sharp", "box_uv_scale",
-            "uv_pack", "uv_pack_tiles", "uv_pack_margin")
+            "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
+            "box_uv_scale", "uv_pack", "uv_pack_tiles", "uv_pack_margin")
 
     @classmethod
     def poll(cls, context):

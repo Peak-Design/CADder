@@ -625,6 +625,12 @@ check(len(rows) <= 5,
       "and it still joins it into a few islands (%d against %d, the "
       "largest %.0f%% of the surface)"
       % (len(rows), n_none, 100.0 * max(r[0] for r in rows) / total))
+rows_whole = islands(load(BLOCK_STEP, uv_mode="SMART", uv_smart_split=False),
+                     want_tris=True)
+worst = max(overlap_share(r[2]) for r in rows_whole)
+check(len(rows_whole) < len(rows) and worst < 0.01,
+      "with Optimize island shape off, the net stays whole (%d islands, "
+      "worst overlap %.1f%%)" % (len(rows_whole), 100.0 * worst))
 
 # ---- Smart bends a face that does not fit by a turn -----------------------
 # A rounded rim misses the straight edge of a rolled out wall by a few
@@ -786,7 +792,7 @@ def flat_pieces(arm):
     return me
 
 
-def pieces_after(arm, gain=None):
+def pieces_after(arm, gain=None, split=True):
     me = flat_pieces(arm)
     from STEPper_NEXT import uv as live
     old = live.SMART_SPLIT_GAIN
@@ -795,7 +801,7 @@ def pieces_after(arm, gain=None):
     try:
         # A tile larger than the arm and the square together, so the tile
         # never decides.
-        _charts, made = live.smart_merge(me, side_3d=40.0)
+        _charts, made = live.smart_merge(me, side_3d=40.0, split=split)
     finally:
         live.SMART_SPLIT_GAIN = old
     obj = bpy.data.objects.new("pieces", me)
@@ -810,6 +816,8 @@ check(pieces_after(True) == 2,
       "and the cut takes it off again, because the two pack better apart")
 check(pieces_after(False) == 1,
       "a strip along the whole edge stays joined")
+check(pieces_after(True, split=False) == 1,
+      "with Optimize island shape off, the arm stays on the square")
 
 # ---- Smart refuses a join that overlaps -----------------------------------
 # Five squares round one corner add up to 450 degrees. Laid flat one after

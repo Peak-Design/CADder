@@ -21,6 +21,7 @@ leaves some stretch behind.
 | **CAD Surfaces (Smart)** | New UV Map mode. Joins faces that meet smoothly into larger islands, bends a face to fit where it has to, and cuts an island where its pieces pack better. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands | +35% |
 | **Smart distortion** | How far Smart can bend a face to join it, 35% by default. 0 turns the bend off | none |
 | **Join sharp edges** | Smart joins across sharp edges too, after the smooth ones. A gear motor goes from 1,899 islands to 507. Off by default | +25% |
+| **Optimize island shape** | Smart cuts an island along a join where the pieces pack better, such as a V shape or a long arm. On by default. Clear it to keep every island whole | none |
 | **Tris to Quads** | Pairs the tessellation triangles back into quads. No vertex moves and the CAD shading is unchanged. On by default | +2% |
 | **Pack UVs** | Arranges the islands into one tile, one tile for each part, or a set number of UDIM tiles | +2% to +6%, per part +86% |
 | **Pack margin** | The space around each island. Raise it if a bake bleeds | none |

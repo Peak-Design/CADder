@@ -119,6 +119,7 @@ WANT = {
     "uv_closed_seams": "SPLIT",
     "uv_smart_distortion": 12.0,
     "uv_smart_sharp": True,
+    "uv_smart_split": False,
     "box_uv_scale": 2.5,
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,

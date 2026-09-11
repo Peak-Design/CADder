@@ -77,10 +77,10 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         wm.progress_begin(0, len(targets))
         done = 0
         failed = []
-        unwrap_objs = []
+        quad_objs = []
+        unwrap_objs = {}
         smart_objs = []
         smart_pack = ("NONE", 4)
-        all_objs = []
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
@@ -123,31 +123,17 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     lin_def = stored.get("lin_deflection", scene_lin)
                     ang_def = stored.get("ang_deflection", scene_ang)
 
-                # Restore per-import UV options for the apply path.
-                # Older imports stored uv_surface/uv_unwrap/uv_box booleans
-                # instead of uv_mode, so map them across.
-                uv_mode = stored.get("uv_mode")
-                if uv_mode is None:
-                    if stored.get("uv_box"):
-                        uv_mode = "BOX"
-                    elif stored.get("uv_unwrap"):
-                        uv_mode = "UNWRAP"
-                    elif stored.get("uv_surface", True):
-                        uv_mode = "SURFACE"
-                    else:
-                        uv_mode = "NONE"
-                m._uv_options["mode"] = uv_mode
-                m._uv_options["surface"] = uv_mode in ("SURFACE", "UNWRAP")
-                m._uv_options["unwrap"] = uv_mode == "UNWRAP"
-                m._uv_options["box"] = uv_mode == "BOX"
-                m._uv_options["normalize"] = stored.get("uv_normalize", True)
-                # Records written before the dropdown carry a boolean.
-                m._uv_options["closed_seams"] = stored.get(
-                    "uv_closed_seams",
-                    "SPLIT" if stored.get("uv_split_closed", True) else "NONE")
-                m._uv_options["merge_tangent"] = stored.get(
-                    "uv_merge_tangent", "NONE")
-                m._uv_options["box_scale"] = stored.get("box_uv_scale", 1.0)
+                # Restore per-import UV options for the apply path. Older
+                # records name the UV map in other terms (uv.migrate_settings).
+                uv_mod.migrate_settings(stored)
+                uv_mode = stored["uv_mode"]
+                m._set_uv_options(
+                    uv_mode, stored.get("uv_normalize", True),
+                    # Records written before the dropdown carry a boolean.
+                    stored.get("uv_closed_seams",
+                               "SPLIT" if stored.get("uv_split_closed", True)
+                               else "NONE"),
+                    stored.get("box_uv_scale", 1.0))
                 m._uv_options["unit_scale"] = stored.get(
                     "unit_scale", obj.get("STEP_applied_scale", 0.0) or 1.0)
                 reader.uv_world_scale = (
@@ -183,34 +169,34 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                         "description": obj.get("STEP_material_desc", ""),
                         "density": obj.get("STEP_material_density", 0.0),
                     })
-                if m._uv_options["unwrap"]:
-                    unwrap_objs.append(obj)
-                # Merge tangent, as the object was imported. Smart runs
-                # before the unwrap, All after it on CAD Surface parts.
-                merge = stored.get("uv_merge_tangent", "NONE")
-                if uv_mode in ("SURFACE", "UNWRAP") and merge == "SMART":
+                # The passes the import runs once the mesh exists, in the
+                # same order: quads, then Smart, then the unwrap.
+                if stored.get("tris_to_quads") and uv_mode != "BOX":
+                    quad_objs.append(obj)
+                if uv_mode in uv_mod.UNWRAP_MODES:
+                    unwrap_objs.setdefault(uv_mode, []).append(obj)
+                elif uv_mode == "SMART":
                     smart_objs.append(obj)
                     smart_pack = (stored.get("uv_pack", "NONE"),
                                   stored.get("uv_pack_tiles", 4))
-                elif uv_mode == "SURFACE" and merge == "ALL":
-                    all_objs.append((obj, stored.get("uv_unwrap_method",
-                                                     "CONFORMAL")))
                 done += 1
                 wm.progress_update(done)
+
+        if quad_objs:
+            m._tris_to_quads_objects(quad_objs)
 
         if smart_objs:
             m._smart_merge_objects(smart_objs, *smart_pack)
 
-        if unwrap_objs:
-            # Regenerated meshes are already scaled to scene units, so
-            # real-world UV mode needs no extra unit conversion
+        # One unwrap for each method, so every part gets the one it was
+        # imported with. Regenerated meshes are already scaled to scene
+        # units, so real-world UV mode needs no extra unit conversion.
+        for method, objs_m in unwrap_objs.items():
             m._unwrap_uv_objects(
-                unwrap_objs,
+                objs_m,
                 world_scale=(None if m._uv_options.get("normalize", True)
-                             else 1.0))
-
-        for obj, method in all_objs:
-            m._flatten_merged_objects([obj], method=method)
+                             else 1.0),
+                method=method)
 
         wm.progress_end()
 
@@ -549,9 +535,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     # Every UV key of the import record this panel is allowed to change.
-    KEYS = ("uv_mode", "uv_normalize", "uv_unwrap_method", "uv_closed_seams",
-            "uv_merge_tangent", "box_uv_scale", "uv_pack", "uv_pack_tiles",
-            "uv_pack_margin")
+    KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams", "box_uv_scale",
+            "uv_pack", "uv_pack_tiles", "uv_pack_margin")
 
     @classmethod
     def poll(cls, context):
@@ -585,6 +570,9 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
                 rec = {}
             if not isinstance(rec, dict):
                 rec = {}
+            # Put an older record in today's terms first. Its old keys would
+            # otherwise overrule the mode chosen here.
+            uv_mod.migrate_settings(rec)
             rec.update(want)
             obj["STEP_import_settings"] = json.dumps(rec)
 
@@ -611,15 +599,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             targets = from_cad
             made = "rebuilt %d mesh(es) from the CAD data" % len(from_cad)
 
-        # The passes the import runs after the UV map is written. The quad
-        # setting comes from the record, so a part keeps the pairing it was
-        # imported with.
-        try:
-            rec = json.loads(targets[0].get("STEP_import_settings", "{}"))
-        except Exception:
-            rec = {}
-        if rec.get("tris_to_quads") and want["uv_mode"] != "BOX":
-            m._tris_to_quads_objects(targets)
+        # Regenerate has paired the triangles again as the record asks, so
+        # packing is the one pass left.
         if want["uv_pack"] != "NONE":
             m._pack_uv_objects(targets, want["uv_pack"],
                                want["uv_pack_tiles"], want["uv_pack_margin"],

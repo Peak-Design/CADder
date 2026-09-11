@@ -53,6 +53,24 @@ from .formats import classes as formats_classes
 _uv_options = {"surface": True, "unwrap": False, "box": False,
                "box_scale": 1.0}
 
+
+def _set_uv_options(mode, normalize, closed_seams, box_scale):
+    """Set the UV options the mesh build reads, from the UV Map mode.
+
+    The import and Regenerate both build meshes through the same code, and
+    that code reads this dict instead of taking arguments. Every mode that
+    starts from the CAD surface writes the parametric UVs first. An unwrap
+    then replaces them, and they stay as the content to fall back on if it
+    fails.
+    """
+    _uv_options["mode"] = mode
+    _uv_options["surface"] = mode in uv_mod.SURFACE_MODES
+    _uv_options["unwrap"] = mode in uv_mod.UNWRAP_MODES
+    _uv_options["box"] = mode == "BOX"
+    _uv_options["normalize"] = normalize
+    _uv_options["closed_seams"] = closed_seams
+    _uv_options["box_scale"] = box_scale
+
 # LRU file cache with max entry limit
 MAX_FILE_CACHE = 10
 global_file_cache = OrderedDict()
@@ -661,31 +679,35 @@ UV_PACK_MARGIN = 0.005
 # The UV dropdowns are offered twice: in the import dialog and in the UV
 # panel, which makes the same map again for parts that are already in the
 # scene. One definition, so the two can never drift apart.
+# The enum numbers are what a .blend stores. Angle Based keeps number 2, the
+# number of the old Unwrap mode, because that mode always used the angle
+# based method. A scene saved with it opens on the same choice.
 UV_MODE_ITEMS = [
-    ("NONE", "None", "Do not create a UV map", 0),
-    ("SURFACE", "CAD Surface",
-     "One island per CAD face from the parametric surface "
-     "coordinates (fast)", 1),
-    ("UNWRAP", "Unwrap",
-     "Blender's angle-based unwrap with packed islands. Sharp CAD "
-     "edges act as seams. Slower on large assemblies", 2),
+    ("NONE", "None", "Do not make a UV map", 0),
+    ("SURFACE", "CAD Surfaces",
+     "One island for each CAD face, from the parametric coordinates of the "
+     "surface. The fastest mode, with the cleanest islands", 1),
+    ("SMART", "CAD Surfaces (Smart)",
+     "Join each CAD face to its smooth neighbors, one face at a time. A join "
+     "stays only if the island does not overlap itself and still fits the "
+     "UV tile", 4),
+    ("CONFORMAL", "Unwrap (Conformal)",
+     "Blender unwrap that keeps the angles. The sharp CAD edges are the "
+     "seams. Slower on large assemblies", 5),
+    ("ANGLE_BASED", "Unwrap (Angle Based)",
+     "Blender unwrap that spreads the error over the whole island. It can "
+     "fold a long cylinder on to itself", 2),
+    ("MINIMUM_STRETCH", "Unwrap (Minimum Stretch)",
+     "Blender unwrap that works to even out the stretch. The slowest mode",
+     6),
     ("BOX", "Box Project",
-     "Triplanar box projection with a world-unit tile size", 3),
+     "Project each face from the nearest of three directions, with a tile "
+     "size in world units", 3),
 ]
 
-UV_UNWRAP_ITEMS = [
-    ("CONFORMAL", "Conformal",
-     "Keeps angles. Blender's own default, and the steadiest on the "
-     "long curved faces of a CAD part", 0),
-    ("ANGLE_BASED", "Angle Based",
-     "Spreads the error over the whole island. Good on organic "
-     "shapes, and it can fold a long cylinder on to itself", 1),
-    ("MINIMUM_STRETCH", "Minimum Stretch",
-     "Works to even out the stretch. The slowest of the three", 2),
-]
-
-# Merge tangent Smart builds a net and cuts where the net needs it, so it
-# overrides this setting, and the dialog shows it inactive under Smart.
+# CAD Surfaces (Smart) builds a net and cuts where the net needs it, so it
+# has no use for this setting, and the dialog shows it only for the modes
+# that do.
 UV_CLOSED_ITEMS = [
     ("NONE", "None",
      "Leave closed surfaces alone. An unwrap cannot flatten them and "
@@ -696,18 +718,6 @@ UV_CLOSED_ITEMS = [
     ("SPLIT", "Split faces",
      "A seam on every boundary inside a closed region. A hole made "
      "of two half cylinders becomes two separate islands", 2),
-]
-
-UV_MERGE_ITEMS = [
-    ("NONE", "None",
-     "Leave the islands as the UV mode makes them. CAD Surface gives "
-     "one island for each CAD face, which packs tightly", 0),
-    ("ALL", "All",
-     "Join every run of tangent faces into one island. A bent sheet "
-     "metal part comes out as one flat pattern", 1),
-    ("SMART", "Smart",
-     "Join tangent faces one at a time, largest first, and keep only "
-     "the joins that do not overlap and still fit the UV tile", 2),
 ]
 
 UV_PACK_ITEMS = [
@@ -958,10 +968,11 @@ def _tris_to_quads_objects(objs):
 
 
 def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
-    """Angle-based unwrap with packed islands into the 'UVMap' layer.
+    """Blender's unwrap with packed islands into the 'UVMap' layer.
 
-    Runs Blender's unwrap operator once over all given objects in
-    multi-object edit mode. The imported seams (marked at sharp normal
+    `method` is the unwrap operator's own method name, which is also the
+    identifier of the unwrap mode in the UV Map dropdown. Runs Blender's
+    unwrap operator once over all given objects in multi-object edit mode. The imported seams (marked at sharp normal
     discontinuities between CAD faces) define the islands. The unwrap
     operator packs them into the 0-1 square per mesh.
 
@@ -1019,205 +1030,6 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
-
-
-def _uv_jump(loop, uvl, tol=1e-4):
-    """Do the two sides of this edge carry different UVs.
-
-    In CAD Surface mode each CAD face writes its own chart, so the UVs step
-    at every face boundary. A step across an edge that carries no seam is
-    therefore the mark of a tangent join, which is what a merged region is
-    made of.
-    """
-    other = loop.link_loop_radial_next
-    if other is loop:
-        return False
-    a, b = loop[uvl].uv, loop.link_loop_next[uvl].uv
-    oa, ob = other[uvl].uv, other.link_loop_next[uvl].uv
-    forward = (oa - a).length <= tol and (ob - b).length <= tol
-    reverse = (oa - b).length <= tol and (ob - a).length <= tol
-    return not (forward or reverse)
-
-
-def _merged_faces(me):
-    """The faces of every UV region that covers more than one CAD face.
-
-    A region is what stays joined once the seams are in. It spans more than
-    one CAD face when a UV step appears inside it.
-    """
-    bm = bmesh.new()
-    bm.from_mesh(me)
-    bm.faces.ensure_lookup_table()
-    uvl = bm.loops.layers.uv.active
-    if uvl is None:
-        bm.free()
-        return None, []
-    seen = [False] * len(bm.faces)
-    picked = []
-    for face in bm.faces:
-        if seen[face.index]:
-            continue
-        seen[face.index] = True
-        stack, members, merged = [face], [face], False
-        while stack:
-            cur = stack.pop()
-            for loop in cur.loops:
-                edge = loop.edge
-                if edge.seam or len(edge.link_faces) != 2:
-                    continue
-                if not merged and _uv_jump(loop, uvl):
-                    merged = True
-                other = (edge.link_faces[0] if edge.link_faces[1] is cur
-                         else edge.link_faces[1])
-                if not seen[other.index]:
-                    seen[other.index] = True
-                    members.append(other)
-                    stack.append(other)
-        if merged:
-            picked.extend(f.index for f in members)
-    bm.free()
-    return picked, []
-
-
-def _match_density(me, picked, normalize):
-    """Put the flattened islands at the texel density of the rest of the part.
-
-    Blender packs what it unwraps into the 0-1 square, which has nothing to
-    do with the scale the parametric islands are at. The factor is the ratio
-    of the two median densities, so one part still holds one density.
-    """
-    layer, uv = _uv_array(me)
-    if uv is None or not len(picked):
-        return
-    starts = np.empty(len(me.polygons), dtype=np.int32)
-    me.polygons.foreach_get("loop_start", starts)
-    counts = np.empty(len(me.polygons), dtype=np.int32)
-    me.polygons.foreach_get("loop_total", counts)
-    co = np.empty(len(me.vertices) * 3, dtype=np.float64)
-    me.vertices.foreach_get("co", co)
-    co = co.reshape(-1, 3)
-    vidx = np.empty(len(me.loops), dtype=np.int32)
-    me.loops.foreach_get("vertex_index", vidx)
-
-    def density(poly_ids):
-        vals = []
-        for p in poly_ids:
-            s, n = int(starts[p]), int(counts[p])
-            if n < 3:
-                continue
-            a2 = 0.0
-            a3 = 0.0
-            for k in range(1, n - 1):
-                p0, p1, p2 = uv[s], uv[s + k], uv[s + k + 1]
-                a2 += abs((p1[0] - p0[0]) * (p2[1] - p0[1])
-                          - (p2[0] - p0[0]) * (p1[1] - p0[1]))
-                q0, q1, q2 = (co[vidx[s]], co[vidx[s + k]],
-                              co[vidx[s + k + 1]])
-                a3 += np.linalg.norm(np.cross(q1 - q0, q2 - q0))
-            if a3 > 1e-16 and a2 > 1e-18:
-                vals.append(np.sqrt(a2 / a3))
-        return float(np.median(vals)) if vals else 0.0
-
-    hit = np.zeros(len(me.polygons), dtype=bool)
-    hit[picked] = True
-    rest = np.where(~hit)[0]
-    if not len(rest):
-        return
-    want = density(rest)
-    have = density(picked)
-    if not (want > 0.0 and have > 0.0):
-        return
-    rows = np.concatenate([np.arange(starts[p], starts[p] + counts[p])
-                           for p in picked])
-    uv[rows] *= want / have
-    if normalize:
-        # Normalize UVs promises the 0-1 square. A flat pattern at the
-        # density of the rest of the part can overrun it, so bring the whole
-        # part back down together and keep the islands proportional.
-        top = float(uv.max())
-        if top > 1.0:
-            uv /= top
-    layer.uv.foreach_set("vector", uv.ravel())
-
-
-def _flatten_merged_objects(objs, method="CONFORMAL"):
-    """Unwrap the CAD Surface regions that span more than one face.
-
-    Parametric coordinates cannot cross from one surface to another, so a
-    region that joins a plate, a bend and another plate cannot be written
-    that way. Blender flattens those regions instead, which gives the flat
-    pattern a press brake would make. A region that is one CAD face keeps
-    its parametric UVs: they are exact and cost nothing.
-    """
-    targets = []
-    seen = set()
-    for o in objs:
-        if (o is None or getattr(o, "type", None) != "MESH"
-                or o.data is None or o.data in seen
-                or not len(o.data.polygons)
-                or not len(o.data.uv_layers)):
-            continue
-        seen.add(o.data)
-        targets.append(o)
-    if not targets:
-        return
-    t0 = time.time()
-    work = []
-    for o in targets:
-        picked, _ = _merged_faces(o.data)
-        if not picked:
-            continue
-        sel = np.zeros(len(o.data.polygons), dtype=bool)
-        sel[picked] = True
-        o.data.polygons.foreach_set("select", sel)
-        vsel = np.zeros(len(o.data.vertices), dtype=bool)
-        loops = np.empty(len(o.data.loops), dtype=np.int32)
-        o.data.loops.foreach_get("vertex_index", loops)
-        starts = np.empty(len(o.data.polygons), dtype=np.int32)
-        o.data.polygons.foreach_get("loop_start", starts)
-        totals = np.empty(len(o.data.polygons), dtype=np.int32)
-        o.data.polygons.foreach_get("loop_total", totals)
-        for p in picked:
-            vsel[loops[starts[p]:starts[p] + totals[p]]] = True
-        o.data.vertices.foreach_set("select", vsel)
-        work.append((o, picked))
-    if not work:
-        return
-    view_layer = bpy.context.view_layer
-    normalize = bool(_uv_options.get("normalize", True))
-    try:
-        _deselect_all()
-        # The select mode has to be set before edit mode starts. Setting it
-        # afterwards flushes the selection through the other element types
-        # and can take faces the caller did not choose.
-        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
-        for o, _ in work:
-            o.select_set(True)
-        view_layer.objects.active = work[0][0]
-        bpy.ops.object.mode_set(mode="EDIT")
-        try:
-            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True)
-        except TypeError:
-            bpy.ops.uv.unwrap(method=method, margin=0.005)
-        bpy.ops.object.mode_set(mode="OBJECT")
-        n_faces = 0
-        for o, picked in work:
-            _match_density(o.data, picked, normalize)
-            n_faces += len(picked)
-        print("UV merge tangent: %d region face(s) on %d mesh(es) in %.2fs"
-              % (n_faces, len(work), time.time() - t0))
-    except Exception as e:
-        print(f"UV merge tangent failed: {e}")
-        try:
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception:
-            pass
-    finally:
-        for o, _ in work:
-            try:
-                o.select_set(False)
-            except RuntimeError:
-                pass
 
 
 def _smart_merge_objects(objs, pack="NONE", tiles=4):
@@ -1698,12 +1510,11 @@ def _compute_edge_attributes(mesh):
     sharp_keys = int_edge_keys[discontinuous]
     seam_keys = sharp_keys  # seams only where normals actually split
 
-    # Merge tangent does not change the seams here. None and All leave them
-    # where the sharp edges put them, and Smart decides its own later, once
-    # the mesh exists and its charts can be laid out. Cutting every CAD face
-    # boundary here would also undo Closed surfaces: a hole made of two half
-    # cylinders can only stay in one island while the boundary between its
-    # halves carries no seam.
+    # Smooth joins between CAD faces get no seam here. Smart decides its own
+    # later, once the mesh exists and its charts can be laid out. Cutting
+    # every CAD face boundary here would also undo Closed surfaces: a hole
+    # made of two half cylinders can only stay in one island while the
+    # boundary between its halves carries no seam.
     # --- Parametric closure seams (closed cylinders/cones/tori/splines) ---
     # A closed face has NO sharp edge along its parametric seam, so unwrap
     # has nowhere to cut and produces a degenerate result. Detection: OCC
@@ -2411,33 +2222,29 @@ def load_step(
     uv_mode="SURFACE",
     uv_normalize=True,
     uv_closed_seams="SINGLE",
-    uv_merge_tangent="NONE",
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
     uv_pack_tiles=4,
     uv_pack_margin=UV_PACK_MARGIN,
-    uv_unwrap_method="CONFORMAL",
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
     separate_solids=False,
+    # Older records and scripts. Both now live in uv_mode, and a refresh
+    # passes a record back in unchanged.
+    uv_merge_tangent=None,
+    uv_unwrap_method=None,
 ):
     from . import importer
 
     global _debug_timing
     _debug_timing = _get_addon_prefs().debug_timing
 
-    # One "UVMap" layer. Its content is chosen by uv_mode. UNWRAP writes
-    # the surface UVs first (fallback content) and unwraps in place.
-    _uv_options["mode"] = uv_mode
-    _uv_options["surface"] = uv_mode in ("SURFACE", "UNWRAP")
-    _uv_options["unwrap"] = uv_mode == "UNWRAP"
-    _uv_options["box"] = uv_mode == "BOX"
-    _uv_options["normalize"] = uv_normalize
-    _uv_options["closed_seams"] = uv_closed_seams
-    _uv_options["merge_tangent"] = uv_merge_tangent
-    _uv_options["box_scale"] = box_uv_scale
+    uv_mode = uv_mod.migrate_settings({
+        "uv_mode": uv_mode, "uv_unwrap_method": uv_unwrap_method,
+        "uv_merge_tangent": uv_merge_tangent})["uv_mode"]
+    _set_uv_options(uv_mode, uv_normalize, uv_closed_seams, box_uv_scale)
 
     (hierarchy_flat, hierarchy_tree, hierarchy_empties,
      hierarchy_instances) = choose_hierarchy_types(htypes)
@@ -2564,13 +2371,11 @@ def load_step(
         "uv_mode": _uv_options["mode"],
         "uv_normalize": _uv_options["normalize"],
         "uv_closed_seams": _uv_options["closed_seams"],
-        "uv_merge_tangent": _uv_options["merge_tangent"],
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
         "uv_pack_tiles": uv_pack_tiles,
         "uv_pack_margin": uv_pack_margin,
-        "uv_unwrap_method": uv_unwrap_method,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -2868,7 +2673,7 @@ def load_step(
         _print_phase2_times()
     print("\n" + repr(step_reader.import_problems))
 
-    # Optional packed angle-based unwrap (unique meshes only. linked
+    # Optional packed unwrap (unique meshes only. linked
     # copies share the datablock and get it for free). Meshes are still in
     # file units here, so real-world mode converts through unit_scale.
     # Quads first: the unwrap then has about half the faces to flatten,
@@ -2884,8 +2689,7 @@ def load_step(
     pack_scale = bool(uv_normalize)
     rescales = packing and (pack_scale or uv_pack == "UDIM")
     # Smart lays the charts out as a net and puts the seams on its edges.
-    # In Unwrap mode those seams then decide what the unwrap flattens.
-    if uv_mode in ("SURFACE", "UNWRAP") and uv_merge_tangent == "SMART":
+    if uv_mode == "SMART":
         _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
@@ -2893,14 +2697,7 @@ def load_step(
             world_scale=(None if (_uv_options.get("normalize", True)
                                   or rescales)
                          else _uv_options["unit_scale"]),
-            method=uv_unwrap_method)
-
-    # CAD Surface writes one chart for each surface. All flattens every
-    # region that spans more than one surface, because no parameter space
-    # covers two.
-    if uv_mode == "SURFACE" and uv_merge_tangent == "ALL":
-        _flatten_merged_objects(created_names.values(),
-                                method=uv_unwrap_method)
+            method=uv_mode)
 
     if packing:
         _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
@@ -3182,27 +2979,18 @@ class PG_Stepper(bpy.types.PropertyGroup):
     # parts most likely have.
     uv_mode: bpy.props.EnumProperty(
         items=UV_MODE_ITEMS, name="UV Map",
-        description="What to put in the UVMap layer of the selected parts",
+        description="How to make the UVMap layer of the selected parts",
         default="SURFACE")
     uv_normalize: bpy.props.BoolProperty(
         name="Normalize UVs",
         description="Fit the UVs to the 0-1 square. Turn this off to scale "
                     "them to real world scene units instead",
         default=False)
-    uv_unwrap_method: bpy.props.EnumProperty(
-        items=UV_UNWRAP_ITEMS, name="Unwrap method",
-        description="How the Unwrap mode flattens each island",
-        default="CONFORMAL")
     uv_closed_seams: bpy.props.EnumProperty(
         items=UV_CLOSED_ITEMS, name="Closed surfaces",
         description="What to do where a cylinder, cone, sphere or torus "
                     "closes on itself. This does not change the shading",
         default="SINGLE")
-    uv_merge_tangent: bpy.props.EnumProperty(
-        items=UV_MERGE_ITEMS, name="Merge tangent",
-        description="What to do where two CAD faces meet smoothly, such as "
-                    "a plate and its bend. This does not change the shading",
-        default="NONE")
     box_uv_scale: bpy.props.FloatProperty(
         name="Box UV size", unit="LENGTH",
         description="World size of one UV tile for the Box Project mode",
@@ -3430,14 +3218,6 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default="SINGLE",
     )
 
-    uv_merge_tangent: bpy.props.EnumProperty(
-        items=UV_MERGE_ITEMS,
-        name="Merge tangent",
-        description="What to do where two CAD faces meet smoothly, such as "
-                    "a plate and its bend. This does not change the shading",
-        default="NONE",
-    )
-
     uv_pack: bpy.props.EnumProperty(
         items=UV_PACK_ITEMS,
         name="Pack UVs",
@@ -3455,13 +3235,6 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=4,
         min=1,
         max=100,
-    )
-
-    uv_unwrap_method: bpy.props.EnumProperty(
-        items=UV_UNWRAP_ITEMS,
-        name="Unwrap method",
-        description="How the Unwrap UV mode flattens each island",
-        default="CONFORMAL",
     )
 
     uv_pack_margin: bpy.props.FloatProperty(
@@ -3572,13 +3345,11 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
             "uv_closed_seams": self.uv_closed_seams,
-            "uv_merge_tangent": self.uv_merge_tangent,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
             "uv_pack_tiles": self.uv_pack_tiles,
             "uv_pack_margin": self.uv_pack_margin,
-            "uv_unwrap_method": self.uv_unwrap_method,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -3652,13 +3423,11 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_mode=self.uv_mode,
                 uv_normalize=self.uv_normalize,
                 uv_closed_seams=self.uv_closed_seams,
-                uv_merge_tangent=self.uv_merge_tangent,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,
                 uv_pack_tiles=self.uv_pack_tiles,
                 uv_pack_margin=self.uv_pack_margin,
-                uv_unwrap_method=self.uv_unwrap_method,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,
@@ -4364,23 +4133,7 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
         prg = context.scene.stepper
         layout = self.layout
         col = layout.column()
-        col.prop(prg, "uv_mode")
-        sub = col.row()
-        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
-        sub.prop(prg, "uv_normalize")
-        sub = col.row()
-        sub.active = prg.uv_mode == "BOX"
-        sub.prop(prg, "box_uv_scale")
-        sub = col.row()
-        sub.active = prg.uv_mode == "UNWRAP"
-        sub.prop(prg, "uv_unwrap_method")
-        sub = col.row()
-        sub.active = (prg.uv_mode in {"SURFACE", "UNWRAP"}
-                      and prg.uv_merge_tangent != "SMART")
-        sub.prop(prg, "uv_closed_seams")
-        sub = col.row()
-        sub.active = prg.uv_mode in {"SURFACE", "UNWRAP"}
-        sub.prop(prg, "uv_merge_tangent")
+        import_ui.draw_uv_mode(prg, col)
         col.prop(prg, "uv_pack")
         sub = col.row()
         sub.active = prg.uv_pack == "UDIM"

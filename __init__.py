@@ -99,7 +99,7 @@
 #   - Update notice in the sidebar with a download link for your platform,
 #     plus a Ko-fi link, and all user facing copy rewritten in Simplified
 #     Technical English
-#   - v2.5.0: the UV release. CAD Surface UVs now carry the proportions of
+#   - v2.5.0: the UV release. CAD Surfaces UVs now carry the proportions of
 #     the surface. OCC hands back raw parameters, and on a cylinder u is an
 #     angle while v is a length, so a drum arrived as a thin tall ribbon.
 #     Each direction is scaled by the length of its own derivative, which
@@ -122,9 +122,12 @@
 #     same size (9.2 to 1.0). Where the packer may resize, it averages the
 #     island scale first (Box Project 1.2 to 1.0, all parts in one tile
 #     17.2 to 1.0)
-#   - New import option "Unwrap method": Conformal (the default), Angle
-#     Based or Minimum Stretch. The unwrap was fixed at angle based, which
-#     can fold a long cylinder on to itself
+#   - The UV Map dropdown holds every way to make the UVs: None, CAD
+#     Surfaces, CAD Surfaces (Smart), Unwrap (Conformal), Unwrap (Angle
+#     Based), Unwrap (Minimum Stretch) and Box Project. The unwrap was fixed
+#     at angle based, which can fold a long cylinder on to itself. The old
+#     Unwrap mode maps to Unwrap (Angle Based), so a refresh of an older
+#     import makes the same map (uv.migrate_settings)
 #   - New import option "Pack UVs": None, all parts together, each part on
 #     its own, or into a set number of UDIM tiles. The islands used to keep
 #     whatever place the UV mode gave them, which on 1000 parts spread them
@@ -139,16 +142,21 @@
 #     tessellation triangles back into quads, which takes 1000 parts from
 #     540,000 faces to 285,000 for about 2 percent of the import time. No
 #     vertex moves and the CAD shading is unchanged
-#   - New import option "Merge tangent": None, All or Smart. A sheet metal
-#     part is a plate, a bend and another plate, and none of those
-#     boundaries is sharp, so the run is one continuous surface that a
-#     press brake flattens into one rectangle. All joins such a run into
-#     one island. Smart builds the islands one face at a time, the way a
-#     paper model is cut out, and keeps a join only if the island does not
-#     land on itself and still fits the UV tile (uv.smart_merge)
+#   - New UV Map mode "CAD Surfaces (Smart)". A sheet metal part is a
+#     plate, a bend and another plate, and none of those boundaries is
+#     sharp, so the run is one continuous surface that a press brake
+#     flattens into one rectangle. Smart builds the islands one face at a
+#     time, the way a paper model is cut out, and keeps a join only if the
+#     island does not land on itself and still fits the UV tile
+#     (uv.smart_merge)
+#   - Regenerate pairs the triangles into quads again and unwraps with the
+#     method the part was imported with. It left the triangles and always
+#     used Conformal
+#   - Tris to Quads and Clean Up Meshes keep the CAD shading. Both went
+#     through bmesh, which moves custom normals when faces join
 #   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
 #     selected parts again with the same settings as the import dialog, so
-#     one part can get a treatment its neighbour does not. It replaces the
+#     one part can get a treatment its neighbor does not. It replaces the
 #     Box Project UVs button, which is now one mode of its dropdown
 #   - The STEPper NEXT sidebar tab now sits after Item, Tool and View. A
 #     panel with no header registers in front of every panel that has one,

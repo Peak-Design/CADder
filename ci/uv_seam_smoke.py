@@ -96,7 +96,7 @@ def load(mode):
     bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
     m._cache_drop(STEP)
     m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z",
-                uv_mode="UNWRAP", uv_closed_seams=mode)
+                uv_mode="CONFORMAL", uv_closed_seams=mode)
     out = {}
     for o in bpy.data.objects:
         if o.type != "MESH" or not len(o.data.polygons):

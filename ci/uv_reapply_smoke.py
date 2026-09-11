@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The UV panel: can one part get a different UV map from its neighbour?
+"""The UV panel: can one part get a different UV map from its neighbor?
 
     blender -b --factory-startup --python-exit-code 1 -P ci/uv_reapply_smoke.py
 
@@ -89,8 +89,7 @@ def load(**kw):
     bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
     m._cache_drop(STEP)
     opts = dict(htypes="FLAT", up_as="Z", tris_to_quads=False,
-                uv_mode="SURFACE", uv_merge_tangent="NONE",
-                uv_normalize=False)
+                uv_mode="SURFACE", uv_normalize=False)
     opts.update(kw)
     m.load_step(bpy.context, STEP, **opts)
     bpy.context.view_layer.update()
@@ -157,7 +156,7 @@ before_a, before_b = n_islands(a), n_islands(b)
 keep_b = uv_of(b)
 check(before_a == before_b,
       "the two plates start alike (%d islands each)" % before_a)
-apply_to(a, uv_mode="SURFACE", uv_merge_tangent="ALL", uv_pack="NONE")
+apply_to(a, uv_mode="SMART", uv_pack="NONE")
 after_a = n_islands(a)
 check(after_a < before_a,
       "the selected plate is now one flat pattern (%d islands against %d)"
@@ -167,7 +166,7 @@ check(np.array_equal(uv_of(b), keep_b),
 
 # ---- it matches what an import with the same settings makes --------------
 print("\n== the result matches the import that would have made it")
-direct = load(uv_merge_tangent="ALL")[0]
+direct = load(uv_mode="SMART")[0]
 check(n_islands(direct) == after_a,
       "the panel and the import agree (%d islands against %d)"
       % (n_islands(direct), after_a))
@@ -180,8 +179,7 @@ a, b = load()[:2]
 verts_before = np.empty(len(a.data.vertices) * 3, dtype=np.float64)
 a.data.vertices.foreach_get("co", verts_before)
 uv_before = uv_of(a)
-apply_to(a, uv_mode="BOX", box_uv_scale=0.05, uv_merge_tangent="NONE",
-         uv_pack="NONE")
+apply_to(a, uv_mode="BOX", box_uv_scale=0.05, uv_pack="NONE")
 verts_after = np.empty(len(a.data.vertices) * 3, dtype=np.float64)
 a.data.vertices.foreach_get("co", verts_after)
 check(np.array_equal(verts_before, verts_after),
@@ -193,15 +191,46 @@ check(not np.array_equal(uv_before, uv_of(a)), "and the UVs did change")
 # here, not the one the import made.
 print("\n== the choice is recorded on the object")
 a, b = load()[:2]
-apply_to(a, uv_mode="UNWRAP", uv_unwrap_method="ANGLE_BASED",
-         uv_merge_tangent="SMART", uv_pack="NONE")
+apply_to(a, uv_mode="ANGLE_BASED", uv_pack="NONE")
 rec = str(a.get("STEP_import_settings", ""))
-check('"uv_mode": "UNWRAP"' in rec and '"ANGLE_BASED"' in rec
-      and '"SMART"' in rec,
-      "the record carries the mode, the method and the merge setting")
+check('"uv_mode": "ANGLE_BASED"' in rec,
+      "the record carries the mode")
 rec_b = str(b.get("STEP_import_settings", ""))
 check('"uv_mode": "SURFACE"' in rec_b,
       "and the record of the other plate is untouched")
+
+# ---- Regenerate repeats the import ---------------------------------------
+# Regenerate builds the mesh again from the CAD data, and then has to run
+# the passes the import ran after it: the quads and the unwrap, with the
+# method the part was imported with. It once left the triangles alone and
+# always unwrapped with Conformal. A plate unwraps the same with every
+# method, so the check reads the method Regenerate asks for.
+print("\n== Regenerate makes the map the import made")
+a = load(uv_mode="ANGLE_BASED", tris_to_quads=True)[0]
+faces = len(a.data.polygons)
+# The load above enabled the addon again, which loads the module again, so
+# the wrapper goes on the module that is live now.
+live = sys.modules["STEPper_NEXT.main"]
+asked = []
+real_unwrap = live._unwrap_uv_objects
+
+
+def spy(objs, world_scale=None, method="CONFORMAL"):
+    asked.append(method)
+    return real_unwrap(objs, world_scale=world_scale, method=method)
+
+
+live._unwrap_uv_objects = spy
+for o in bpy.context.view_layer.objects:
+    o.select_set(o == a)
+bpy.context.view_layer.objects.active = a
+bpy.ops.stepper.regenerate(use_scene_settings=False)
+live._unwrap_uv_objects = real_unwrap
+check(len(a.data.polygons) == faces,
+      "the quads come back (%d faces against %d)"
+      % (len(a.data.polygons), faces))
+check(asked == ["ANGLE_BASED"],
+      "and the unwrap uses the method of the import (%s)" % asked)
 
 if FAILS:
     print("\nuv_reapply_smoke: FAILED (%d)\n  %s"

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Merge tangent faces: does a bent plate come out as its flat pattern?
+"""CAD Surfaces (Smart): does a bent plate come out as its flat pattern?
 
     blender -b --factory-startup --python-exit-code 1 -P ci/uv_tangent_smoke.py
 
@@ -359,28 +359,23 @@ def islands(objs, want_tris=False):
     return out
 
 
-# ---- None leaves both modes as they were ---------------------------------
-# None must not touch the seams. Cutting every CAD face boundary here would
-# undo Closed surfaces, whose whole job is to keep a hole in one island.
-print("\n== None is the layout each UV mode already made")
-surf_none = islands(load(uv_mode="SURFACE", uv_merge_tangent="NONE"))
-unwr_none = islands(load(uv_mode="UNWRAP", uv_merge_tangent="NONE"))
-unwr_all = islands(load(uv_mode="UNWRAP", uv_merge_tangent="ALL"))
-check(len(unwr_none) == len(unwr_all),
-      "Unwrap with None matches Unwrap with All (%d against %d islands)"
-      % (len(unwr_none), len(unwr_all)))
+# ---- CAD Surfaces keeps the faces apart ----------------------------------
+print("\n== CAD Surfaces is one island for each face")
+surf_none = islands(load(uv_mode="SURFACE"))
 check(not any(a3 > FLAT_AREA * 0.5 for a3, _a2 in surf_none),
-      "CAD Surface with None keeps the plate in separate faces")
+      "the plate stays in separate faces")
 
-# ---- All gives the flat pattern ------------------------------------------
+# ---- Smart gives the flat pattern ----------------------------------------
 # This runs with the default Closed surfaces setting, Single seam, which is
-# the setting that once cut the bend lines of a plate with holes.
-print("\n== All flattens the bent plate into one island, holes and all")
-surf_all = islands(load(uv_mode="SURFACE", uv_merge_tangent="ALL"))
-check(len(surf_all) < len(surf_none),
-      "it needs fewer islands than None (%d against %d)"
-      % (len(surf_all), len(surf_none)))
-big = [(a3, a2) for a3, a2 in surf_all if a3 > FLAT_AREA * 0.8]
+# the setting that once cut the bend lines of a plate with holes. Nothing on
+# this plate overlaps and everything fits its tile, so Smart has no reason
+# to cut anything.
+print("\n== Smart flattens the bent plate into one island, holes and all")
+surf_smart = islands(load(uv_mode="SMART"))
+check(len(surf_smart) < len(surf_none),
+      "it needs fewer islands than CAD Surfaces (%d against %d)"
+      % (len(surf_smart), len(surf_none)))
+big = [(a3, a2) for a3, a2 in surf_smart if a3 > FLAT_AREA * 0.8]
 check(len(big) == 2,
       "the two plate faces each come back as one island (%d found)"
       % len(big))
@@ -390,30 +385,12 @@ if big:
     check(worst < 0.02,
           "and each holds its surface area within %.1f%%" % (100.0 * worst))
 
-# ---- Smart on the bent plate ---------------------------------------------
-# Nothing on this plate overlaps and everything fits its tile, so Smart has
-# no reason to cut anything that All joins. It used to cut the thin edge on
-# a length to width rule, even where the tile had room for it.
-print("\n== Smart merges what fits")
-surf_smart = islands(load(uv_mode="SURFACE", uv_merge_tangent="SMART"))
-big = [a3 for a3, _a2 in surf_smart if a3 > FLAT_AREA * 0.8]
-check(len(big) == 2,
-      "the plate faces are merged (%d found)" % len(big))
-check(len(surf_smart) == len(surf_all),
-      "and so is the thin edge, which fits (%d islands against %d for All)"
-      % (len(surf_smart), len(surf_all)))
-
-# ---- the density survives the flattening ---------------------------------
-# The flattened islands are packed into 0-1 by the unwrap, which has nothing
-# to do with the scale the parametric islands are at. The addon puts them
-# back at the density of the rest of the part.
+# ---- the density survives the join ---------------------------------------
 print("\n== one part still holds one texel density")
-for label, rows in (("All", surf_all), ("Smart", surf_smart)):
-    d = [math.sqrt(a2 / a3) for a3, a2 in rows if a3 > 1e-9 and a2 > 1e-12]
-    spread = max(d) / min(d) if len(d) > 1 else 1.0
-    check(spread < 1.15,
-          "%s: %.2fx between the densest and the sparsest island"
-          % (label, spread))
+d = [math.sqrt(a2 / a3) for a3, a2 in surf_smart if a3 > 1e-9 and a2 > 1e-12]
+spread = max(d) / min(d) if len(d) > 1 else 1.0
+check(spread < 1.15,
+      "%.2fx between the densest and the sparsest island" % spread)
 
 # ---- Smart keeps a long flat pattern --------------------------------------
 # A plate 1500 mm wide flattens to about 113 by 1500 mm. Each leg is one CAD
@@ -421,7 +398,7 @@ for label, rows in (("All", surf_all), ("Smart", surf_smart)):
 # smaller than that. The whole pattern then fits it.
 print("\n== Smart keeps a long flat pattern whole")
 long_area = PROFILE * LONG_WIDTH
-rows = islands(load(LONG_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART"))
+rows = islands(load(LONG_STEP, uv_mode="SMART"))
 big = [a3 for a3, _a2 in rows if a3 > long_area * 0.8]
 check(len(big) == 2,
       "both faces of a 13 to 1 plate stay merged (%d found)" % len(big))
@@ -519,9 +496,8 @@ def stretched(objs, limit=5.0):
 # where the surface normal goes all the way round. If the test missed that,
 # the pipe would stay uncut and fold when it is flattened.
 print("\n== a pipe with holes still gets its cut")
-for label, kw in (("Unwrap", dict(uv_mode="UNWRAP")),
-                  ("CAD Surface, Merge tangent All",
-                   dict(uv_mode="SURFACE", uv_merge_tangent="ALL"))):
+for label, kw in (("Unwrap (Conformal)", dict(uv_mode="CONFORMAL")),
+                  ("CAD Surfaces (Smart)", dict(uv_mode="SMART"))):
     objs = load(PIPE_STEP, **kw)
     share = stretched(objs)
     n = folded(objs)
@@ -530,24 +506,16 @@ for label, kw in (("Unwrap", dict(uv_mode="UNWRAP")),
           % (label, 100.0 * share, n))
 
 # ---- Smart does not melt a rounded block ---------------------------------
-# A rounded block is tangent all the way round. All makes it one region and
-# flattens it, and a closed surface in one piece has to land on itself.
-# Smart builds a net one face at a time, the way a paper model is cut, and a
-# net never needs the closed surface in one piece.
+# A rounded block is tangent all the way round, and a closed surface
+# flattened in one piece has to land on itself. Smart builds a net one face
+# at a time, the way a paper model is cut, and a net never needs the closed
+# surface in one piece.
 print("\n== Smart does not melt a rounded block")
-worst_all = max(overlap_share(r[2]) for r in
-                islands(load(BLOCK_STEP, uv_mode="SURFACE",
-                             uv_merge_tangent="ALL"), want_tris=True))
-check(worst_all > 0.10,
-      "All overlaps the block on itself (%.0f%% of an island), so the test "
-      "has something to catch" % (100.0 * worst_all))
-rows = islands(load(BLOCK_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART"),
-               want_tris=True)
+rows = islands(load(BLOCK_STEP, uv_mode="SMART"), want_tris=True)
 worst = max(overlap_share(r[2]) for r in rows)
 check(worst < 0.01, "Smart leaves no island on itself (worst %.1f%%)"
       % (100.0 * worst))
-n_none = len(islands(load(BLOCK_STEP, uv_mode="SURFACE",
-                          uv_merge_tangent="NONE")))
+n_none = len(islands(load(BLOCK_STEP, uv_mode="SURFACE")))
 total = sum(r[0] for r in rows)
 check(len(rows) < n_none and max(r[0] for r in rows) > 0.8 * total,
       "and it still joins most of it (%d islands against %d, the largest "
@@ -610,10 +578,10 @@ check(worst < 0.01,
 # large plate the tile is far bigger, and the same pattern stays whole.
 print("\n== Smart trims a pattern only when it does not fit")
 stair_flat = STAIR_PROFILE * STAIR_WIDTH
-alone = islands(load(STAIR_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART",
-                     uv_pack="OBJECT", _only="stair"))
-shared = islands(load(STAIR_STEP, uv_mode="SURFACE", uv_merge_tangent="SMART",
-                      uv_pack="ALL", _only="stair"))
+alone = islands(load(STAIR_STEP, uv_mode="SMART", uv_pack="OBJECT",
+                     _only="stair"))
+shared = islands(load(STAIR_STEP, uv_mode="SMART", uv_pack="ALL",
+                      _only="stair"))
 biggest_alone = max(a3 for a3, _a2 in alone)
 whole_shared = [a3 for a3, _a2 in shared if a3 > 0.85 * stair_flat]
 check(biggest_alone < 0.8 * stair_flat,
@@ -625,10 +593,10 @@ check(len(whole_shared) == 2,
 
 # ---- a refresh reproduces it ---------------------------------------------
 print("\n== the setting is stamped on the object")
-objs = load(uv_mode="SURFACE", uv_merge_tangent="SMART")
+objs = load(uv_mode="SMART")
 rec = str(objs[0].get("STEP_import_settings")
           or objs[0].get("import_record_json") or "")
-check("uv_merge_tangent" in rec, "uv_merge_tangent reaches the record")
+check('"uv_mode": "SMART"' in rec, "the mode reaches the record")
 
 if FAILS:
     print("\nuv_tangent_smoke: FAILED (%d)\n  %s"

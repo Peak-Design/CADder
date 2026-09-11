@@ -14,6 +14,7 @@ Two things are checked, and the first is the one that rots
 2. The values survive a round trip: save them, throw the operator away,
    seed a new one from preferences, and read them back.
 """
+import json
 import os
 import sys
 
@@ -113,12 +114,10 @@ WANT = {
     "lin_deflection_rel": 0.0123,
     "detail_level": 42,
     "eng_materials": False,
-    "uv_mode": "UNWRAP",
+    "uv_mode": "MINIMUM_STRETCH",
     "uv_normalize": True,
     "uv_closed_seams": "SPLIT",
     "box_uv_scale": 2.5,
-    "uv_unwrap_method": "ANGLE_BASED",
-    "uv_merge_tangent": "SMART",
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,
     "uv_pack_margin": 0.0123,
@@ -189,6 +188,39 @@ check(getattr(restored, "quality_preset", None) is None,
       "quality_preset stays untouched in simple mode, so the detail slider "
       "still wins")
 prefs.simpler_parameters = False
+
+print("\n== settings saved by an older version come back as the same map")
+# The UV Map dropdown holds what used to be three settings. A user who last
+# imported with 2.4 Unwrap, or with a 2.5 test build, must get the same
+# UV map on the next import, not a silent fall back to the default.
+from STEPper_NEXT import uv as uv_mod
+OLD = (
+    ({"uv_mode": "UNWRAP"}, "ANGLE_BASED"),
+    ({"uv_mode": "UNWRAP", "uv_unwrap_method": "CONFORMAL"}, "CONFORMAL"),
+    ({"uv_mode": "SURFACE", "uv_merge_tangent": "SMART"}, "SMART"),
+    ({"uv_mode": "SURFACE", "uv_merge_tangent": "ALL"}, "SMART"),
+    ({"uv_mode": "SURFACE", "uv_merge_tangent": "NONE"}, "SURFACE"),
+    ({"uv_box": True}, "BOX"),
+    ({"uv_surface": False}, "NONE"),
+)
+wrong = []
+for old, want in OLD:
+    got = uv_mod.migrate_settings(dict(old))
+    if got["uv_mode"] != want or "uv_merge_tangent" in got \
+            or "uv_unwrap_method" in got:
+        wrong.append("%s -> %s" % (old, got))
+check(not wrong, "each older record maps to the mode that makes the same "
+      "map (%s)" % ("; ".join(wrong) if wrong else "%d cases" % len(OLD)))
+prefs.simpler_parameters = False
+prefs.last_import_settings = json.dumps(
+    {"uv_mode": "UNWRAP", "uv_unwrap_method": "CONFORMAL"})
+import_ui._session_seeded.clear()
+restored = FakeOp()
+restored.bl_idname = "import_scene.occ_import_step"
+restored.uv_mode = None
+import_ui.seed_from_prefs(restored, prefs)
+check(restored.uv_mode == "CONFORMAL",
+      "the import dialog opens on it (%r)" % restored.uv_mode)
 
 print("\n== turning the option off stops the saving")
 prefs.remember_import_settings = False

@@ -423,7 +423,7 @@ def equalize_2d_points(pts):
     return pts
 
 
-# How far each CAD face is nudged in UV, to keep it off its neighbours.
+# How far each CAD face is nudged in UV, to keep it off its neighbors.
 # Blender joins two faces into one UV island when their shared edge carries
 # the same UV on both sides, and it compares with a tolerance of 1e-4. This
 # has to be clearly larger than that and still small enough to be invisible:

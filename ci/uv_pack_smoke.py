@@ -76,7 +76,7 @@ def load(**kw):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
     m._cache_drop(STEP)
-    opts = dict(htypes="FLAT", up_as="Z", uv_mode="UNWRAP")
+    opts = dict(htypes="FLAT", up_as="Z", uv_mode="CONFORMAL")
     opts.update(kw)
     m.load_step(bpy.context, STEP, **opts)
     # matrix_world holds the value it had before the import until the
@@ -383,7 +383,7 @@ objs = load(uv_pack="UDIM", uv_pack_tiles=3)
 rec = str(objs[0].get("STEP_import_settings")
           or objs[0].get("import_record_json") or "")
 check(all(k in rec for k in ("uv_pack", "uv_pack_tiles", "uv_pack_margin",
-                            "uv_unwrap_method")),
+                            '"uv_mode": "CONFORMAL"')),
       "every packing setting is stamped on the object")
 
 if FAILS:

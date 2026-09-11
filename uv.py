@@ -87,6 +87,46 @@ def add_box_uv(me, scale=1.0, name="UVMap"):
 # That is how a paper model is unfolded, and the checks below decide which
 # folds the net may make.
 
+# The unwrap modes of the UV Map dropdown. Each is one method of Blender's
+# unwrap operator, and the identifiers are the operator's own, so a mode is
+# passed straight through as the method.
+UNWRAP_MODES = ("CONFORMAL", "ANGLE_BASED", "MINIMUM_STRETCH")
+
+# The modes that start from the parametric UVs of the CAD surface. The
+# unwrap modes keep them as the content to fall back on if the unwrap fails.
+SURFACE_MODES = ("SURFACE", "SMART") + UNWRAP_MODES
+
+
+def migrate_settings(d):
+    """Put the UV settings of an older import in the terms of this version.
+
+    The UV Map dropdown holds what used to be three settings. 2.4 stored
+    uv_mode "UNWRAP", which always used the angle based method, and older
+    records still carry uv_surface, uv_unwrap and uv_box booleans. The 2.5
+    test builds stored the unwrap method and the tangent merge on their
+    own. A refresh of any of these must make the same map again, so each
+    one is mapped to the mode that does. Changes d in place and returns it.
+    """
+    mode = d.get("uv_mode")
+    method = d.pop("uv_unwrap_method", None)
+    merge = d.pop("uv_merge_tangent", None)
+    if mode is None:
+        if d.get("uv_box"):
+            mode = "BOX"
+        elif d.get("uv_unwrap"):
+            mode = "UNWRAP"
+        elif d.get("uv_surface", True):
+            mode = "SURFACE"
+        else:
+            mode = "NONE"
+    if mode == "UNWRAP":
+        mode = method if method in UNWRAP_MODES else "ANGLE_BASED"
+    elif mode == "SURFACE" and merge in ("SMART", "ALL"):
+        mode = "SMART"
+    d["uv_mode"] = mode
+    return d
+
+
 # How full the packer gets a tile. The side of the tile a part packs into is
 # the square root of its surface area over this.
 SMART_FILL = 0.7
@@ -108,7 +148,7 @@ SMART_MAX_MISFIT = 0.02
 SMART_MAX_OVERLAP = 0.02
 
 # How far apart two islands are set. The net turns charts into new places,
-# and a chart that is refused can start an island where a neighbour's edge
+# and a chart that is refused can start an island where a neighbor's edge
 # now lies. Blender joins two faces into one island when their shared edge
 # carries the same UV, so without this the two islands would read as one,
 # on top of each other. It matches the nudge each CAD face already gets.
@@ -243,11 +283,11 @@ def _fit(p, q):
 def smart_merge(me, side_3d=None):
     """Grow UV islands out of the CAD charts of one mesh.
 
-    Starts from the largest chart and joins its tangent neighbours one at a
-    time, largest first. A neighbour is turned so its shared edge lies on
+    Starts from the largest chart and joins its tangent neighbors one at a
+    time, largest first. A neighbor is turned so its shared edge lies on
     the island, and it joins only if it then fits that edge, does not land
     on the island, and does not make the island too long for the tile. A
-    neighbour that fails waits for a later island. The next island starts
+    neighbor that fails waits for a later island. The next island starts
     from the largest chart still left, until none is left.
 
     `side_3d` is the side of the UV tile, in the mesh's own length units.
@@ -256,7 +296,7 @@ def smart_merge(me, side_3d=None):
     chart, because a CAD face is never split.
 
     Writes the UVs and puts the seams on the island boundaries. Returns
-    (charts, islands) for the charts that had a tangent neighbour.
+    (charts, islands) for the charts that had a tangent neighbor.
     """
     layer = me.uv_layers.active
     nl = len(me.loops)

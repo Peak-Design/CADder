@@ -377,6 +377,74 @@ check(abs(density - 1.0) < 0.05,
       "and with Normalize UVs off one UV unit is one scene unit (%.4f)"
       % density)
 
+# ---- a texture that is not square ------------------------------------------
+# Blender's Pack Islands and Unwrap read the image texture in the material,
+# and work in the proportions of that image. On a 2 by 1 texture an island
+# the packer turns came out 4 times too narrow, and a square face became a
+# thin rectangle. The addon makes UVs for a square tile, whatever the
+# material holds.
+print("\n== a texture that is not square leaves the UVs square")
+
+
+def squashed(objs):
+    """Share of the surface whose UVs are squashed more than 1.2 to 1."""
+    total = bad = 0.0
+    for o in objs:
+        me = o.data
+        uv = loop_uvs(me)
+        for poly in me.polygons:
+            idx = list(poly.loop_indices)
+            for k in range(1, len(idx) - 1):
+                ids = (idx[0], idx[k], idx[k + 1])
+                p = [me.vertices[me.loops[i].vertex_index].co for i in ids]
+                e1, e2 = p[1] - p[0], p[2] - p[0]
+                n = e1.cross(e2)
+                if n.length < 1e-9:
+                    continue
+                x = e1.normalized()
+                y = n.cross(e1).normalized()
+                a = np.array([[e1.dot(x), e2.dot(x)], [e1.dot(y), e2.dot(y)]])
+                u = uv[list(ids)]
+                b = np.array([u[1] - u[0], u[2] - u[0]]).T
+                s = np.linalg.svd(b @ np.linalg.inv(a), compute_uv=False)
+                total += n.length
+                if s[1] <= 0 or s[0] / s[1] > 1.2:
+                    bad += n.length
+    return bad / max(total, 1e-12)
+
+
+def textured(objs):
+    """A material with a 2 by 1 image texture on every slot."""
+    mat = bpy.data.materials.new("wide texture")
+    node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    node.image = bpy.data.images.new("wide", 2048, 1024)
+    for o in objs:
+        if not o.material_slots:
+            o.data.materials.append(mat)
+        for slot in o.material_slots:
+            slot.material = mat
+    return mat
+
+
+objs = load(uv_mode="SURFACE", uv_normalize=True)
+mat = textured(objs)
+m._pack_uv_objects(objs, "OBJECT")
+share = squashed(objs)
+check(share < 0.01,
+      "packing keeps the islands in proportion (%.1f%% squashed)"
+      % (100.0 * share))
+check(all(s.material == mat for o in objs for s in o.material_slots),
+      "and every part keeps its material")
+
+objs = load(uv_mode="CONFORMAL")
+plain = squashed(objs)
+textured(objs)
+m._unwrap_uv_objects(objs, method="CONFORMAL")
+share = squashed(objs)
+check(share <= plain + 0.01,
+      "Unwrap gives the same proportions as with no texture (%.1f%% "
+      "squashed against %.1f%%)" % (100.0 * share, 100.0 * plain))
+
 # ---- the setting reaches a refresh ---------------------------------------
 print("\n== a refresh reproduces it")
 objs = load(uv_pack="UDIM", uv_pack_tiles=3)

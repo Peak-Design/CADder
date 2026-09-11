@@ -169,6 +169,12 @@
 #     its edges differently from its neighbors. A buoyancy module goes
 #     from 1,476 edges shared by more than two faces to none, and a gear
 #     motor from 146 open edges to 14
+#   - Pack UVs and the unwrap modes keep the UVs square when the material
+#     has an image texture that is not square. Blender's Pack Islands and
+#     Unwrap fit the islands to that image, so on a 2 by 1 texture a square
+#     face came out 4 times too narrow. The pack now runs with the
+#     materials hidden (main._hide_materials), and Unwrap with
+#     correct_aspect off
 #   - A background import no longer fails when a part produces no geometry.
 #     The worker opened the warning popup, and Blender with no window
 #     crashes on that. The worker now sends the list to the session that

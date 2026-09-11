@@ -334,6 +334,13 @@ UDIM tiles** for a middle way, and set how many tiles to spread the parts
 over. The parts are shared out by surface area, so each tile carries a
 similar amount.
 
+The UVs are always for a square texture. Blender's own Pack Islands and
+Unwrap read the image texture in the material and fit the islands to its
+proportions, so on a 2 by 1 texture a square face becomes a thin rectangle.
+The addon hides the materials from these operators while they run, and puts
+them back after. If you pack by hand in the UV Editor, Blender still does
+this on a textured part.
+
 **Pack margin** is the space left around each island. Blender puts this
 around every island, and a CAD part has about one island per face, so a whole
 assembly in one tile is thousands of islands. The addon divides the margin

@@ -773,6 +773,34 @@ def _uv_home(me):
         layer.uv.foreach_set("vector", uv.ravel())
 
 
+def _hide_materials(objs):
+    """Take the materials off `objs` for a while, so the UVs stay square.
+
+    Blender's Pack Islands and Average Islands Scale read the image texture
+    in a face's material, and work in the proportions of that image. On a
+    2 by 1 texture, an island the packer turns comes out 4 times too narrow.
+    The addon makes UVs for a square tile, whatever the material holds, and
+    neither operator has an option to stop this. With no material there is
+    no image to read. Returns what _restore_materials puts back.
+    """
+    saved = []
+    for o in objs:
+        for i, slot in enumerate(o.material_slots):
+            if slot.material is not None:
+                saved.append((o, i, slot.material))
+                slot.material = None
+    return saved
+
+
+def _restore_materials(saved):
+    """Put back the materials _hide_materials took off."""
+    for o, i, mat in saved:
+        try:
+            o.material_slots[i].material = mat
+        except (IndexError, ReferenceError, RuntimeError):
+            pass
+
+
 def _deselect_all():
     for o in bpy.context.view_layer.objects:
         try:
@@ -812,6 +840,7 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
     for o in objs:
         o.select_set(True)
     view_layer.objects.active = objs[0]
+    hidden = _hide_materials(objs)
     try:
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
@@ -824,6 +853,14 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
                                 margin=_crowd_margin(margin, len(objs)))
         bpy.ops.object.mode_set(mode="OBJECT")
     finally:
+        # Back in object mode first, so the materials go back on the mesh
+        # and not on an edit copy that is thrown away.
+        try:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+        except RuntimeError:
+            pass
+        _restore_materials(hidden)
         for o in objs:
             try:
                 o.select_set(False)
@@ -1015,11 +1052,15 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
         # no_flip keeps a face from turning itself inside out, which is
-        # what leaves an island folded on top of itself.
+        # what leaves an island folded on top of itself. correct_aspect is
+        # off so the UVs are for a square tile. On, it reads the image in
+        # the material and squashes the UVs to its proportions.
         try:
-            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True)
+            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True,
+                              correct_aspect=False)
         except TypeError:
-            bpy.ops.uv.unwrap(method=method, margin=0.005)
+            bpy.ops.uv.unwrap(method=method, margin=0.005,
+                              correct_aspect=False)
         bpy.ops.object.mode_set(mode="OBJECT")
         if world_scale is not None:
             for o in targets:

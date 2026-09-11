@@ -917,8 +917,11 @@ def _tris_to_quads_objects(objs):
     CAD tessellation has nothing to protect: its thin triangles are exactly
     the ones that belong together.
 
-    Custom split normals survive, because bmesh carries the loop layer
-    through. The mesh keeps the exact CAD shading it was given.
+    Custom normals are stored as offsets from the normals Blender
+    calculates, and a quad has a different calculated normal than its two
+    triangles. So the normals are copied out before the join and written
+    back after it (tools.stash_normals). The mesh keeps the exact CAD
+    shading it was given.
     """
     seen = set()
     meshes = tris = quads = 0
@@ -930,6 +933,7 @@ def _tris_to_quads_objects(objs):
         seen.add(o.data)
         me = o.data
         before = len(me.polygons)
+        tools_mod.stash_normals(me)
         bm = bmesh.new()
         try:
             bm.from_mesh(me)
@@ -940,7 +944,6 @@ def _tris_to_quads_objects(objs):
                 cmp_seam=True, cmp_sharp=True, cmp_uvs=True,
                 cmp_vcols=True, cmp_materials=True)
             bm.to_mesh(me)
-            me.update()
             meshes += 1
             tris += before
             quads += len(me.polygons)
@@ -948,6 +951,8 @@ def _tris_to_quads_objects(objs):
             print(f"Tris to quads failed on {me.name}: {e}")
         finally:
             bm.free()
+            tools_mod.restore_normals(me)
+            me.update()
     if meshes:
         print(f"Tris to quads: {meshes} mesh(es), {tris} faces -> {quads}")
 

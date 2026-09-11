@@ -12,6 +12,13 @@ The point of the shape checks
 Joining triangles is not a remesh. No vertex may move, no vertex may go,
 and the custom split normals the importer wrote from the CAD surface must
 come through. A quad mesh that shades flat is worse than the triangles.
+
+Blender stores a custom normal as an offset from the normal it calculates,
+and a quad has a different calculated normal than its two triangles. So a
+join through bmesh turns every custom normal near it, by up to 22 degrees
+on a real part. The check compares each corner with the triangle import,
+because a check that only looks for "some curved shading" passed on that.
+Clean Up Meshes does the same kind of join, so it gets the same check.
 """
 import os
 import sys
@@ -38,9 +45,18 @@ def check(cond, msg):
 
 
 def write_step(path):
-    """A block with a hole, so there are flat faces and a curved one."""
+    """A block with a hole and rounded edges.
+
+    The flat faces and the hole have no vertex inside a curved face, and
+    that is where a join turns a custom normal. The rounded corners have
+    them, so the shading check has something to catch.
+    """
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopoDS import TopoDS
     from OCP.gp import gp_Pnt, gp_Ax2, gp_Dir
     from OCP.TDocStd import TDocStd_Document
     from OCP.TCollection import TCollection_ExtendedString
@@ -49,6 +65,12 @@ def write_step(path):
     from OCP.TDataStd import TDataStd_Name
 
     block = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 40, 30, 10).Shape()
+    fillet = BRepFilletAPI_MakeFillet(block)
+    edges = TopExp_Explorer(block, TopAbs_EDGE)
+    while edges.More():
+        fillet.Add(3.0, TopoDS.Edge_s(edges.Current()))
+        edges.Next()
+    block = fillet.Shape()
     hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(gp_Pnt(20, 15, -1), gp_Dir(0, 0, 1)), 6, 12).Shape()
     shape = BRepAlgoAPI_Cut(block, hole).Shape()
@@ -104,6 +126,9 @@ plain = load(tris_to_quads=False)
 # Read everything now. The next load resets the file, and an object held
 # across that reset is already dead.
 base_v = verts_of(plain)
+base_n = corner_normals(plain)
+base_cv = np.empty(len(plain.data.loops), dtype=np.int64)
+plain.data.loops.foreach_get("vertex_index", base_cv)
 base_sides = sides(plain)
 base_faces = len(plain.data.polygons)
 check(set(base_sides) == {3},
@@ -149,6 +174,53 @@ curved = [p for p in quad.data.polygons
 check(len(curved) > 0,
       "the curved faces keep a normal off the CAD surface (%d faces)"
       % len(curved))
+
+
+def worst_turn(obj):
+    """The largest angle between a corner normal and the triangle import.
+
+    Each corner is matched to the triangle corners at the vertex in the
+    same place, and the closest of those counts. Matching by place, not by
+    index, lets a check follow a mesh that lost merged vertices.
+    """
+    pos = verts_of(obj)
+    idx = np.empty(len(obj.data.loops), dtype=np.int64)
+    obj.data.loops.foreach_get("vertex_index", idx)
+    normals = corner_normals(obj)
+    key = lambda p: tuple(np.round(p, 5))
+    at = {}
+    for c, v in enumerate(base_cv):
+        at.setdefault(key(base_v[v]), []).append(base_n[c])
+    worst = 0.0
+    for c, v in enumerate(idx):
+        near = at.get(key(pos[v]))
+        if not near:
+            continue
+        best = max(float(np.dot(n, normals[c])) for n in near)
+        worst = max(worst, float(np.degrees(np.arccos(min(1.0, best)))))
+    return worst
+
+
+turn = worst_turn(quad)
+check(turn < 0.5,
+      "every corner shades as it did on the triangles (worst %.2f deg)"
+      % turn)
+
+print("\n== Clean Up Meshes keeps the CAD shading")
+for o in bpy.data.objects:
+    o.select_set(o == quad)
+bpy.context.view_layer.objects.active = quad
+faces = len(quad.data.polygons)
+bpy.ops.stepper.mesh_cleanup()
+check(len(quad.data.polygons) < faces,
+      "the cleanup dissolves faces (%d -> %d)"
+      % (faces, len(quad.data.polygons)))
+turn = worst_turn(quad)
+check(turn < 0.5,
+      "every corner shades as it did on the triangles (worst %.2f deg)"
+      % turn)
+check(quad.data.attributes.get("stepper_normal") is None,
+      "the working copy of the normals is gone")
 
 print("\n== a refresh reproduces it")
 rec = quad.get("STEP_import_settings") or quad.get("import_record_json")

@@ -3,6 +3,7 @@
 
 import json
 from collections import defaultdict
+import math
 from math import radians
 
 import bmesh
@@ -363,10 +364,77 @@ class STEPPER_OT_prune_restore(bpy.types.Operator):
         return {"FINISHED"}
 
 
+NORMAL_STASH = "stepper_normal"
+
+
+def stash_normals(me):
+    """Copy the shading normals of a mesh into a plain corner attribute.
+
+    Blender keeps custom normals as offsets from the normals it calculates
+    itself. Join two triangles into a quad, or merge two faces, and the
+    calculated normals move, so the stored offsets now point somewhere
+    else. That is the shading damage a bmesh round trip does. Edit mode
+    operators correct for this, and a bmesh operator does not.
+
+    A float vector attribute holds the normal itself, and bmesh carries it
+    through every join and merge. restore_normals() writes it back.
+    Returns False when the mesh has no custom normals to keep.
+    """
+    if not me.has_custom_normals or not len(me.loops):
+        return False
+    old = me.attributes.get(NORMAL_STASH)
+    if old is not None:
+        me.attributes.remove(old)
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    me.corner_normals.foreach_get("vector", n)
+    me.attributes.new(NORMAL_STASH, "FLOAT_VECTOR", "CORNER").data.foreach_set(
+        "vector", n)
+    return True
+
+
+def sharpen_split_normals(bm, limit=math.radians(0.5)):
+    """Mark an edge sharp where the stashed normals do not agree across it.
+
+    Merge by distance can join two faces that met only at a split, such as
+    a crease where the tessellation had doubled vertices. The new edge is
+    smooth, and a smooth edge would blend the two normals into one. The
+    stashed normals show where the split was, so the edge stays a split.
+    """
+    layer = bm.loops.layers.float_vector.get(NORMAL_STASH)
+    if layer is None:
+        return 0
+    cos_lim = math.cos(limit)
+    made = 0
+    for e in bm.edges:
+        if not e.smooth or len(e.link_loops) != 2:
+            continue
+        la, lb = e.link_loops
+        # la runs v0 to v1 and lb runs the other way, so each corner of
+        # la meets the next corner of lb at the same vertex.
+        for a, b in ((la, lb.link_loop_next), (la.link_loop_next, lb)):
+            if a[layer].dot(b[layer]) < cos_lim:
+                e.smooth = False
+                made += 1
+                break
+    return made
+
+
+def restore_normals(me):
+    """Write the stashed normals back as custom normals, then drop the copy."""
+    a = me.attributes.get(NORMAL_STASH)
+    if a is None:
+        return False
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    a.data.foreach_get("vector", n)
+    me.attributes.remove(a)
+    if len(me.loops):
+        me.normals_split_custom_set(n.reshape(-1, 3))
+    return True
+
+
 class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
-    """Merge close vertices and dissolve coplanar faces, but keep the sharp edges.
-    This replaces the imported custom normals with shading from the sharp
-    edges."""
+    """Merge close vertices and dissolve coplanar faces. Keep the sharp edges
+    and the imported shading"""
     bl_idname = "stepper.mesh_cleanup"
     bl_label = "Cleanup selected meshes"
     bl_options = {"REGISTER", "UNDO"}
@@ -399,6 +467,7 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
             processed.add(me)
             pre_v, pre_f = len(me.vertices), len(me.polygons)
 
+            kept = stash_normals(me)
             bm = bmesh.new()
             bm.from_mesh(me)
 
@@ -425,9 +494,11 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
                 if e.is_valid:
                     e.smooth = True
 
-            # Topology changed: imported custom split normals no longer map
+            if kept:
+                sharpen_split_normals(bm)
             bm.to_mesh(me)
             bm.free()
+            restore_normals(me)
             me.update()
 
             total_removed_verts += pre_v - len(me.vertices)

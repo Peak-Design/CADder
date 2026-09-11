@@ -24,7 +24,7 @@ leaves some stretch behind.
 | **Closed surfaces** | Where a cylinder or torus closes on itself: None, Single seam (new default) or Split faces. Replaces "Split Closed Faces" | none |
 | **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart joins faces one at a time and keeps only the joins that do not overlap and still fit the UV tile, so a rounded block no longer lands on itself | +30% |
 
-## UV fixes
+## Fixes
 
 - A cylinder arrived as a thin tall ribbon. CAD Surface UVs now carry the
   proportions of the surface.
@@ -37,6 +37,8 @@ leaves some stretch behind.
 - Closed surfaces cut the bend lines of sheet metal parts with holes. A
   plate with a hole has the same topology as a pipe. The addon now also
   checks whether the surface goes all the way round, and cuts only a pipe.
+- Clean Up Meshes turned the shading normals and left marks on curved
+  faces. It now keeps the shading of the CAD surface.
 
 ## New UV panel
 

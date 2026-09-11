@@ -18,7 +18,8 @@ leaves some stretch behind.
 | Option | What it does | Cost |
 |--------|--------------|------|
 | **UV Map** | One dropdown for every way to make the UVs: None, CAD Surfaces, CAD Surfaces (Smart), Unwrap (Conformal), Unwrap (Angle Based), Unwrap (Minimum Stretch) and Box Project. The old Unwrap mode is now Unwrap (Angle Based) | none |
-| **CAD Surfaces (Smart)** | New UV Map mode. Joins faces that meet smoothly, one face at a time, and keeps only the joins that do not overlap and still fit the UV tile. A bent sheet metal part comes out as its flat pattern | +30% |
+| **CAD Surfaces (Smart)** | New UV Map mode. Joins faces that meet smoothly into larger islands, and bends a face to fit where it has to. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands | +35% |
+| **Smart distortion** | How far Smart can bend a face to join it, 35% by default. 0 turns the bend off | none |
 | **Tris to Quads** | Pairs the tessellation triangles back into quads. No vertex moves and the CAD shading is unchanged. On by default | +2% |
 | **Pack UVs** | Arranges the islands into one tile, one tile for each part, or a set number of UDIM tiles | +2% to +6%, per part +86% |
 | **Pack margin** | The space around each island. Raise it if a bake bleeds | none |

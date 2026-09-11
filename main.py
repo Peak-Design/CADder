@@ -674,6 +674,8 @@ def _assign_engineering_material(obj, mat_info):
 # tool follows: tile 1001 + u + 10 * v.
 UDIM_ROW = 10
 UV_PACK_MARGIN = 0.005
+# The Smart distortion setting, in percent (uv.SMART_DISTORTION explains it).
+UV_SMART_DISTORTION = 35.0
 
 
 # The UV dropdowns are offered twice: in the import dialog and in the UV
@@ -1032,8 +1034,11 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             pass
 
 
-def _smart_merge_objects(objs, pack="NONE", tiles=4):
+def _smart_merge_objects(objs, pack="NONE", tiles=4,
+                         distortion=UV_SMART_DISTORTION):
     """Grow the Smart UV islands on every unique mesh.
+
+    `distortion` is the Smart distortion setting in percent.
 
     The tile an island has to fit comes from Pack UVs. One tile for each
     part, or no packing, gives every part its own. All parts together puts
@@ -1066,7 +1071,8 @@ def _smart_merge_objects(objs, pack="NONE", tiles=4):
     charts = islands = 0
     for o in targets:
         try:
-            c, n = uv_mod.smart_merge(o.data, side_3d=side)
+            c, n = uv_mod.smart_merge(o.data, side_3d=side,
+                                      distortion=distortion / 100.0)
         except Exception as e:
             print(f"UV smart merge failed on {o.name}: {e}")
             continue
@@ -2222,6 +2228,7 @@ def load_step(
     uv_mode="SURFACE",
     uv_normalize=True,
     uv_closed_seams="SINGLE",
+    uv_smart_distortion=UV_SMART_DISTORTION,
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
@@ -2371,6 +2378,7 @@ def load_step(
         "uv_mode": _uv_options["mode"],
         "uv_normalize": _uv_options["normalize"],
         "uv_closed_seams": _uv_options["closed_seams"],
+        "uv_smart_distortion": uv_smart_distortion,
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
@@ -2690,7 +2698,8 @@ def load_step(
     rescales = packing and (pack_scale or uv_pack == "UDIM")
     # Smart lays the charts out as a net and puts the seams on its edges.
     if uv_mode == "SMART":
-        _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles)
+        _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
+                             uv_smart_distortion)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -2991,6 +3000,14 @@ class PG_Stepper(bpy.types.PropertyGroup):
         description="What to do where a cylinder, cone, sphere or torus "
                     "closes on itself. This does not change the shading",
         default="SINGLE")
+    uv_smart_distortion: bpy.props.FloatProperty(
+        name="Smart distortion", subtype="PERCENTAGE",
+        description="How far Smart can bend a face to join it to an "
+                    "island, as an average over the face. Squash counts in "
+                    "full. Stretch along the shared edge counts half, "
+                    "because an unrolled ring is still a clean strip. Set 0 "
+                    "to join only the faces that fit without a bend",
+        default=UV_SMART_DISTORTION, min=0.0, max=100.0, precision=0)
     box_uv_scale: bpy.props.FloatProperty(
         name="Box UV size", unit="LENGTH",
         description="World size of one UV tile for the Box Project mode",
@@ -3208,6 +3225,20 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    uv_smart_distortion: bpy.props.FloatProperty(
+        name="Smart distortion",
+        subtype="PERCENTAGE",
+        description="How far Smart can bend a face to join it to an "
+                    "island, as an average over the face. Squash counts in "
+                    "full. Stretch along the shared edge counts half, "
+                    "because an unrolled ring is still a clean strip. Set 0 "
+                    "to join only the faces that fit without a bend",
+        default=UV_SMART_DISTORTION,
+        min=0.0,
+        max=100.0,
+        precision=0,
+    )
+
     uv_closed_seams: bpy.props.EnumProperty(
         items=UV_CLOSED_ITEMS,
         name="Closed surfaces",
@@ -3345,6 +3376,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
             "uv_closed_seams": self.uv_closed_seams,
+            "uv_smart_distortion": self.uv_smart_distortion,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
@@ -3423,6 +3455,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_mode=self.uv_mode,
                 uv_normalize=self.uv_normalize,
                 uv_closed_seams=self.uv_closed_seams,
+                uv_smart_distortion=self.uv_smart_distortion,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,

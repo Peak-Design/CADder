@@ -80,12 +80,14 @@ def add_box_uv(me, scale=1.0, name="UVMap"):
 # ---------------------------------------------------------------------------
 # Smart merge: grow each island out of the CAD charts, one face at a time.
 #
-# CAD Surface gives every CAD face a flat chart of its own, in length units.
+# CAD Surfaces gives every CAD face a flat chart of its own, in length units.
 # On a plane that chart is exact, and on a cylinder it is the surface rolled
 # out, circumference by height. So joining a face to an island needs no
 # solver: turn its chart until the shared edge lies on the island's edge.
 # That is how a paper model is unfolded, and the checks below decide which
-# folds the net may make.
+# folds the net may make. A face that does not fit that way, such as a
+# ring against the straight edge of a rolled out cylinder, can be bent to
+# fit, within a limit on how much the bend stretches it.
 
 # The unwrap modes of the UV Map dropdown. Each is one method of Blender's
 # unwrap operator, and the identifiers are the operator's own, so a mode is
@@ -137,9 +139,8 @@ SMART_FILL = 0.7
 # each other, which this resolves many times over. Finer only costs time.
 SMART_CELLS = 60000
 
-# How badly a shared edge may fit, as a share of its length. A plane and a
-# cylinder fit exactly. A sphere or a torus chart is only close to its true
-# shape, and past this the join would visibly bend the face to close it.
+# How badly a shared edge may fit before the face is bent instead of only
+# turned, as a share of the edge length. A plane and a cylinder fit exactly.
 SMART_MAX_MISFIT = 0.02
 
 # How much of a face may land on the island before the join counts as an
@@ -153,6 +154,24 @@ SMART_MAX_OVERLAP = 0.02
 # carries the same UV, so without this the two islands would read as one,
 # on top of each other. It matches the nudge each CAD face already gets.
 SMART_ISLAND_NUDGE = 0.001
+
+# How far Smart may bend a face to join it, as an average over the face.
+# Squash counts in full, because it lowers the texel density. Stretch counts
+# half: a ring unrolled into a strip is stretched along its inner edge, and
+# it is still a clean strip that is easy to texture. A ring of 25 and 15 mm
+# unrolled from its rim scores 12.5%. A full disk unrolled from its rim
+# scores 50% and more, so with this default it stays an island of its own.
+SMART_DISTORTION = 0.35
+SMART_STRETCH_WEIGHT = 0.5
+
+# The most one triangle can add to that average. A face bent round a point
+# stretches without limit at the point, and one triangle there would
+# otherwise decide the average for the whole face.
+SMART_STRETCH_CAP = 10.0
+
+# Share of a bent face that may come out mirrored. A mirrored triangle is a
+# fold, which a texture shows as a tear, so nearly none is allowed.
+SMART_MAX_FLIP = 0.002
 
 _KEY_OFF = 1 << 30
 
@@ -255,8 +274,9 @@ def _raster(tris, cell):
     e0, e1, e2 = side(a, b), side(b, c), side(c, a)
     inside = (((e0 > 0) & (e1 > 0) & (e2 > 0))
               | ((e0 < 0) & (e1 < 0) & (e2 < 0)))
-    # No duplicates to remove: the triangles of one chart do not overlap,
-    # and a center on the edge between two of them counts for neither.
+    # The triangles of one unbent chart do not overlap, and a center on the
+    # edge between two of them counts for neither. A bent chart can land on
+    # itself, and the caller counts the repeats to find out.
     return (cx[inside] + _KEY_OFF) * (1 << 32) + (cy[inside] + _KEY_OFF)
 
 
@@ -280,15 +300,334 @@ def _fit(p, q):
     return r, t, err
 
 
-def smart_merge(me, side_3d=None):
+def _cross(a, b):
+    return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+
+
+def _unit(v):
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    return v / np.maximum(n, 1e-300)
+
+
+def _left(e):
+    """The left normal of each 2D direction, unit length."""
+    return _unit(np.stack([-e[..., 1], e[..., 0]], axis=-1))
+
+
+def _chains(pa, pb, qa, qb, va, vb, tol_p, tol_q):
+    """Order the shared edges of a join into chains.
+
+    Every edge runs the way the joining face winds, so the face lies to its
+    left in its own chart and the island lies to its right. Two edges link
+    where one ends at the vertex the next starts at. A chain carries on only
+    where both charts carry one UV on both sides of that vertex, and stops
+    where either chart is cut.
+
+    Returns the chains as (edges in order, closed_in_p, cycle), and the unit
+    normals at both ends of every edge in both charts. A normal at a vertex
+    where the chart is not cut is the mean of the two edges, so a curve
+    bends smoothly through it.
+    """
+    m = len(pa)
+    starts = {}
+    for i in range(m):
+        starts.setdefault(int(va[i]), []).append(i)
+    next_p = np.full(m, -1, dtype=np.int64)
+    next_q = np.full(m, -1, dtype=np.int64)
+    for i in range(m):
+        cand = starts.get(int(vb[i]), [])
+        hit_p = [j for j in cand if j != i
+                 and np.abs(pb[i] - pa[j]).sum() <= tol_p]
+        hit_q = [j for j in cand if j != i
+                 and np.abs(qb[i] - qa[j]).sum() <= tol_q]
+        if len(hit_p) == 1:
+            next_p[i] = hit_p[0]
+        if len(hit_q) == 1:
+            next_q[i] = hit_q[0]
+    prev_p = np.full(m, -1, dtype=np.int64)
+    prev_q = np.full(m, -1, dtype=np.int64)
+    for i in range(m):
+        if next_p[i] >= 0:
+            prev_p[next_p[i]] = i
+        if next_q[i] >= 0:
+            prev_q[next_q[i]] = i
+
+    n_p = _left(pb - pa)
+    n_q = _left(qb - qa)
+
+    def ends(n, nxt, prv):
+        s = n.copy()
+        e = n.copy()
+        has = nxt >= 0
+        e[has] = _unit(n[has] + n[nxt[has]])
+        has = prv >= 0
+        s[has] = _unit(n[has] + n[prv[has]])
+        return s, e
+
+    np_s, np_e = ends(n_p, next_p, prev_p)
+    nq_s, nq_e = ends(n_q, next_q, prev_q)
+
+    nxt = np.where((next_p >= 0) & (next_p == next_q), next_p, -1)
+    prv = np.full(m, -1, dtype=np.int64)
+    for i in range(m):
+        if nxt[i] >= 0:
+            prv[nxt[i]] = i
+    seen = np.zeros(m, dtype=bool)
+    chains = []
+    for i in list(np.where(prv < 0)[0]) + list(range(m)):
+        if seen[i]:
+            continue
+        cycle = prv[i] >= 0
+        run = []
+        j = i
+        while j >= 0 and not seen[j]:
+            seen[j] = True
+            run.append(j)
+            j = nxt[j]
+        run = np.array(run, dtype=np.int64)
+        closed_p = (not cycle and vb[run[-1]] == va[run[0]]
+                    and np.abs(pb[run[-1]] - pa[run[0]]).sum() <= tol_p)
+        chains.append((run, bool(closed_p), bool(cycle)))
+
+    # The chains have to follow on from each other in the face's own chart,
+    # so that together they are one run of its outline, cut only where the
+    # island is cut. A face that meets the island in two places apart would
+    # otherwise be torn down the middle to reach both.
+    cid = np.empty(m, dtype=np.int64)
+    for g, (run, _cp, _cy) in enumerate(chains):
+        cid[run] = g
+    succ = [int(cid[next_p[run[-1]]]) if next_p[run[-1]] >= 0 else -1
+            for run, _cp, _cy in chains]
+    has_pred = {s for s in succ if s >= 0}
+    heads = [g for g in range(len(chains)) if g not in has_pred]
+    one_run = len(heads) <= 1
+    if one_run:
+        g = heads[0] if heads else 0
+        visited = set()
+        while g >= 0 and g not in visited:
+            visited.add(g)
+            g = succ[g]
+        one_run = len(visited) == len(chains)
+    return chains, (np_s, np_e, nq_s, nq_e), one_run
+
+
+def _closest(x, p0, p1):
+    """Closest segment to each point, with its parameter and distance."""
+    e = p1 - p0
+    ee = np.maximum((e * e).sum(axis=1), 1e-300)
+    best = np.zeros(len(x), dtype=np.int64)
+    best_t = np.zeros(len(x))
+    best_d = np.full(len(x), np.inf)
+    step = max(1, int(1e6 // max(len(p0), 1)))
+    for a in range(0, len(x), step):
+        w = x[a:a + step, None, :] - p0[None, :, :]
+        t = np.clip((w * e[None]).sum(axis=2) / ee[None], 0.0, 1.0)
+        d = ((w - t[..., None] * e[None]) ** 2).sum(axis=2)
+        k = d.argmin(axis=1)
+        r = np.arange(len(k))
+        best[a:a + step] = k
+        best_t[a:a + step] = t[r, k]
+        best_d[a:a + step] = d[r, k]
+    return best, best_t, np.sqrt(best_d)
+
+
+def _bend_chart(x, face, p0, p1, np0, np1, q0, q1, nq0, nq1, chains):
+    """Lay a chart against an island edge that it does not fit rigidly.
+
+    Each point of the chart is measured against the shared edge in its own
+    chart: how far along the edge it lies, and how far out from it. It is
+    then set down the same distance along and out from the island's copy
+    of the edge. A ring measured from its rim this way unrolls into a
+    strip, a strip laid along a circle wraps round it, and an edge that is
+    only slightly the wrong length is shared out along its whole run.
+
+    The distance out is taken along a normal that turns smoothly along the
+    edge (the mean of two edges at each vertex), not to the nearest point:
+    a nearest point jumps where the edge turns, and whole wedges of the
+    face would fall on one line.
+
+    Where the island's copy of the edge is cut but the face's copy runs
+    round unbroken, as when a ring meets a cylinder that was rolled out,
+    the face has to be cut as well. Each polygon keeps to the side of the
+    cut its middle is on, so the cut follows mesh edges.
+
+    x: (n, 2) chart points, face: the polygon of each point. The edge
+    arrays hold one row per shared edge, and `chains` orders them.
+    Returns the new (n, 2) points.
+    """
+    out = np.empty_like(x)
+    # Which chain each polygon follows, and where along it its middle is.
+    fids, finv = np.unique(face, return_inverse=True)
+    mid = np.zeros((len(fids), 2))
+    np.add.at(mid, finv, x)
+    mid /= np.bincount(finv, minlength=len(fids))[:, None]
+    seg_chain = np.empty(len(p0), dtype=np.int64)
+    for g, (run, _cp, _cy) in enumerate(chains):
+        seg_chain[run] = g
+    k, _t, _d = _closest(mid, p0, p1)
+    fchain = seg_chain[k]
+    pchain = fchain[finv]
+
+    for g, (run, closed_p, cycle) in enumerate(chains):
+        sel = np.where(pchain == g)[0]
+        if not len(sel):
+            continue
+        a0, a1 = p0[run], p1[run]
+        n0, n1 = np0[run], np1[run]
+        e = a1 - a0
+        seg_len = np.maximum(np.linalg.norm(e, axis=1), 1e-300)
+        cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+        total = cum[-1]
+        ns = len(run)
+        wrap = closed_p or cycle
+        pts = x[sel]
+        j0, tc0, _dd = _closest(pts, a0, a1)
+        best_j = j0.copy()
+        best_t = tc0.copy()
+        # Signed distance to the nearest point: the fallback where the
+        # smooth normal finds no foot on the edge.
+        w = pts - (a0[j0] + tc0[:, None] * e[j0])
+        best_dist = (w * _left(e[j0])).sum(axis=1)
+        best_abs = np.full(len(sel), np.inf)
+        for off in (-1, 0, 1):
+            j = j0 + off
+            if wrap:
+                j = j % ns
+            else:
+                ok_j = (j >= 0) & (j < ns)
+                j = np.clip(j, 0, ns - 1)
+            a = pts - a0[j]
+            ej = e[j]
+            m0 = n0[j]
+            dm = n1[j] - n0[j]
+            qa = -_cross(ej, dm)
+            qb = _cross(a, dm) - _cross(ej, m0)
+            qc = _cross(a, m0)
+            roots = []
+            lin = np.abs(qa) <= 1e-12 * (np.abs(qb) + 1e-300)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t_lin = np.where(lin, -qc / qb, np.nan)
+                disc = qb * qb - 4.0 * qa * qc
+                sq = np.sqrt(np.where(disc >= 0.0, disc, np.nan))
+                r1 = np.where(lin, t_lin, (-qb + sq) / (2.0 * qa))
+                r2 = np.where(lin, np.nan, (-qb - sq) / (2.0 * qa))
+            roots = [r1, r2]
+            # Past the open ends of a chain the normal stops turning and the
+            # edge carries straight on.
+            if not wrap:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    first = j == 0
+                    t_lo = np.where(first, _cross(a, m0) / _cross(ej, m0),
+                                    np.nan)
+                    last = j == ns - 1
+                    t_hi = np.where(last, _cross(a, n1[j]) / _cross(ej, n1[j]),
+                                    np.nan)
+                roots.append(np.where(t_lo < 0.0, t_lo, np.nan))
+                roots.append(np.where(t_hi > 1.0, t_hi, np.nan))
+            for t in roots:
+                ok = np.isfinite(t) & (t >= -1e-9) & (t <= 1.0 + 1e-9)
+                if not wrap:
+                    ok |= np.isfinite(t) & (((j == 0) & (t < 0.0))
+                                            | ((j == ns - 1) & (t > 1.0)))
+                    ok &= ok_j
+                tt = np.where(np.isfinite(t), t, 0.0)
+                tcl = np.clip(tt, 0.0, 1.0)
+                nrm = _unit((1.0 - tcl)[:, None] * m0 + tcl[:, None] * n1[j])
+                foot = a0[j] + tt[:, None] * ej
+                dist = ((pts - foot) * nrm).sum(axis=1)
+                take = ok & (np.abs(dist) < best_abs)
+                best_abs = np.where(take, np.abs(dist), best_abs)
+                best_j = np.where(take, j, best_j)
+                best_t = np.where(take, tt, best_t)
+                best_dist = np.where(take, dist, best_dist)
+
+        s = cum[best_j] + best_t * seg_len[best_j]
+        if closed_p:
+            # The face runs round unbroken where the island is cut. Keep
+            # each polygon on the side of the cut its middle is on.
+            _kk, _tt, _dd = _closest(mid[finv[sel]], a0, a1)
+            ref = cum[_kk] + _tt * seg_len[_kk]
+            s = s + total * np.round((ref - s) / total)
+        if closed_p or not wrap:
+            jj = np.clip(np.searchsorted(cum, s, side="right") - 1, 0, ns - 1)
+            tt = (s - cum[jj]) / seg_len[jj]
+        else:
+            s = np.mod(s, total)
+            jj = np.clip(np.searchsorted(cum, s, side="right") - 1, 0, ns - 1)
+            tt = (s - cum[jj]) / seg_len[jj]
+        b0, b1 = q0[run][jj], q1[run][jj]
+        tcl = np.clip(tt, 0.0, 1.0)
+        nrm = _unit((1.0 - tcl)[:, None] * nq0[run][jj]
+                    + tcl[:, None] * nq1[run][jj])
+        out[sel] = b0 + tt[:, None] * (b1 - b0) + best_dist[:, None] * nrm
+    return out
+
+
+def _stretch(u, t0, t1, t2, frame, density):
+    """Stretch, squash and mirror of each triangle against its 3D shape.
+
+    `frame` holds, for each triangle, the 3D length of its first edge and
+    the second edge in the frame of the first (along it, then across it).
+    Returns the two stretches (the larger first) as multiples of the part's
+    texel density, and whether the triangle is mirrored.
+    """
+    l1, ex, ey = frame
+    b00 = u[t1, 0] - u[t0, 0]
+    b10 = u[t1, 1] - u[t0, 1]
+    b01 = u[t2, 0] - u[t0, 0]
+    b11 = u[t2, 1] - u[t0, 1]
+    ja = b00 / l1
+    jc = b10 / l1
+    jb = (b01 - ja * ex) / ey
+    jd = (b11 - jc * ex) / ey
+    det = ja * jd - jb * jc
+    f = ja * ja + jb * jb + jc * jc + jd * jd
+    disc = np.sqrt(np.maximum(f * f - 4.0 * det * det, 0.0))
+    s1 = np.sqrt((f + disc) * 0.5) / density
+    s2 = np.sqrt(np.maximum(f - disc, 0.0) * 0.5) / density
+    return s1, s2, det < 0.0
+
+
+def _copies(key, u, near):
+    """Number the separate UV copies among loops that share a key.
+
+    A chart can hold one vertex twice, once on each side of a cut, and the
+    two copies must not be welded as one.
+    """
+    copy = np.zeros(len(key), dtype=np.int64)
+    if not len(key):
+        return copy
+    order = np.argsort(key, kind="stable")
+    ks = key[order]
+    start = np.flatnonzero(np.r_[True, ks[1:] != ks[:-1]])
+    stop = np.r_[start[1:], len(ks)]
+    us = u[order]
+    lo = np.minimum.reduceat(us, start, axis=0)
+    hi = np.maximum.reduceat(us, start, axis=0)
+    for g in np.flatnonzero((hi - lo).max(axis=1) > near):
+        reps = []
+        for li in order[start[g]:stop[g]]:
+            for ci, r in enumerate(reps):
+                if np.abs(u[li] - r).sum() <= near:
+                    copy[li] = ci
+                    break
+            else:
+                copy[li] = len(reps)
+                reps.append(u[li])
+    return copy
+
+
+def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION):
     """Grow UV islands out of the CAD charts of one mesh.
 
     Starts from the largest chart and joins its tangent neighbors one at a
     time, largest first. A neighbor is turned so its shared edge lies on
-    the island, and it joins only if it then fits that edge, does not land
-    on the island, and does not make the island too long for the tile. A
-    neighbor that fails waits for a later island. The next island starts
-    from the largest chart still left, until none is left.
+    the island. If it does not fit the edge that way, it is bent to fit,
+    as long as the bend stretches it by no more than `distortion` on
+    average. It joins only if it then does not land on the island and does
+    not make the island too long for the tile. A neighbor that fails waits
+    for a later island. The next island starts from the largest chart
+    still left, until none is left.
 
     `side_3d` is the side of the UV tile, in the mesh's own length units.
     None means one tile for this part alone, which is the side of the square
@@ -424,9 +763,12 @@ def smart_merge(me, side_3d=None):
     def loops_of(c):
         return lorder[lfirst[c]:lfirst[c] + lcnt[c]]
 
-    def tris_of(c):
-        idx = torder[tfirst[c]:tfirst[c] + tcnt[c]]
-        return np.stack([uv[t0[idx]], uv[t1[idx]], uv[t2[idx]]], axis=1)
+    def tri_ids(c):
+        return torder[tfirst[c]:tfirst[c] + tcnt[c]]
+
+    def tris_of(c, u=uv):
+        idx = tri_ids(c)
+        return np.stack([u[t0[idx]], u[t1[idx]], u[t2[idx]]], axis=1)
 
     hulls = {int(c): _hull(uv[loops_of(c)]) for c in work}
 
@@ -450,12 +792,121 @@ def smart_merge(me, side_3d=None):
         me.edges.foreach_set("use_seam", _seams(ne, man, ~cont))
         return 0, 0
 
+    # The 3D shape of every triangle, for the stretch of a bent chart: the
+    # length of its first edge, and its second edge along and across it.
+    frame = None
+    if distortion > 0.0:
+        co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        e1 = co[lv[t1]] - co[lv[t0]]
+        e2 = co[lv[t2]] - co[lv[t0]]
+        f_l1 = np.linalg.norm(e1, axis=1)
+        f_ex = (e1 * e2).sum(axis=1) / np.maximum(f_l1, 1e-300)
+        f_ey = np.linalg.norm(np.cross(e1, e2), axis=1) / np.maximum(f_l1,
+                                                                    1e-300)
+        tarea = 0.5 * f_l1 * f_ey
+        good = (f_l1 > 0.0) & (f_ey > 1e-9 * np.maximum(f_l1, 1e-300))
+        frame = (np.where(good, f_l1, 1.0), f_ex, np.where(good, f_ey, 1.0))
+        tarea = np.where(good, tarea, 0.0)
+
+    def bend(c, mine, theirs, u):
+        """Bend chart c against the island. New UVs of its loops, or None."""
+        half = len(mine) // 2
+        ma, mb = mine[:half].copy(), mine[half:].copy()
+        ta, tb = theirs[:half].copy(), theirs[half:].copy()
+        # Every edge the way chart c winds, so the chart lies on its left.
+        fwd = nxt[ma] == mb
+        ma[~fwd], mb[~fwd] = mb[~fwd], ma[~fwd].copy()
+        ta[~fwd], tb[~fwd] = tb[~fwd], ta[~fwd].copy()
+        pa, pb = u[ma], u[mb]
+        qa, qb = u[ta], u[tb]
+        if np.linalg.norm(pb - pa, axis=1).min() <= 0.0:
+            return None
+        chains, (np_s, np_e, nq_s, nq_e), one_run = _chains(
+            pa, pb, qa, qb, lv[ma], lv[mb], tol * 10.0, tol * 10.0)
+        if not one_run:
+            return None
+        idx = loops_of(c)
+        return _bend_chart(u[idx], pol[idx], pa, pb, np_s, np_e,
+                           qa, qb, nq_s, nq_e, chains)
+
+    def too_bent(c, u):
+        """Whether a bent chart stretches, squashes or folds too much."""
+        idx = tri_ids(c)
+        w = tarea[idx]
+        tot = w.sum()
+        if not (tot > 0.0):
+            return True
+        s1, s2, mirrored = _stretch(u, t0[idx], t1[idx], t2[idx],
+                                    tuple(f[idx] for f in frame), density)
+        if w[mirrored].sum() > SMART_MAX_FLIP * tot:
+            return True
+        stretch = SMART_STRETCH_WEIGHT * np.maximum(s1 - 1.0, 0.0)
+        squash = np.maximum(1.0 / np.maximum(s2, 1e-9) - 1.0, 0.0)
+        score = np.minimum(stretch + squash, SMART_STRETCH_CAP)
+        return float((score * w).sum() / tot) > distortion
+
+    def attempt(c, n, bent_ok, occ, hull, long_now):
+        """Join chart c to the island along its edge with placed chart n.
+
+        Tries a turn first. With `bent_ok`, a chart that does not fit that
+        way is bent instead. Returns what the island needs to take the chart
+        in, or None, and leaves the UVs as they were when it fails.
+        """
+        lo, hi = pairs[(min(c, n), max(c, n))]
+        mine, theirs = (lo, hi) if c < n else (hi, lo)
+        src = uv[mine]
+        dst = uv[theirs]
+        half = len(src) // 2
+        edge = float(np.linalg.norm(src[:half] - src[half:], axis=1).sum())
+        if edge <= 0.0:
+            return None
+        idx = loops_of(c)
+        r, s, err = _fit(src, dst)
+        if err <= SMART_MAX_MISFIT * edge:
+            is_bent = False
+            chull = hulls[c] @ r.T + s
+        elif bent_ok:
+            new = bend(c, mine, theirs, uv)
+            if new is None or not np.isfinite(new).all():
+                return None
+            is_bent = True
+            chull = _hull(new)
+        else:
+            return None
+        # The cheap tests first. The tile only needs the outline.
+        grown = _hull(np.vstack([hull, chull]))
+        ls = _long_side(grown)
+        if ls > max(limit, long_now) * (1.0 + 1e-9):
+            return None
+        old = uv[idx].copy()
+        uv[idx] = new if is_bent else old @ r.T + s
+        ok = not (is_bent and too_bent(c, uv))
+        if ok:
+            keys = _raster(tris_of(c), cell)
+            # A bent chart can land on itself, which an unbent one cannot.
+            # Count the cells it covers twice.
+            if is_bent:
+                own = len(keys) - len(np.unique(keys))
+                ok = own <= SMART_MAX_OVERLAP * len(keys) + 2
+        if ok:
+            hit = len(occ.intersection(keys.tolist()))
+            ok = hit <= SMART_MAX_OVERLAP * len(keys) + 2
+        if not ok:
+            uv[idx] = old
+            return None
+        return keys, grown, ls, is_bent
+
     import heapq
     island = {}
     rank = {}
-    moved = {}
     parent = {}
     n_islands = 0
+    # Which joins were tried already, as (chart, placed neighbor, bent).
+    # A chart refused against one neighbor is tried again when another of
+    # its neighbors joins the island, because that edge may fit better.
+    tried = set()
     for seed in sorted((int(c) for c in work), key=lambda c: -carea_3d[c]):
         if seed in island:
             continue
@@ -469,64 +920,47 @@ def smart_merge(me, side_3d=None):
         heap = [(-carea_3d[c], c) for c in nbrs.get(seed, [])
                 if c not in island]
         heapq.heapify(heap)
-        tried = set()
         while heap:
             _neg, c = heapq.heappop(heap)
-            if c in island or c in tried:
+            if c in island:
                 continue
-            tried.add(c)
             placed = [n for n in nbrs[c] if island.get(n) == kid]
-            if not placed:
+            # The longest shared edge first, and every turn before any
+            # bend: a chart that fits one of its neighbors exactly is never
+            # bent to fit another.
+            placed.sort(key=lambda n: -len(pairs[(min(c, n), max(c, n))][0]))
+            got = None
+            for bent_ok in ((False, True) if frame is not None
+                            else (False,)):
+                for n in placed:
+                    if (c, n, bent_ok) in tried:
+                        continue
+                    tried.add((c, n, bent_ok))
+                    got = attempt(c, n, bent_ok, occ, hull, long_now)
+                    if got is not None:
+                        got = got + (n,)
+                        break
+                if got is not None:
+                    break
+            if got is None:
                 continue
-
-            def shared(n):
-                lo, hi = pairs[(min(c, n), max(c, n))]
-                return (lo, hi) if c < n else (hi, lo)
-
-            best = max(placed, key=lambda n: len(shared(n)[0]))
-            mine, theirs = shared(best)
-            src = uv[mine]
-            dst = uv[theirs]
-            if best in moved:
-                r0, s0 = moved[best]
-                dst = dst @ r0.T + s0
-            half = len(src) // 2
-            edge = float(np.linalg.norm(src[:half] - src[half:],
-                                        axis=1).sum())
-            r, s, err = _fit(src, dst)
-            if edge <= 0.0 or err > SMART_MAX_MISFIT * edge:
-                continue
-            tri = tris_of(c) @ r.T + s
-            keys = _raster(tri, cell)
-            hit = len(occ.intersection(keys.tolist()))
-            if hit > SMART_MAX_OVERLAP * len(keys) + 2:
-                continue
-            grown = _hull(np.vstack([hull, hulls[c] @ r.T + s]))
-            ls = _long_side(grown)
-            if ls > max(limit, long_now) * (1.0 + 1e-9):
-                continue
+            keys, hull, long_now, _bent, n = got
             island[c] = kid
             rank[c] = len(rank)
-            moved[c] = (r, s)
-            parent[c] = best
+            parent[c] = n
             occ.update(keys.tolist())
-            hull = grown
-            long_now = ls
-            for n in nbrs[c]:
-                if n not in island:
-                    heapq.heappush(heap, (-carea_3d[n], n))
-
-    # Put every chart where the net placed it.
-    for c, (r, s) in moved.items():
-        idx = loops_of(c)
-        uv[idx] = uv[idx] @ r.T + s
+            for m2 in nbrs[c]:
+                if m2 not in island:
+                    heapq.heappush(heap, (-carea_3d[m2], m2))
 
     # Weld each joined edge, so its two sides carry one UV and Blender sees
     # one island. An edge between two charts of one island that the net did
     # not use is welded too when it already fits, and stays a cut when it
     # does not. The welds are joined up first and each group takes the UV of
     # its earliest chart: a corner where three charts meet then closes, where
-    # welding edge by edge would leave a gap at it.
+    # welding edge by edge would leave a gap at it. A chart can hold one
+    # vertex twice, on both sides of a cut, so a weld works on each UV copy
+    # of a vertex on its own.
     weld_tol = cell * 0.25
     wa, wb = [], []
     for (a, b), (lo, hi) in pairs.items():
@@ -541,8 +975,12 @@ def smart_merge(me, side_3d=None):
         wa = np.concatenate(wa)
         wb = np.concatenate(wb)
         base = int(lv.max()) + 1
-        ka = lchart[wa] * base + lv[wa]
-        kb = lchart[wb] * base + lv[wb]
+        lkey = lchart * base + lv
+        near = max(tol * 10.0, weld_tol * 0.01)
+        copy = _copies(lkey, uv, near)
+        width = int(copy.max()) + 1
+        ckey = lkey * width + copy
+        ka, kb = ckey[wa], ckey[wb]
         nodes, inv = np.unique(np.concatenate([ka, kb]), return_inverse=True)
         m = len(wa)
         grp = _labels(inv[:m], inv[m:], len(nodes))
@@ -551,25 +989,19 @@ def smart_merge(me, side_3d=None):
         rank_of = np.full(nc, np.iinfo(np.int64).max, dtype=np.int64)
         for c, rk in rank.items():
             rank_of[c] = rk
-        node_rank = rank_of[nodes // base]
+        node_rank = rank_of[nodes // width // base]
         first_of = {}
         for i in np.lexsort((node_rank, grp)).tolist():
             first_of.setdefault(int(grp[i]), i)
         target = {g: uv[ref[i]].copy() for g, i in first_of.items()}
-        # Every loop of a chart at a welded vertex moves, not only the loop
-        # on the joined edge. A loop on the chart's own closure seam has a
-        # different UV at the same vertex, and it stays where it is.
-        lkey = lchart * base + lv
-        korder = np.argsort(lkey, kind="stable")
-        ksorted = lkey[korder]
+        # Every loop of the same UV copy moves, not only the loop on the
+        # joined edge.
+        korder = np.argsort(ckey, kind="stable")
+        ksorted = ckey[korder]
         lo_i = np.searchsorted(ksorted, nodes, side="left")
         hi_i = np.searchsorted(ksorted, nodes, side="right")
-        near = max(tol * 10.0, weld_tol * 0.01)
-        old = uv[ref].copy()
         for i in range(len(nodes)):
-            idx = korder[lo_i[i]:hi_i[i]]
-            sel = idx[np.abs(uv[idx] - old[i]).sum(axis=1) <= near]
-            uv[sel] = target[int(grp[i])]
+            uv[korder[lo_i[i]:hi_i[i]]] = target[int(grp[i])]
 
     # Every island a place of its own, so no two can touch by accident.
     if island:

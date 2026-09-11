@@ -79,8 +79,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         failed = []
         quad_objs = []
         unwrap_objs = {}
-        smart_objs = []
-        smart_pack = ("NONE", 4)
+        # Smart runs once for each set of settings, because the tile it
+        # fits and the bend it allows come from the record of each object.
+        smart_objs = {}
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
@@ -176,17 +177,19 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 if uv_mode in uv_mod.UNWRAP_MODES:
                     unwrap_objs.setdefault(uv_mode, []).append(obj)
                 elif uv_mode == "SMART":
-                    smart_objs.append(obj)
-                    smart_pack = (stored.get("uv_pack", "NONE"),
-                                  stored.get("uv_pack_tiles", 4))
+                    smart_objs.setdefault(
+                        (stored.get("uv_pack", "NONE"),
+                         stored.get("uv_pack_tiles", 4),
+                         stored.get("uv_smart_distortion",
+                                    m.UV_SMART_DISTORTION)), []).append(obj)
                 done += 1
                 wm.progress_update(done)
 
         if quad_objs:
             m._tris_to_quads_objects(quad_objs)
 
-        if smart_objs:
-            m._smart_merge_objects(smart_objs, *smart_pack)
+        for smart_set, objs_s in smart_objs.items():
+            m._smart_merge_objects(objs_s, *smart_set)
 
         # One unwrap for each method, so every part gets the one it was
         # imported with. Regenerated meshes are already scaled to scene
@@ -535,8 +538,9 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     # Every UV key of the import record this panel is allowed to change.
-    KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams", "box_uv_scale",
-            "uv_pack", "uv_pack_tiles", "uv_pack_margin")
+    KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
+            "uv_smart_distortion", "box_uv_scale", "uv_pack",
+            "uv_pack_tiles", "uv_pack_margin")
 
     @classmethod
     def poll(cls, context):

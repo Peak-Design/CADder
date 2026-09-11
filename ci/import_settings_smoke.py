@@ -117,6 +117,7 @@ WANT = {
     "uv_mode": "MINIMUM_STRETCH",
     "uv_normalize": True,
     "uv_closed_seams": "SPLIT",
+    "uv_smart_distortion": 12.0,
     "box_uv_scale": 2.5,
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,

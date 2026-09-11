@@ -181,6 +181,72 @@ def write_block(path):
     w.Write(path)
 
 
+def write_turned(path, kind):
+    """Turned and cast parts that only join when a face is bent.
+
+    "cylinder": a cylinder 60 mm across with both rims rounded. A torus
+    chart is only close to its true shape, so a rounded rim misses the
+    straight edge of the rolled out wall by a few percent, and a cap is a
+    disk that meets that edge along a circle. Neither joins by a turn.
+
+    "tube": the same with a 30 mm bore that has sharp edges. The ends are
+    rings, and a ring unrolls into a strip.
+
+    "casting": a plate with every edge rounded, a boss rounded at its root
+    and its rim, and a sharp bore through both.
+    """
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.GeomAbs import GeomAbs_Circle
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopoDS import TopoDS
+    from OCP.gp import gp_Pnt, gp_Ax2, gp_Dir
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TDataStd import TDataStd_Name
+
+    def rounded(shape, radius, circle=None):
+        fil = BRepFilletAPI_MakeFillet(shape)
+        ex = TopExp_Explorer(shape, TopAbs_EDGE)
+        while ex.More():
+            edge = TopoDS.Edge_s(ex.Current())
+            curve = BRepAdaptor_Curve(edge)
+            if circle is None or (
+                    curve.GetType() == GeomAbs_Circle
+                    and abs(curve.Circle().Radius() - circle) < 1e-6):
+                fil.Add(radius, edge)
+            ex.Next()
+        return fil.Shape()
+
+    def cylinder(r, z0, h):
+        return BRepPrimAPI_MakeCylinder(
+            gp_Ax2(gp_Pnt(0, 0, z0), gp_Dir(0, 0, 1)), r, h).Shape()
+
+    if kind == "casting":
+        plate = rounded(
+            BRepPrimAPI_MakeBox(gp_Pnt(-60, -40, 0), 120, 80, 15).Shape(), 4.0)
+        body = rounded(BRepAlgoAPI_Fuse(plate, cylinder(20, 10, 35)).Shape(),
+                       5.0, circle=20)
+        shape = BRepAlgoAPI_Cut(body, cylinder(10, -5, 60)).Shape()
+    else:
+        shape = cylinder(30, 0, 80)
+        if kind == "tube":
+            shape = BRepAlgoAPI_Cut(shape, cylinder(15, -1, 82)).Shape()
+        shape = rounded(shape, 5.0, circle=30)
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    lab = tool.AddShape(shape, False)
+    TDataStd_Name.Set_s(lab, TCollection_ExtendedString(kind))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
 STAIR_STEPS = 7
 STAIR_RUN = 80.0
 STAIR_WIDTH = 50.0
@@ -259,6 +325,10 @@ BLOCK_STEP = os.path.join(tmp, "rounded_block.step")
 write_block(BLOCK_STEP)
 STAIR_STEP = os.path.join(tmp, "stair.step")
 write_stair(STAIR_STEP)
+TURNED = {}
+for _kind in ("cylinder", "tube", "casting"):
+    TURNED[_kind] = os.path.join(tmp, _kind + ".step")
+    write_turned(TURNED[_kind], _kind)
 
 
 def overlap_share(tris, grid=256):
@@ -517,10 +587,106 @@ check(worst < 0.01, "Smart leaves no island on itself (worst %.1f%%)"
       % (100.0 * worst))
 n_none = len(islands(load(BLOCK_STEP, uv_mode="SURFACE")))
 total = sum(r[0] for r in rows)
-check(len(rows) < n_none and max(r[0] for r in rows) > 0.8 * total,
+check(len(rows) <= 3 and max(r[0] for r in rows) > 0.8 * total,
       "and it still joins most of it (%d islands against %d, the largest "
       "%.0f%% of the surface)"
       % (len(rows), n_none, 100.0 * max(r[0] for r in rows) / total))
+
+# ---- Smart bends a face that does not fit by a turn -----------------------
+# A rounded rim misses the straight edge of a rolled out wall by a few
+# percent, and a ring meets it along a circle. Smart lays each of them out
+# along the island's edge instead: a rim becomes a strip, a ring unrolls
+# into one. A full disk would have to be stretched without limit at its
+# middle, so it stays an island of its own.
+
+
+def squashed(objs, limit=0.8):
+    """Share of the surface squashed below `limit` of the part's density.
+
+    Squash is the stretch that costs texture detail, so a bend may stretch
+    a face along the shared edge but must not squash it.
+    """
+    tot = bad = 0.0
+    for o in objs:
+        me = o.data
+        co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        vidx = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("vertex_index", vidx)
+        uv = np.empty(len(me.loops) * 2, dtype=np.float64)
+        me.uv_layers.active.uv.foreach_get("vector", uv)
+        uv = uv.reshape(-1, 2)
+        rows = []
+        for poly in me.polygons:
+            idx = list(poly.loop_indices)
+            for k in range(1, len(idx) - 1):
+                c = [idx[0], idx[k], idx[k + 1]]
+                p = co[vidx[c]]
+                q = uv[c]
+                e1, e2 = p[1] - p[0], p[2] - p[0]
+                n = np.cross(e1, e2)
+                area = 0.5 * np.linalg.norm(n)
+                if area < 1e-14:
+                    continue
+                x = e1 / np.linalg.norm(e1)
+                y = np.cross(n, x)
+                y /= np.linalg.norm(y)
+                src = np.array([[e1 @ x, e2 @ x], [e1 @ y, e2 @ y]])
+                dst = np.array([q[1] - q[0], q[2] - q[0]]).T
+                s = np.linalg.svd(dst @ np.linalg.inv(src), compute_uv=False)
+                rows.append((s[1], np.sqrt(s[0] * s[1]), area))
+        rows = np.array(rows)
+        density = np.median(rows[:, 1])
+        tot += rows[:, 2].sum()
+        bad += rows[rows[:, 0] < limit * density, 2].sum()
+    return bad / tot if tot else 0.0
+
+
+print("\n== Smart bends a rounded rim on to the wall it meets")
+objs = load(TURNED["cylinder"], uv_mode="SMART")
+rows = islands(objs, want_tris=True)
+n_fold = folded(objs)
+n_face = len(islands(load(TURNED["cylinder"], uv_mode="SURFACE")))
+total = sum(r[0] for r in rows)
+check(n_face == 5 and len(rows) == 3,
+      "wall, rims and caps: %d islands against %d, the caps alone"
+      % (len(rows), n_face))
+check(max(r[0] for r in rows) > 0.75 * total,
+      "the wall and both rims are one island (%.0f%% of the surface)"
+      % (100.0 * max(r[0] for r in rows) / total))
+worst = max(overlap_share(r[2]) for r in rows)
+check(worst < 0.01 and n_fold == 0,
+      "nothing lands on itself or folds (worst %.1f%%)" % (100.0 * worst))
+
+print("\n== the ends of a tube unroll into strips")
+objs = load(TURNED["tube"], uv_mode="SMART")
+rows = islands(objs, want_tris=True)
+check(len(rows) == 2,
+      "the outside is one island and the bore another (%d islands)"
+      % len(rows))
+worst = max(overlap_share(r[2]) for r in rows)
+check(worst < 0.01 and folded(objs) == 0,
+      "nothing lands on itself or folds (worst %.1f%%)" % (100.0 * worst))
+share = squashed(objs)
+check(share < 0.01,
+      "no face is squashed, so no face loses texture detail (%.1f%% of "
+      "the surface)" % (100.0 * share))
+n_rigid = len(islands(load(TURNED["tube"], uv_mode="SMART",
+                           uv_smart_distortion=0.0)))
+check(n_rigid >= 4,
+      "with Smart distortion at 0 nothing is bent (%d islands)" % n_rigid)
+
+print("\n== a casting comes out as a few clean islands")
+objs = load(TURNED["casting"], uv_mode="SMART")
+rows = islands(objs, want_tris=True)
+n_fold = folded(objs)
+n_face = len(islands(load(TURNED["casting"], uv_mode="SURFACE")))
+worst = max(overlap_share(r[2]) for r in rows)
+check(len(rows) <= 4,
+      "%d islands against %d for CAD Surfaces" % (len(rows), n_face))
+check(worst < 0.01 and n_fold == 0,
+      "nothing lands on itself or folds (worst %.1f%%)" % (100.0 * worst))
 
 # ---- Smart refuses a join that overlaps -----------------------------------
 # Five squares round one corner add up to 450 degrees. Laid flat one after
@@ -596,7 +762,8 @@ print("\n== the setting is stamped on the object")
 objs = load(uv_mode="SMART")
 rec = str(objs[0].get("STEP_import_settings")
           or objs[0].get("import_record_json") or "")
-check('"uv_mode": "SMART"' in rec, "the mode reaches the record")
+check('"uv_mode": "SMART"' in rec and "uv_smart_distortion" in rec,
+      "the mode and its distortion limit reach the record")
 
 if FAILS:
     print("\nuv_tangent_smoke: FAILED (%d)\n  %s"

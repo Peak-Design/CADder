@@ -187,7 +187,7 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 |------|-------------|
 | **None** | No UV layer. |
 | **CAD Surfaces** | One island per CAD face, taken from the parametric surface coordinates. The fastest mode, and the default. |
-| **CAD Surfaces (Smart)** | Joins CAD faces that meet smoothly into larger islands. A bent sheet metal part comes out as its flat pattern. See below. |
+| **CAD Surfaces (Smart)** | Joins CAD faces that meet smoothly into larger islands, and bends a face to fit where it has to. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands. See below. |
 | **Unwrap (Conformal)** | Blender's unwrap with packed islands. Sharp CAD edges act as seams. Keeps the angles. |
 | **Unwrap (Angle Based)** | The same unwrap with the angle based method. It can fold a long cylinder on to itself. |
 | **Unwrap (Minimum Stretch)** | The same unwrap with the minimum stretch method. The slowest mode. |
@@ -219,17 +219,38 @@ Smart builds each island the way a paper model is cut out. CAD Surfaces
 already gives each face a flat chart of its own. A plane chart is exact, and
 a cylinder chart is the surface rolled out, circumference by height. So a
 face joins the island without a solver: the addon turns its chart until the
-shared edge lies on the island. Smart starts from the largest face of the
-part and tries its smooth neighbors, largest first. A face joins only when
-all of these are true:
+shared edge lies on the island.
 
-- Its shared edge fits the island. A sphere or torus chart is only close to
-  its true shape, and a poor fit would bend the face to close the gap.
-- It does not land on the island.
+Some faces do not fit by a turn. A rounded rim is part of a torus, and its
+chart misses the straight edge of a rolled out wall by a few percent. The
+flat end of a tube is a ring, and it meets that edge along a circle. Smart
+bends these faces instead. It measures each point of the face along the
+shared edge and out from it, and sets the point down the same distance
+along and out from the edge of the island. A rim becomes a strip along the
+wall, and a ring unrolls into a strip. Where the edge of the island is cut,
+as at the seam of a rolled out wall, the face is cut at the same place.
+
+**Smart distortion** limits the bend, as an average over the face. The
+default is 35%. Squash counts in full, because it lowers the texel density.
+Stretch along the shared edge counts half, because an unrolled ring is still
+a clean strip that is easy to texture. The ends of a tube 60 mm across with
+a 30 mm bore score about 27%. A full disk would have to stretch without
+limit at its middle, so it stays an island of its own. Set 0 to turn the
+bend off.
+
+Smart starts from the largest face of the part and tries its smooth
+neighbors, largest first. A face joins only when all of these are true:
+
+- It fits the island by a turn, or by a bend within the Smart distortion
+  limit.
+- It does not land on the island. A bent face must not land on itself
+  either.
 - The island still fits the UV tile.
 
-A face that fails waits for a later island. The next island starts from the
-largest face that is left, until no face is left.
+A face that fails is tried again when another of its neighbors joins the
+island, because that edge can fit better. A face that never fits waits for
+a later island. The next island starts from the largest face that is left,
+until no face is left.
 
 The tile comes from **Pack UVs**. With **None** or **Each part on its own**,
 the tile is the square the part packs into by itself. With **All parts
@@ -239,15 +260,19 @@ tile is never smaller than the longest single face, because the addon never
 splits a CAD face.
 
 Smart makes its own cuts, so the **Closed surfaces** setting does not apply
-to it. Smart only turns and moves charts, so the texel density does not
-change.
+to it. A turn does not change the texel density, and a bend changes it only
+within the limit.
 
-Measured results:
+Measured results, with no island overlapping itself in any of them:
 
 | Part | CAD Surfaces | CAD Surfaces (Smart) |
 |------|--------------|----------------------|
-| Block with rounded edges | 26 islands | 5 islands, none overlapping, the largest 92% of the surface |
-| Sheet metal part, 4 m² | 250 islands | 92 islands, none overlapping |
+| Cylinder 60 mm across, both rims rounded | 5 islands | 3: the wall with both rims, and the two caps |
+| The same with a 30 mm bore | 6 islands | 2: the outside, and the bore |
+| Plate and boss, rounded all round, with a bore | 31 islands | 3 |
+| Block with rounded edges | 26 islands | 2, the largest 94% of the surface |
+| Sheet metal part, 4 m² | 250 islands | 92 |
+| Gear motor, 10 parts | 2,282 islands | 1,887. Most of its faces have sharp edges all round |
 
 On the sheet metal part, Smart cuts the flat patterns at a bend. They
 measure 3,338 by 977 mm, and the part packs into a 2,419 mm square on its
@@ -255,10 +280,8 @@ own. Kept whole, they would force a 3,425 mm tile and fill at most 35
 percent of it. Cut, they give about twice the texel density. Set **Pack
 UVs** to **All parts together** to keep them whole.
 
-| Assembly | CAD Surfaces | CAD Surfaces (Smart) |
-|----------|--------------|----------------------|
-| Sheet metal skid, 1,113 parts | 5.1 s | 6.6 s (+30%) |
-| Machined assembly, 182 parts | 1.0 s | 1.3 s (+28%) |
+Smart adds its own pass to the import: about 35% on a sheet metal skid of
+1,113 parts, and about 40% on a machined assembly of 182 parts.
 
 ### Pack UVs
 
@@ -346,7 +369,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |
+| 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |
 | 2.4.7   | 5.1     | Imported files panel with Refresh from disk. A refresh keeps your modifiers, collections, parenting, materials and placement, and can no longer change the size of the assembly. The object color now matches the CAD color. New "Group in a collection" and "Separate solids" import options. Material databases can live in a folder of your choosing. Update notice and Ko-fi link in the sidebar. The file cache checks the file on disk, so re-exporting over the same path no longer imports old geometry |
 | 2.4.6   | 5.1     | Fixed engineering materials always being created gray instead of keeping the part's imported color |
 | 2.4.5   | 5.1     | Engineering material import (AP242/AP214 name, description, density) as custom properties and optional named materials. Single `UVMap` layer with a UV mode dropdown, real-world UV scaling and automatic seams on closed/cylindrical faces. Import options remembered between sessions. Parented-empties imports now leave everything at scale 1. Recursive folder batch import. Multi-file drag & drop fix |

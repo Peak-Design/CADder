@@ -148,7 +148,10 @@
 #     flattens into one rectangle. Smart builds the islands one face at a
 #     time, the way a paper model is cut out, and keeps a join only if the
 #     island does not land on itself and still fits the UV tile
-#     (uv.smart_merge)
+#     (uv.smart_merge). A face that does not fit by a turn, such as a
+#     rounded rim or the end ring of a tube, is bent along the island's
+#     edge, within the new "Smart distortion" limit. A rounded tube comes
+#     out as two islands instead of six
 #   - Regenerate pairs the triangles into quads again and unwraps with the
 #     method the part was imported with. It left the triangles and always
 #     used Conformal

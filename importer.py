@@ -108,9 +108,9 @@ from OCP.StepShape import (
 from OCP.OCP import __version__ as OCP_VERSION
 
 try:
-    from .ocp_utils import ShapeKey, get_label_name
+    from .ocp_utils import SameKey, ShapeKey, get_label_name
 except ImportError:  # standalone use outside the package (test harnesses)
-    from ocp_utils import ShapeKey, get_label_name
+    from ocp_utils import SameKey, ShapeKey, get_label_name
 
 print("--> STEPper NEXT OpenCASCADE (OCP) version:", OCP_VERSION)
 
@@ -192,6 +192,45 @@ def _limit_openmp_threads(n):
         os.environ.pop("OMP_NUM_THREADS", None)
 
 
+def _bodies(shape):
+    """The body each face of a shape belongs to, keyed by SameKey.
+
+    A body is a solid, or a shell outside any solid. Faces that belong to
+    neither share one more body. Two solids that share a face, as in a
+    compound solid, are one body, so the shared face welds to both.
+    """
+    out = {}
+    parent = []
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for kind, avoid in ((TopAbs_SOLID, None), (TopAbs_SHELL, TopAbs_SOLID)):
+        ex = (TopExp_Explorer(shape, kind) if avoid is None
+              else TopExp_Explorer(shape, kind, avoid))
+        while ex.More():
+            n = len(parent)
+            parent.append(n)
+            fx = TopExp_Explorer(ex.Current(), TopAbs_FACE)
+            while fx.More():
+                key = SameKey(fx.Current())
+                had = out.setdefault(key, n)
+                if had != n:
+                    parent[root(n)] = root(had)
+                fx.Next()
+            ex.Next()
+    rest = len(parent)
+    parent.append(rest)
+    fx = TopExp_Explorer(shape, TopAbs_FACE)
+    while fx.More():
+        out.setdefault(SameKey(fx.Current()), rest)
+        fx.Next()
+    return {k: root(v) for k, v in out.items()}
+
+
 class NativeMeshData:
     """Lightweight mesh data holder returned by native extraction path.
 
@@ -200,10 +239,12 @@ class NativeMeshData:
     """
     __slots__ = ('verts', 'faces', 'norms', 'uvs',
                  'loop_norms', 'loop_uvs',
-                 'tri_colors', 'tri_batches', 'tri_mat_names', 'matrix')
+                 'tri_colors', 'tri_batches', 'tri_mat_names', 'matrix',
+                 'tri_bodies')
 
     def __init__(self, verts, faces, norms, uvs,
-                 tri_colors, tri_batches, tri_mat_names, matrix):
+                 tri_colors, tri_batches, tri_mat_names, matrix,
+                 tri_bodies=None):
         self.verts = verts              # (V, 3) float32
         self.faces = faces              # (T, 3) int32
         self.norms = norms              # (V, 3) float32 per-vertex
@@ -214,6 +255,9 @@ class NativeMeshData:
         self.tri_batches = tri_batches  # (T,) int32
         self.tri_mat_names = tri_mat_names  # list[str|None] len=T
         self.matrix = matrix            # (4, 4) float32
+        # (T,) int32: the body each triangle belongs to. Vertices are welded
+        # inside one body only.
+        self.tri_bodies = tri_bodies
 
     def fuse_verts(self):
         """Merge duplicate vertices using numpy.
@@ -231,10 +275,18 @@ class NativeMeshData:
         # different UVs per OCC face, so they must be captured pre-fuse too.
         self.loop_uvs = self.uvs[self.faces.ravel()].reshape(-1, 2).copy()
 
-        # Round to avoid floating-point near-misses
-        verts_rounded = np.round(self.verts, decimals=6)
+        # Round to avoid floating-point near-misses. The body goes in the
+        # key as well: two bodies that touch or overlap, such as a skin cast
+        # round a foam core, must not be welded into one mesh, or one body
+        # loses the triangles the other holds in the same place.
+        key = np.round(self.verts.astype(np.float64), decimals=6)
+        if self.tri_bodies is not None and len(self.faces):
+            vbody = np.zeros(len(self.verts), dtype=np.float64)
+            vbody[self.faces.ravel()] = np.repeat(self.tri_bodies, 3)
+            key = np.column_stack([key, vbody])
         _, first_idx, inverse = np.unique(
-            verts_rounded, axis=0, return_index=True, return_inverse=True)
+            key, axis=0, return_index=True, return_inverse=True)
+        inverse = inverse.ravel()
         if len(_) == len(self.verts):
             return  # no duplicates
         # Remap face indices
@@ -260,6 +312,8 @@ class NativeMeshData:
         self.faces = self.faces[keep]
         self.tri_colors = self.tri_colors[keep]
         self.tri_batches = self.tri_batches[keep]
+        if self.tri_bodies is not None:
+            self.tri_bodies = self.tri_bodies[keep]
         self.tri_mat_names = [self.tri_mat_names[i]
                               for i in range(len(keep)) if keep[i]]
         if self.loop_norms is not None:
@@ -279,6 +333,8 @@ class NativeMeshData:
         self.faces = self.faces[unique_idx]
         self.tri_colors = self.tri_colors[unique_idx]
         self.tri_batches = self.tri_batches[unique_idx]
+        if self.tri_bodies is not None:
+            self.tri_bodies = self.tri_bodies[unique_idx]
         self.tri_mat_names = [self.tri_mat_names[i] for i in unique_idx]
         if self.loop_norms is not None:
             # unique_idx is per-tri. Expand to per-corner
@@ -1726,16 +1782,25 @@ class ReadSTEP:
                 with self._lock:
                     self.recovered_parts.append(_part_name or "unknown")
 
-        iter_shapes = [shape] + self.sub_shapes.get(ShapeKey(shape), [])
+        # The part's own shape first, then its labeled sub-shapes from the
+        # least specific to the most: bodies, then shells, then faces. A
+        # face takes the color of the last label that has one, so a color
+        # on a face beats a color on its body.
+        subs = sorted(self.sub_shapes.get(ShapeKey(shape), []),
+                      key=lambda s: int(s.ShapeType()))
+        iter_shapes = [shape] + subs
         if recovered_shape is not None:
             iter_shapes = [recovered_shape]
-        iter_shapes.sort(key=lambda x: x.Checked())
 
         # ── Phase 1: Collect all faces with metadata ──────────────────
-        # Each entry: (face_obj, trf_obj, col_rgb_or_None, col_name, batch_id)
+        # Each entry: [face_obj, trf_obj, col_rgb_or_None, col_name, batch_id,
+        # body]. One entry for each face. A label can hold a face turned the
+        # other way from the same face in its body, so faces are matched
+        # whatever way round they are, and the face keeps the way round it
+        # has in its body, which is what makes the normals point out.
         collected_faces = []
-        # Track face dedup: last occurrence of each OCC face wins
-        face_dedup = OrderedDict()
+        face_dedup = {}
+        body_of = {}
         batch = 0
 
         for shp_i, shp in enumerate(iter_shapes):
@@ -1743,7 +1808,7 @@ class ReadSTEP:
             if col is not None:
                 col_rgb = b_RGB(col)
                 col_name = b_colorname(col)
-            elif fallback_color is not None:
+            elif shp_i == 0 and fallback_color is not None:
                 # Instance color override from the component reference label,
                 # applies where no face/sub-shape color is present.
                 col_rgb = fallback_color
@@ -1755,6 +1820,9 @@ class ReadSTEP:
 
             ex = TopExp_Explorer(shp, TopAbs_FACE)
             if not ex.More():
+                # A labeled edge or vertex carries data for itself only.
+                if shp_i > 0:
+                    continue
                 if not skip_faulty:
                     healed = self._heal_shape(shp)
                     if healed is not shp:
@@ -1765,7 +1833,22 @@ class ReadSTEP:
                         self.import_problems["Empty shape"] += 1
                     continue
 
-            if not self._pre_tessellated:
+            # A labeled sub-shape is part of the shape meshed first, and its
+            # faces carry that mesh already. Meshing them again on their own
+            # can split their edges differently from the faces next to them,
+            # and then the edges no longer weld: the face comes loose as an
+            # island of its own. Only a face the shape did not hold is meshed.
+            known = shp_i > 0
+            if known:
+                fx = TopExp_Explorer(shp, TopAbs_FACE)
+                while fx.More():
+                    if SameKey(fx.Current()) not in face_dedup:
+                        known = False
+                        break
+                    fx.Next()
+            if known:
+                pass
+            elif not self._pre_tessellated:
                 shp = self._tessellate_shape(
                     shp, lin_def, ang_def,
                     part_name=_part_name, skip_faulty=skip_faulty,
@@ -1782,13 +1865,21 @@ class ReadSTEP:
                     ex = TopExp_Explorer(shp, TopAbs_FACE)
                     print(f"\n  [re-tess] {_part_name}", end="", flush=True)
             trf = shp.Location().Transformation()
+            if shp_i == 0:
+                body_of = _bodies(shp)
 
             while ex.More():
                 face = TopoDS.Face_s(ex.Current())
-                idx = len(collected_faces)
-                collected_faces.append((face, trf, col_rgb, col_name, batch))
-                # Dedup: record last index for each face object
-                face_dedup[ShapeKey(face)] = idx
+                key = SameKey(face)
+                at = face_dedup.get(key)
+                if at is None:
+                    face_dedup[key] = len(collected_faces)
+                    collected_faces.append(
+                        [face, trf, col_rgb, col_name, batch,
+                         body_of.get(key, -1)])
+                elif col_rgb is not None:
+                    collected_faces[at][2] = col_rgb
+                    collected_faces[at][3] = col_name
                 ex.Next()
                 batch += 1
 
@@ -1831,7 +1922,7 @@ class ReadSTEP:
 
         test_loc = TopLoc_Location()
         for i in sorted(dedup_indices):
-            face, trf, col_rgb, col_name, batch_id = collected_faces[i]
+            face, trf, col_rgb, col_name, batch_id, body = collected_faces[i]
             # Verify face has valid, non-empty triangulation before handing
             # it to the native module (mirrors the Python fallback path).
             tri = BRep_Tool.Triangulation_s(face, test_loc)
@@ -1840,7 +1931,7 @@ class ReadSTEP:
                     self.import_problems["Triangulation"] += 1
                 continue
             builder.Add(compound, face)
-            meta.append((col_rgb, col_name, batch_id))
+            meta.append((col_rgb, col_name, batch_id, body))
             face_refs.append((face, trf))
 
         if not face_refs:
@@ -2014,17 +2105,19 @@ class ReadSTEP:
         tri_batches = np.zeros(n_total_tris, dtype=np.int32)
         # Per-triangle material name (Python list, strings)
         tri_mat_names = [None] * n_total_tris
+        tri_bodies = np.full(n_total_tris, -1, dtype=np.int32)
 
         for j in range(len(meta)):
             if failed_mask[j]:
                 continue
-            col_rgb, col_name, batch_id = meta[j]
+            col_rgb, col_name, batch_id, body = meta[j]
             fs = int(face_starts[j])
             fc = int(face_counts[j])
             if fc == 0:
                 continue
 
             tri_batches[fs:fs + fc] = batch_id
+            tri_bodies[fs:fs + fc] = body
             if col_rgb is not None:
                 tri_colors[fs:fs + fc] = col_rgb
                 mat_name = col_name if col_name else None
@@ -2039,6 +2132,7 @@ class ReadSTEP:
             tri_batches=tri_batches,
             tri_mat_names=tri_mat_names,
             matrix=np.eye(4, dtype=np.float32),
+            tri_bodies=tri_bodies,
         )
 
     def _build_trimesh_python(self, collected_faces, face_dedup, out_mesh):
@@ -2054,7 +2148,7 @@ class ReadSTEP:
             charts = {}
 
         for i in order:
-            face, trf, col_rgb, col_name, batch_id = collected_faces[i]
+            face, trf, col_rgb, col_name, batch_id, body = collected_faces[i]
             try:
                 mesh = self.triangulate_face(face, trf, charts.get(i))
             except Exception:
@@ -2062,6 +2156,7 @@ class ReadSTEP:
 
             if mesh:
                 mesh.set_batch(batch_id)
+                out_mesh.batch_body[batch_id] = body
                 if col_rgb is not None:
                     mesh.colorize(col_rgb)
                     mesh.set_material_name(col_name)

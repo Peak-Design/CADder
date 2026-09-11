@@ -38,6 +38,9 @@ class TriMesh:
 
     def __init__(self, verts=None, tris=None, matrix=None):
 
+        # The body of each batch (CAD face). Vertices are welded inside one
+        # body only, the same as NativeMeshData.fuse_verts.
+        self.batch_body = {}
         if verts is None and tris is None:
             self.tris = []
             self.verts = []
@@ -111,7 +114,7 @@ class TriMesh:
         faces = set([])
         for t in self.tris:
             locs = tuple(self.verts[i] for i in t.indices)
-            f_hash = tuple(sorted(locs))
+            f_hash = (self.batch_body.get(t.batch, -1), tuple(sorted(locs)))
             if f_hash not in faces:
                 faces.add(f_hash)
                 new_tris.append(t)
@@ -124,11 +127,16 @@ class TriMesh:
         tri_map = {}
         new_verts = []
         new_index = 0
+        vbody = {}
+        for t in self.tris:
+            for i in t.indices:
+                vbody[i] = self.batch_body.get(t.batch, -1)
         for vi, v in enumerate(self.verts):
             # Find duplicate verts based on location "hash", rounded to the
             # same 6 decimals as the native path (NativeMeshData.fuse_verts)
-            # so both paths merge the same near-miss boundary vertices.
-            v_hash = tuple(round(c, 6) for c in v)
+            # so both paths merge the same near-miss boundary vertices, and
+            # only inside one body.
+            v_hash = (vbody.get(vi, -1),) + tuple(round(c, 6) for c in v)
             if v_hash not in verts:
                 new_verts.append(v)
                 verts[v_hash] = new_index

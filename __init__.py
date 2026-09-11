@@ -157,6 +157,15 @@
 #     used Conformal
 #   - Tris to Quads and Clean Up Meshes keep the CAD shading. Both went
 #     through bmesh, which moves custom normals when faces join
+#   - Parts with more than one body import whole. Vertices were welded by
+#     position across the whole part, so two bodies that touch were welded
+#     together and a duplicate filter dropped one body's triangles where
+#     they met. Faces were matched with their orientation, so a color
+#     label that holds a face turned over meshed the face a second time.
+#     And each labeled face was meshed again on its own, which can split
+#     its edges differently from its neighbors. A buoyancy module goes
+#     from 1,476 edges shared by more than two faces to none, and a gear
+#     motor from 146 open edges to 14
 #   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
 #     selected parts again with the same settings as the import dialog, so
 #     one part can get a treatment its neighbor does not. It replaces the

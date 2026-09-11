@@ -40,6 +40,10 @@ leaves some stretch behind.
   checks whether the surface goes all the way round, and cuts only a pipe.
 - Clean Up Meshes turned the shading normals and left marks on curved
   faces. It now keeps the shading of the CAD surface.
+- A part made of two bodies that touch, such as a foam core in a skin,
+  lost triangles where the bodies meet, and faces with a color of their own
+  could come out twice, in the wrong color and facing in. Each body now
+  stays whole, and each face takes its own color once.
 
 ## New UV panel
 

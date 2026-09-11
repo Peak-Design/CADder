@@ -206,6 +206,8 @@ When it is on, the addon fits the UVs to the 0-1 square. Every island of a part 
 
 Measured on a 182 part assembly, by share of surface stretched more than five times as far one way as the other: None 45%, Single seam 0.2%, Split faces 0.1%. Single seam reaches that with 2,958 islands against 3,381 for Split faces, so it wastes less texture on island margins. None of these change the shading.
 
+A sheet with holes is not cut. A plate with a hole has the same topology as a length of pipe, so topology alone cannot tell them apart. The addon also walks each boundary loop and watches the surface normal. Round the end of a pipe it turns through a full circle, and that region gets its cut. Round a hole in a plate, or round the outline of a bent plate, it comes back without going round, and the region stays whole.
+
 **Merge tangent** decides what happens where two CAD faces meet smoothly. A
 sheet metal part is a plate, a bend and another plate. None of those
 boundaries is sharp, so the run is one continuous surface that a press brake
@@ -224,16 +226,23 @@ at the texel density of the rest of the part. A region that is one CAD face
 keeps its parametric UVs.
 
 Smart exists for the edge of a plate. That edge is one tangent run the full
-length of the profile and only as thick as the metal, so merging it gives an
-island tens of times longer than it is wide, which wastes the tile. Smart
-measures the area and the perimeter of each region, which both survive
-flattening, and leaves a run over 8 to 1 in separate faces.
+length of the profile and only as thick as the metal, so merging it gives a
+long thin island that wastes the tile. Smart measures the area and the
+outline of each region, which both survive flattening. It leaves a region
+in separate faces when it is longer than 8 to 1 and also narrower than a
+quarter of the widest region of the part. The second test matters: a long
+flat pattern can be as elongated as a short edge, but it is always the
+widest region of its part, and an edge is one sheet thickness wide.
 
-Measured on a bent plate 113 mm by 200 mm: None gives 14 islands, All gives
-6, and Smart gives 10. Each flat pattern holds its surface area to within
-0.2 percent. On a 182 part machined assembly, where little is tangent, All
-takes the island count from 2,827 to 2,606 and adds about 20 percent to the
-import time.
+Measured on a sheet metal part with about 4 square meters of surface: None
+gives 250 islands. All gives 71, and the inside and the outside each come
+out as one flat pattern of about half the surface. Smart gives 196, with the
+same two flat patterns and the edges back in separate faces.
+
+| Assembly | None | All | Smart |
+|----------|------|-----|-------|
+| Sheet metal skid, 1,113 parts | 6.4 s | 8.3 s (+29%) | 8.1 s (+26%) |
+| Machined assembly, 182 parts | 1.0 s | 1.5 s (+48%) | 1.7 s (+68%) |
 
 ### Pack UVs
 

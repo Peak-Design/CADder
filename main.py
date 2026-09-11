@@ -1389,6 +1389,14 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
 # wide, and it packs far better as the separate faces it came from.
 MERGE_MAX_ASPECT = 8.0
 
+# A long region is only a strip when it is also narrow against the part it
+# belongs to. On real sheet metal the edge strips are one sheet thickness
+# wide, 10 or 16 mm, and the flat patterns are 800 mm and more. Their
+# ratios overlap: a long flat pattern reached 12.7 to 1, which the ratio
+# alone called a strip. Width does not overlap, so a strip also has to be
+# narrower than this share of the widest region of the part.
+MERGE_STRIP_WIDTH = 0.25
+
 
 def _region_labels(a, b, n):
     """Connected components over the triangle pairs (a, b).
@@ -1412,6 +1420,40 @@ def _region_labels(a, b, n):
     return labels
 
 
+def _boundary_loops(labels, face_of, he0, he1, open_he, va, vb, max_v,
+                    regions=None):
+    """The boundary loops of each region, as loops of half edges.
+
+    A half edge bounds its region when the face on the other side is in a
+    different region, or when there is no other side. A seam with the same
+    region on both sides is a slit inside the region, not an edge of it, so
+    it is left out. Two edges of one region that share a vertex belong to
+    the same loop.
+
+    Returns (half edges, region of each, loop id of each). Loop ids run from
+    0. `regions` limits the work to those region ids.
+    """
+    r0 = labels[face_of[he0]]
+    r1 = labels[face_of[he1]]
+    split = r0 != r1
+    hes = np.concatenate([he0[split], he1[split], open_he])
+    reg = labels[face_of[hes]]
+    if regions is not None:
+        keep = np.isin(reg, regions)
+        hes, reg = hes[keep], reg[keep]
+    if not len(hes):
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty
+    node_a = reg * np.int64(max_v) + va[hes].astype(np.int64)
+    node_b = reg * np.int64(max_v) + vb[hes].astype(np.int64)
+    nodes, inv = np.unique(np.concatenate([node_a, node_b]),
+                           return_inverse=True)
+    k = len(hes)
+    comp = _region_labels(inv[:k], inv[k:], len(nodes))[inv[:k]]
+    _ids, loop_of = np.unique(comp, return_inverse=True)
+    return hes, reg, loop_of
+
+
 def _skinny_regions(labels, area, perim, n):
     """Which regions are too long and thin to merge.
 
@@ -1420,9 +1462,18 @@ def _skinny_regions(labels, area, perim, n):
     rectangle L by W the two are L*W and 2(L+W), which gives L and W as the
     roots of x^2 - (P/2)x + A. Other shapes are not rectangles, but the
     answer stays close enough to tell a plate from a strip.
+
+    `perim` is the length of the outline of each region, by region id. The
+    holes are not part of it. A plate with fifty holes has fifty extra
+    loops of boundary, and counting them made every such plate read as a
+    long thin strip.
+
+    A region is a strip when it is both long, over MERGE_MAX_ASPECT, and
+    narrow against the widest region of the same part. The ratio alone
+    cannot do it: a long flat pattern can be as elongated as a short edge.
     """
     a = np.bincount(labels, weights=area, minlength=n)
-    p = np.bincount(labels, weights=perim, minlength=n)
+    p = perim
     half = p * 0.5
     disc = half * half - 4.0 * a
     out = np.zeros(n, dtype=bool)
@@ -1433,8 +1484,89 @@ def _skinny_regions(labels, area, perim, n):
     long_side = (half[ok] + root) * 0.5
     short_side = (half[ok] - root) * 0.5
     ratio = long_side / np.maximum(short_side, 1e-12)
-    out[np.where(ok)[0]] = ratio > MERGE_MAX_ASPECT
+    # The mean width of a region: area over half the outline. On a strip it
+    # is the strip width exactly, bends and all. On a plate with a ragged
+    # outline it reads low, but it stays far above one sheet thickness.
+    has = p > 1e-12
+    width = np.zeros(n, dtype=np.float64)
+    width[has] = 2.0 * a[has] / p[has]
+    widest = float(width.max()) if has.any() else 0.0
+    narrow = width[ok] < MERGE_STRIP_WIDTH * widest
+    out[np.where(ok)[0]] = (ratio > MERGE_MAX_ASPECT) & narrow
     return out
+
+
+# A boundary loop wraps round the part when the surface normal turns
+# through this many full turns as the loop goes round once. The foot of a
+# cylinder turns once. Every loop of a flat pattern turns zero times, even
+# the outline of a U channel, which goes out over the bends and back again.
+WRAP_MIN_TURNS = 0.5
+
+
+def _sheet_regions(bad_ids, chi, labels, face_of, he0, he1, open_he, va, vb,
+                   corner_a, corner_b, loop_norms, he_len, max_v):
+    """Which of the regions that fail the disk test are sheets with holes.
+
+    The closed surface test asks whether a region is a disk, and a region
+    with holes is not one: a disk with h holes has an Euler characteristic of
+    1 - h. But a tube is not one either, and topology cannot tell the two
+    apart. A plate with one hole and a length of pipe are both annuli.
+
+    Geometry can. Walk a boundary loop and watch the surface normal. Round
+    the end of a pipe it turns through a full circle. Round a hole in a
+    plate, or round the outline of a bent plate, it comes back to where it
+    started without going round. A region is a sheet when it has no handle
+    (genus 0), has holes, and no loop of it goes round.
+
+    Without this the test cut the bend lines of every sheet metal part that
+    has holes, trying to reach a disk it could never reach while the holes
+    were there.
+
+    Returns the ids from `bad_ids` that are sheets.
+    """
+    if not len(bad_ids):
+        return bad_ids
+    hes, reg, lid = _boundary_loops(labels, face_of, he0, he1, open_he,
+                                    va, vb, max_v, regions=bad_ids)
+    if not len(hes):
+        return bad_ids[:0]
+    n_all = int(lid.max()) + 1
+    na = loop_norms[corner_a[hes]].astype(np.float64)
+    nb = loop_norms[corner_b[hes]].astype(np.float64)
+    w = he_len[hes]
+
+    # The axis a loop could wind round is the direction its normals vary
+    # least along: the axis of a cylinder, or the length of a U channel.
+    cov = np.zeros((n_all, 3, 3), dtype=np.float64)
+    np.add.at(cov, lid, na[:, :, None] * na[:, None, :] * w[:, None, None])
+    _vals, vecs = np.linalg.eigh(cov)
+    axis = vecs[:, :, 0][lid]
+
+    # The winding number of the normal about that axis. Each edge adds the
+    # angle the normal turns along it, so the loop needs no ordering: the
+    # faces of a region wind one way, and so do its boundary edges.
+    pa = na - axis * np.sum(na * axis, axis=1, keepdims=True)
+    pb = nb - axis * np.sum(nb * axis, axis=1, keepdims=True)
+    good = ((np.linalg.norm(pa, axis=1) > 0.1)
+            & (np.linalg.norm(pb, axis=1) > 0.1))
+    turn = np.where(good,
+                    np.arctan2(np.sum(np.cross(pa, pb) * axis, axis=1),
+                               np.sum(pa * pb, axis=1)), 0.0)
+    turns = np.bincount(lid, weights=turn, minlength=n_all) / (2.0 * np.pi)
+    wraps = np.abs(turns) > WRAP_MIN_TURNS
+
+    loop_reg = np.zeros(n_all, dtype=np.int64)
+    loop_reg[lid] = reg
+    ids, pos = np.unique(loop_reg, return_inverse=True)
+    n_loops = np.bincount(pos, minlength=len(ids))
+    n_wrap = np.bincount(pos, weights=wraps.astype(np.float64),
+                         minlength=len(ids))
+    chi_of = dict(zip(bad_ids.tolist(), chi.tolist()))
+    # Genus 0 with b boundary loops has an Euler characteristic of 2 - b.
+    sheets = [int(r) for r, b, nw in zip(ids.tolist(), n_loops.tolist(),
+                                          n_wrap.tolist())
+              if b >= 2 and chi_of.get(int(r), 1) == 2 - b and nw == 0]
+    return np.array(sheets, dtype=bad_ids.dtype)
 
 
 # How many times to cut one closed region before giving up. A tube needs
@@ -1591,23 +1723,19 @@ def _compute_edge_attributes(mesh):
         e1 = verts[faces[:, 1]].astype(np.float64)
         e2 = verts[faces[:, 2]].astype(np.float64)
         tri_area = 0.5 * np.linalg.norm(np.cross(e1 - e0, e2 - e0), axis=1)
-        # An edge is on the boundary of a region when its two sides sit in
-        # different regions, or when it has only one side.
+        # The outline of a region is its longest boundary loop. The other
+        # loops are holes, and a hole does not make a plate any thinner.
         he_len = np.linalg.norm(
             (verts[va] - verts[vb]).astype(np.float64), axis=1)
-        edge_len = np.zeros(len(unique_keys), dtype=np.float64)
-        edge_len[inverse] = he_len
-        r0 = labels[face_of[he0]]
-        r1 = labels[face_of[he1]]
-        split = r0 != r1
-        li = edge_len[interior_idx]
-        perim = (np.bincount(r0[split], weights=li[split], minlength=T)
-                 + np.bincount(r1[split], weights=li[split], minlength=T))
-        open_idx = np.where(counts == 1)[0]
-        if len(open_idx):
-            hb = order[group_starts[open_idx]]
-            perim += np.bincount(labels[face_of[hb]],
-                                 weights=edge_len[open_idx], minlength=T)
+        open_he = order[group_starts[np.where(counts == 1)[0]]]
+        hes, reg, lid = _boundary_loops(labels, face_of, he0, he1, open_he,
+                                        va, vb, max_v)
+        perim = np.zeros(T, dtype=np.float64)
+        if len(hes):
+            loop_len = np.bincount(lid, weights=he_len[hes])
+            loop_reg = np.zeros(len(loop_len), dtype=np.int64)
+            loop_reg[lid] = reg
+            np.maximum.at(perim, loop_reg, loop_len)
         skinny = _skinny_regions(labels, tri_area, perim, T)
         extra = int_edge_keys[cross_batch & skinny[labels[face_of[he0]]]]
         if len(extra):
@@ -1651,6 +1779,10 @@ def _compute_edge_attributes(mesh):
         # needs two, and a shape with more handles needs one for each. Cut,
         # look again, and stop when every region is a disk. Split faces cuts
         # everything at once, so one pass does it.
+        open_idx = np.where(counts == 1)[0]
+        open_he = order[group_starts[open_idx]]
+        he_len = np.linalg.norm(
+            (verts[va] - verts[vb]).astype(np.float64), axis=1)
         for _round in range(1 if closed_mode == "SPLIT" else MAX_CLOSED_CUTS):
             smooth_pair = ~np.isin(int_edge_keys, seam_keys)
             a = face_of[he0][smooth_pair]
@@ -1684,6 +1816,15 @@ def _compute_edge_attributes(mesh):
             chi = (v_counts.astype(np.int64) - e_counts.astype(np.int64)
                    + f_counts.astype(np.int64))
             bad_ids = v_ids[chi != 1]
+            if len(bad_ids):
+                # A sheet with holes fails the disk test too, and cutting it
+                # does not help. Leave those regions whole.
+                sheets = _sheet_regions(
+                    bad_ids, chi[chi != 1], labels, face_of, he0, he1,
+                    open_he, va, vb, corner_a, corner_b, loop_norms, he_len,
+                    max_v)
+                if len(sheets):
+                    bad_ids = bad_ids[~np.isin(bad_ids, sheets)]
             if not len(bad_ids):
                 break
             cand = smooth_pair & cross_batch

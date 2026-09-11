@@ -22,7 +22,7 @@ leaves some stretch behind.
 | **Pack margin** | The space around each island. Raise it if a bake bleeds | none |
 | **Unwrap method** | Conformal (new default), Angle Based or Minimum Stretch | none |
 | **Closed surfaces** | Where a cylinder or torus closes on itself: None, Single seam (new default) or Split faces. Replaces "Split Closed Faces" | none |
-| **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart does the same but leaves a long thin run alone | +20% for All |
+| **Merge tangent** | Where two faces meet smoothly: None (default), All or Smart. All gives a bent sheet metal part its flat pattern. Smart does the same but leaves the thin plate edges as separate faces | +25% to +50% |
 
 ## UV fixes
 
@@ -34,6 +34,9 @@ leaves some stretch behind.
   now takes a small offset of its own.
 - Islands of one part could hold different texel densities. Every island of
   a part now divides by the same number.
+- Closed surfaces cut the bend lines of sheet metal parts with holes. A
+  plate with a hole has the same topology as a pipe. The addon now also
+  checks whether the surface goes all the way round, and cuts only a pipe.
 
 ## New UV panel
 

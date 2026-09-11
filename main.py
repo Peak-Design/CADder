@@ -1768,8 +1768,28 @@ def build_nurbs(step_reader, shp, name):
         return bpy.context.view_layer.objects.active
 
 
+# The parts the last import could not build or had to recover. The
+# background worker reads this and sends it to the session that started it,
+# which shows the popup.
+last_import_issues = ([], [])
+
+
 def _show_import_issues_popup(failed_parts, recovered_parts):
-    """Show a Blender popup dialog listing parts that had import problems."""
+    """Show a Blender popup dialog listing parts that had import problems.
+
+    A Blender with no window, such as the background worker, has no popup
+    to show, and Blender crashes if it tries. There the lists go to the
+    console only.
+    """
+    global last_import_issues
+    last_import_issues = (list(failed_parts), list(recovered_parts))
+    if bpy.app.background:
+        for name in failed_parts:
+            print("Import warning: %s produced no geometry" % name)
+        for name in recovered_parts:
+            print("Import warning: %s had corrupted geometry and was "
+                  "recovered" % name)
+        return
 
     def draw(self, context):
         layout = self.layout

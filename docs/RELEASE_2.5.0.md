@@ -46,6 +46,10 @@ leaves some stretch behind.
   lost triangles where the bodies meet, and faces with a color of their own
   could come out twice, in the wrong color and facing in. Each body now
   stays whole, and each face takes its own color once.
+- A background import failed when a part of the file produced no geometry.
+  The worker tried to show the warning popup, and a Blender with no window
+  crashes when it does that. The worker now sends the warning to your
+  session, which shows the popup.
 
 ## New UV panel
 

@@ -169,6 +169,10 @@
 #     its edges differently from its neighbors. A buoyancy module goes
 #     from 1,476 edges shared by more than two faces to none, and a gear
 #     motor from 146 open edges to 14
+#   - A background import no longer fails when a part produces no geometry.
+#     The worker opened the warning popup, and Blender with no window
+#     crashes on that. The worker now sends the list to the session that
+#     started it, which shows the popup
 #   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
 #     selected parts again with the same settings as the import dialog, so
 #     one part can get a treatment its neighbor does not. It replaces the

@@ -3,6 +3,7 @@
 
 import json
 from collections import defaultdict
+import math
 from math import radians
 
 import bmesh
@@ -76,7 +77,11 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         wm.progress_begin(0, len(targets))
         done = 0
         failed = []
-        unwrap_objs = []
+        quad_objs = []
+        unwrap_objs = {}
+        # Smart runs once for each set of settings, because the tile it
+        # fits and the bend it allows come from the record of each object.
+        smart_objs = {}
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
@@ -119,27 +124,17 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     lin_def = stored.get("lin_deflection", scene_lin)
                     ang_def = stored.get("ang_deflection", scene_ang)
 
-                # Restore per-import UV options for the apply path.
-                # Older imports stored uv_surface/uv_unwrap/uv_box booleans
-                # instead of uv_mode, so map them across.
-                uv_mode = stored.get("uv_mode")
-                if uv_mode is None:
-                    if stored.get("uv_box"):
-                        uv_mode = "BOX"
-                    elif stored.get("uv_unwrap"):
-                        uv_mode = "UNWRAP"
-                    elif stored.get("uv_surface", True):
-                        uv_mode = "SURFACE"
-                    else:
-                        uv_mode = "NONE"
-                m._uv_options["mode"] = uv_mode
-                m._uv_options["surface"] = uv_mode in ("SURFACE", "UNWRAP")
-                m._uv_options["unwrap"] = uv_mode == "UNWRAP"
-                m._uv_options["box"] = uv_mode == "BOX"
-                m._uv_options["normalize"] = stored.get("uv_normalize", True)
-                m._uv_options["split_closed"] = stored.get(
-                    "uv_split_closed", True)
-                m._uv_options["box_scale"] = stored.get("box_uv_scale", 1.0)
+                # Restore per-import UV options for the apply path. Older
+                # records name the UV map in other terms (uv.migrate_settings).
+                uv_mod.migrate_settings(stored)
+                uv_mode = stored["uv_mode"]
+                m._set_uv_options(
+                    uv_mode, stored.get("uv_normalize", True),
+                    # Records written before the dropdown carry a boolean.
+                    stored.get("uv_closed_seams",
+                               "SPLIT" if stored.get("uv_split_closed", True)
+                               else "NONE"),
+                    stored.get("box_uv_scale", 1.0))
                 m._uv_options["unit_scale"] = stored.get(
                     "unit_scale", obj.get("STEP_applied_scale", 0.0) or 1.0)
                 reader.uv_world_scale = (
@@ -175,18 +170,39 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                         "description": obj.get("STEP_material_desc", ""),
                         "density": obj.get("STEP_material_density", 0.0),
                     })
-                if m._uv_options["unwrap"]:
-                    unwrap_objs.append(obj)
+                # The passes the import runs once the mesh exists, in the
+                # same order: quads, then Smart, then the unwrap.
+                if stored.get("tris_to_quads") and uv_mode != "BOX":
+                    quad_objs.append(obj)
+                if uv_mode in uv_mod.UNWRAP_MODES:
+                    unwrap_objs.setdefault(uv_mode, []).append(obj)
+                elif uv_mode == "SMART":
+                    smart_objs.setdefault(
+                        (stored.get("uv_pack", "NONE"),
+                         stored.get("uv_pack_tiles", 4),
+                         stored.get("uv_smart_distortion",
+                                    m.UV_SMART_DISTORTION),
+                         bool(stored.get("uv_smart_sharp", False)),
+                         bool(stored.get("uv_smart_split", True))),
+                        []).append(obj)
                 done += 1
                 wm.progress_update(done)
 
-        if unwrap_objs:
-            # Regenerated meshes are already scaled to scene units, so
-            # real-world UV mode needs no extra unit conversion
+        if quad_objs:
+            m._tris_to_quads_objects(quad_objs)
+
+        for smart_set, objs_s in smart_objs.items():
+            m._smart_merge_objects(objs_s, *smart_set)
+
+        # One unwrap for each method, so every part gets the one it was
+        # imported with. Regenerated meshes are already scaled to scene
+        # units, so real-world UV mode needs no extra unit conversion.
+        for method, objs_m in unwrap_objs.items():
             m._unwrap_uv_objects(
-                unwrap_objs,
+                objs_m,
                 world_scale=(None if m._uv_options.get("normalize", True)
-                             else 1.0))
+                             else 1.0),
+                method=method)
 
         wm.progress_end()
 
@@ -340,10 +356,77 @@ class STEPPER_OT_prune_restore(bpy.types.Operator):
         return {"FINISHED"}
 
 
+NORMAL_STASH = "stepper_normal"
+
+
+def stash_normals(me):
+    """Copy the shading normals of a mesh into a plain corner attribute.
+
+    Blender keeps custom normals as offsets from the normals it calculates
+    itself. Join two triangles into a quad, or merge two faces, and the
+    calculated normals move, so the stored offsets now point somewhere
+    else. That is the shading damage a bmesh round trip does. Edit mode
+    operators correct for this, and a bmesh operator does not.
+
+    A float vector attribute holds the normal itself, and bmesh carries it
+    through every join and merge. restore_normals() writes it back.
+    Returns False when the mesh has no custom normals to keep.
+    """
+    if not me.has_custom_normals or not len(me.loops):
+        return False
+    old = me.attributes.get(NORMAL_STASH)
+    if old is not None:
+        me.attributes.remove(old)
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    me.corner_normals.foreach_get("vector", n)
+    me.attributes.new(NORMAL_STASH, "FLOAT_VECTOR", "CORNER").data.foreach_set(
+        "vector", n)
+    return True
+
+
+def sharpen_split_normals(bm, limit=math.radians(0.5)):
+    """Mark an edge sharp where the stashed normals do not agree across it.
+
+    Merge by distance can join two faces that met only at a split, such as
+    a crease where the tessellation had doubled vertices. The new edge is
+    smooth, and a smooth edge would blend the two normals into one. The
+    stashed normals show where the split was, so the edge stays a split.
+    """
+    layer = bm.loops.layers.float_vector.get(NORMAL_STASH)
+    if layer is None:
+        return 0
+    cos_lim = math.cos(limit)
+    made = 0
+    for e in bm.edges:
+        if not e.smooth or len(e.link_loops) != 2:
+            continue
+        la, lb = e.link_loops
+        # la runs v0 to v1 and lb runs the other way, so each corner of
+        # la meets the next corner of lb at the same vertex.
+        for a, b in ((la, lb.link_loop_next), (la.link_loop_next, lb)):
+            if a[layer].dot(b[layer]) < cos_lim:
+                e.smooth = False
+                made += 1
+                break
+    return made
+
+
+def restore_normals(me):
+    """Write the stashed normals back as custom normals, then drop the copy."""
+    a = me.attributes.get(NORMAL_STASH)
+    if a is None:
+        return False
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    a.data.foreach_get("vector", n)
+    me.attributes.remove(a)
+    if len(me.loops):
+        me.normals_split_custom_set(n.reshape(-1, 3))
+    return True
+
+
 class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
-    """Merge close vertices and dissolve coplanar faces, but keep the sharp edges.
-    This replaces the imported custom normals with shading from the sharp
-    edges."""
+    """Merge close vertices and dissolve coplanar faces. Keep the sharp edges
+    and the imported shading"""
     bl_idname = "stepper.mesh_cleanup"
     bl_label = "Cleanup selected meshes"
     bl_options = {"REGISTER", "UNDO"}
@@ -376,6 +459,7 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
             processed.add(me)
             pre_v, pre_f = len(me.vertices), len(me.polygons)
 
+            kept = stash_normals(me)
             bm = bmesh.new()
             bm.from_mesh(me)
 
@@ -402,9 +486,11 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
                 if e.is_valid:
                     e.smooth = True
 
-            # Topology changed: imported custom split normals no longer map
+            if kept:
+                sharpen_split_normals(bm)
             bm.to_mesh(me)
             bm.free()
+            restore_normals(me)
             me.update()
 
             total_removed_verts += pre_v - len(me.vertices)
@@ -444,10 +530,98 @@ class STEPPER_OT_add_box_uv(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class STEPPER_OT_reapply_uv(bpy.types.Operator):
+    """Make the UVMap layer of the selected parts again with the settings in
+    this panel. Box Project works on the mesh as it is. The other modes need
+    the CAD data, so the addon reads the source file again and replaces the
+    mesh, the same way Regenerate does. The settings go on to each object, so
+    a later Regenerate or Refresh keeps them."""
+    bl_idname = "stepper.reapply_uv"
+    bl_label = "Apply UVs to Selected"
+    bl_options = {"REGISTER", "UNDO"}
+
+    # Every UV key of the import record this panel is allowed to change.
+    KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
+            "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
+            "box_uv_scale", "uv_pack", "uv_pack_tiles", "uv_pack_margin")
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT" and any(
+            o.type == "MESH" for o in context.selected_objects)
+
+    def execute(self, context):
+        from . import main as m
+
+        prg = context.scene.stepper
+        want = {k: getattr(prg, k) for k in self.KEYS}
+
+        targets = []
+        seen = set()
+        for obj in context.selected_objects:
+            if obj.type != "MESH" or obj.data is None or obj.data in seen:
+                continue
+            seen.add(obj.data)
+            targets.append(obj)
+        if not targets:
+            self.report({"WARNING"}, "Select a mesh first")
+            return {"CANCELLED"}
+
+        # The settings travel with the object, so a Regenerate or a Refresh
+        # later keeps the UV map chosen here instead of the one the import
+        # made.
+        for obj in targets:
+            try:
+                rec = json.loads(obj.get("STEP_import_settings", "{}"))
+            except Exception:
+                rec = {}
+            if not isinstance(rec, dict):
+                rec = {}
+            # Put an older record in today's terms first. Its old keys would
+            # otherwise overrule the mode chosen here.
+            uv_mod.migrate_settings(rec)
+            rec.update(want)
+            obj["STEP_import_settings"] = json.dumps(rec)
+
+        if want["uv_mode"] == "BOX":
+            # Box projection reads the mesh and nothing else, so the CAD
+            # file stays closed and the mesh the user has is kept.
+            n = 0
+            for obj in targets:
+                if uv_mod.add_box_uv(obj.data, scale=want["box_uv_scale"]):
+                    n += 1
+            made = "box projected %d mesh(es)" % n
+        else:
+            from_cad = [o for o in targets
+                        if "STEP_file" in o and "STEP_tag" in o]
+            if not from_cad:
+                self.report({"WARNING"},
+                            "This mode needs the CAD data. Select parts that "
+                            "came from a STEP file")
+                return {"CANCELLED"}
+            for obj in context.selected_objects:
+                obj.select_set(obj in from_cad)
+            context.view_layer.objects.active = from_cad[0]
+            bpy.ops.stepper.regenerate(use_scene_settings=False)
+            targets = from_cad
+            made = "rebuilt %d mesh(es) from the CAD data" % len(from_cad)
+
+        # Regenerate has paired the triangles again as the record asks, so
+        # packing is the one pass left.
+        if want["uv_pack"] != "NONE":
+            m._pack_uv_objects(targets, want["uv_pack"],
+                               want["uv_pack_tiles"], want["uv_pack_margin"],
+                               bool(want["uv_normalize"]))
+
+        self.report({"INFO"}, "UV: " + made)
+        return {"FINISHED"}
+
+
 classes = (
     STEPPER_OT_regenerate,
     STEPPER_OT_prune_hierarchy,
     STEPPER_OT_prune_restore,
     STEPPER_OT_mesh_cleanup,
     STEPPER_OT_add_box_uv,
+    STEPPER_OT_reapply_uv,
 )

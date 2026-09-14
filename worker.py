@@ -99,6 +99,12 @@ def main():
     if "FINISHED" not in result:
         log({"phase": "error", "message": "import operator failed"})
         sys.exit(2)
+    # The parts that failed or were recovered. The worker has no window for
+    # the popup, so the session that started it shows the popup instead.
+    main_mod = sys.modules.get(module + ".main")
+    failed, recovered = getattr(main_mod, "last_import_issues", ([], []))
+    if failed or recovered:
+        log({"phase": "issues", "failed": failed, "recovered": recovered})
 
     n_objects = len(bpy.data.objects)
     log({"phase": "saving", "objects": n_objects})

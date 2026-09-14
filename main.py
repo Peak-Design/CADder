@@ -20,6 +20,7 @@
 #   - Import summary improvements
 
 import dataclasses
+import math
 import json
 import ntpath
 import os
@@ -68,6 +69,24 @@ except Exception as _bridge_exc:
 # derived from the operator's uv_mode enum in load_step)
 _uv_options = {"surface": True, "unwrap": False, "box": False,
                "box_scale": 1.0}
+
+
+def _set_uv_options(mode, normalize, closed_seams, box_scale):
+    """Set the UV options the mesh build reads, from the UV Map mode.
+
+    The import and Regenerate both build meshes through the same code, and
+    that code reads this dict instead of taking arguments. Every mode that
+    starts from the CAD surface writes the parametric UVs first. An unwrap
+    then replaces them, and they stay as the content to fall back on if it
+    fails.
+    """
+    _uv_options["mode"] = mode
+    _uv_options["surface"] = mode in uv_mod.SURFACE_MODES
+    _uv_options["unwrap"] = mode in uv_mod.UNWRAP_MODES
+    _uv_options["box"] = mode == "BOX"
+    _uv_options["normalize"] = normalize
+    _uv_options["closed_seams"] = closed_seams
+    _uv_options["box_scale"] = box_scale
 
 # LRU file cache with max entry limit
 MAX_FILE_CACHE = 10
@@ -668,11 +687,348 @@ def _assign_engineering_material(obj, mat_info):
             "material_index", np.zeros(n_polys, dtype=np.int32))
 
 
-def _unwrap_uv_objects(objs, world_scale=None):
-    """Angle-based unwrap with packed islands into the 'UVMap' layer.
+# One UDIM row is ten tiles wide, which is the convention every texture
+# tool follows: tile 1001 + u + 10 * v.
+UDIM_ROW = 10
+UV_PACK_MARGIN = 0.005
+# The Smart distortion setting, in percent (uv.SMART_DISTORTION explains it).
+UV_SMART_DISTORTION = 35.0
 
-    Runs Blender's unwrap operator once over all given objects in
-    multi-object edit mode. The imported seams (marked at sharp normal
+
+# The UV dropdowns are offered twice: in the import dialog and in the UV
+# panel, which makes the same map again for parts that are already in the
+# scene. One definition, so the two can never drift apart.
+# The enum numbers are what a .blend stores. Angle Based keeps number 2, the
+# number of the old Unwrap mode, because that mode always used the angle
+# based method. A scene saved with it opens on the same choice.
+UV_MODE_ITEMS = [
+    ("NONE", "None", "Do not make a UV map", 0),
+    ("SURFACE", "CAD Surfaces",
+     "One island for each CAD face, from the parametric coordinates of the "
+     "surface. The fastest mode, with the cleanest islands", 1),
+    ("SMART", "CAD Surfaces (Smart)",
+     "Join each CAD face to its smooth neighbors, one face at a time. A join "
+     "stays only if the island does not overlap itself and still fits the "
+     "UV tile", 4),
+    ("CONFORMAL", "Unwrap (Conformal)",
+     "Blender unwrap that keeps the angles. The sharp CAD edges are the "
+     "seams. Slower on large assemblies", 5),
+    ("ANGLE_BASED", "Unwrap (Angle Based)",
+     "Blender unwrap that spreads the error over the whole island. It can "
+     "fold a long cylinder on to itself", 2),
+    ("MINIMUM_STRETCH", "Unwrap (Minimum Stretch)",
+     "Blender unwrap that works to even out the stretch. The slowest mode",
+     6),
+    ("BOX", "Box Project",
+     "Project each face from the nearest of three directions, with a tile "
+     "size in world units", 3),
+]
+
+# CAD Surfaces (Smart) builds a net and cuts where the net needs it, so it
+# has no use for this setting, and the dialog shows it only for the modes
+# that do.
+UV_CLOSED_ITEMS = [
+    ("NONE", "None",
+     "Leave closed surfaces alone. An unwrap cannot flatten them and "
+     "gives a badly distorted island", 0),
+    ("SINGLE", "Single seam",
+     "One seam along the closure. A hole unrolls into one flat "
+     "island and its two halves stay joined", 1),
+    ("SPLIT", "Split faces",
+     "A seam on every boundary inside a closed region. A hole made "
+     "of two half cylinders becomes two separate islands", 2),
+]
+
+UV_PACK_ITEMS = [
+    ("NONE", "None", "Leave the islands where the UV mode put them", 0),
+    ("ALL", "All parts together",
+     "Pack every part into one 0-1 tile. Merge the parts afterwards "
+     "and the whole import is ready to texture as one piece", 1),
+    ("OBJECT", "Each part on its own",
+     "Give every part its own 0-1 tile, packed on its own. The "
+     "slowest choice: the packer has to run once for each part", 2),
+    ("UDIM", "Into UDIM tiles",
+     "Share the parts over a set number of tiles and pack each tile. "
+     "A middle way between one texture for everything and one for "
+     "each part", 3),
+]
+
+
+def _uv_array(me):
+    """The active UV layer as an (n, 2) array, or None."""
+    layer = me.uv_layers.active
+    n = len(me.loops)
+    if layer is None or not n:
+        return None, None
+    a = np.empty(n * 2, dtype=np.float32)
+    layer.uv.foreach_get("vector", a)
+    return layer, a.reshape(-1, 2)
+
+
+def _uv_move(me, du, dv):
+    """Slide a mesh's UVs by whole tiles."""
+    layer, uv = _uv_array(me)
+    if uv is None:
+        return
+    uv[:, 0] += du
+    uv[:, 1] += dv
+    layer.uv.foreach_set("vector", uv.ravel())
+
+
+def _uv_home(me):
+    """Slide a mesh's UVs back into tile 0.
+
+    The packer works out which tile to pack into from where the UVs already
+    are, so everything has to start in the same tile to end up in one.
+    """
+    layer, uv = _uv_array(me)
+    if uv is None:
+        return
+    low = np.floor(uv.min(axis=0))
+    if low[0] or low[1]:
+        uv -= low
+        layer.uv.foreach_set("vector", uv.ravel())
+
+
+def _hide_materials(objs):
+    """Take the materials off `objs` for a while, so the UVs stay square.
+
+    Blender's Pack Islands and Average Islands Scale read the image texture
+    in a face's material, and work in the proportions of that image. On a
+    2 by 1 texture, an island the packer turns comes out 4 times too narrow.
+    The addon makes UVs for a square tile, whatever the material holds, and
+    neither operator has an option to stop this. With no material there is
+    no image to read. Returns what _restore_materials puts back.
+    """
+    saved = []
+    for o in objs:
+        for i, slot in enumerate(o.material_slots):
+            if slot.material is not None:
+                saved.append((o, i, slot.material))
+                slot.material = None
+    return saved
+
+
+def _restore_materials(saved):
+    """Put back the materials _hide_materials took off."""
+    for o, i, mat in saved:
+        try:
+            o.material_slots[i].material = mat
+        except (IndexError, ReferenceError, RuntimeError):
+            pass
+
+
+def _deselect_all():
+    for o in bpy.context.view_layer.objects:
+        try:
+            o.select_set(False)
+        except RuntimeError:
+            pass
+
+
+def _crowd_margin(margin, count):
+    """The margin to ask for when `count` meshes share one tile.
+
+    Blender puts the margin around EVERY island, not around the group. A CAD
+    part carries about one island per face, so a whole assembly in one tile
+    is thousands of islands. Measured on 300 parts, near 3000 islands, in one
+    tile: a margin of 0.005 fills 6 percent of the tile, 0.001 fills 37
+    percent and 0.0001 fills 80 percent. The margin has to come down as the
+    crowd grows, or the gaps eat the texture.
+    """
+    return margin / math.sqrt(max(1, count))
+
+
+def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
+    """Pack one set of meshes into tile 0, together.
+
+    Selects and deselects only its own meshes. Clearing the whole scene on
+    every call would make packing one tile per part cost the square of the
+    part count, which on a real assembly is most of the run time.
+
+    When `scale` lets the packer resize, Average Islands Scale runs first.
+    The packer applies one factor to the whole group, so it keeps whatever
+    size difference the islands arrive with. Averaging gives every island in
+    the group the same texel density before that.
+    """
+    if not objs:
+        return
+    view_layer = bpy.context.view_layer
+    for o in objs:
+        o.select_set(True)
+    view_layer.objects.active = objs[0]
+    hidden = _hide_materials(objs)
+    try:
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        if scale:
+            # Each island keeps its own center, so the group stays in the
+            # tile the packer is about to read it from.
+            bpy.ops.uv.average_islands_scale()
+        bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True,
+                                scale=scale,
+                                margin=_crowd_margin(margin, len(objs)))
+        bpy.ops.object.mode_set(mode="OBJECT")
+    finally:
+        # Back in object mode first, so the materials go back on the mesh
+        # and not on an edit copy that is thrown away.
+        try:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+        except RuntimeError:
+            pass
+        _restore_materials(hidden)
+        for o in objs:
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass
+
+
+def _balance(objs, groups):
+    """Share the meshes over N groups, the biggest first into the emptiest.
+
+    Packing scales islands to fill the tile, so what matters is that each
+    tile carries a similar amount of surface, not a similar part count.
+    """
+    out = [[] for _ in range(groups)]
+    load = [0] * groups
+    for o in sorted(objs, key=lambda x: -len(x.data.polygons)):
+        i = load.index(min(load))
+        out[i].append(o)
+        load[i] += len(o.data.polygons)
+    return [g for g in out if g]
+
+
+def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
+    """Pack the UV islands. Unique meshes only, so linked copies come free.
+
+    ALL     one tile for the whole import, ready to merge and texture as one
+    OBJECT  one tile per part, each packed on its own
+    UDIM    the parts shared over a fixed number of tiles
+
+    `scale` comes from Normalize UVs. With it off the packer keeps every
+    island the size it already is and only arranges them, so the real-world
+    UV scale survives the pack. The result can then be larger than one tile,
+    which is why UDIM always scales: its tiles are a fixed grid and an
+    island that overruns one lands in the next.
+    """
+    if mode in (None, "NONE"):
+        return
+    seen = set()
+    targets = []
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        targets.append(o)
+    if not targets:
+        return
+
+    t0 = time.time()
+    try:
+        _deselect_all()
+        if mode == "ALL":
+            for o in targets:
+                _uv_home(o.data)
+            _pack_group(targets, margin, scale)
+            used = 1
+        elif mode == "OBJECT":
+            # One pack for each part. This is the slow one by nature: the
+            # packer has to run once per tile, and here every part is a
+            # tile of its own.
+            for o in targets:
+                _uv_home(o.data)
+                _pack_group([o], margin, scale)
+            used = len(targets)
+        else:
+            if not scale:
+                print("UV pack: UDIM tiles need scaling, so island scale is "
+                      "not kept for this mode")
+            groups = _balance(targets, max(1, int(tiles)))
+            for i, group in enumerate(groups):
+                for o in group:
+                    _uv_home(o.data)
+                _pack_group(group, margin, True)
+                du, dv = i % UDIM_ROW, i // UDIM_ROW
+                if du or dv:
+                    for o in group:
+                        _uv_move(o.data, du, dv)
+            used = len(groups)
+        print("UV pack (%s): %d mesh(es) into %d tile(s) in %.2fs"
+              % (mode.lower(), len(targets), used, time.time() - t0))
+    except Exception as e:
+        print(f"UV pack failed: {e}")
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+
+
+def _tris_to_quads_objects(objs):
+    """Pair the tessellation triangles back into quads, on unique meshes.
+
+    OCCT tessellates to triangles, and a flat or lightly curved CAD face
+    comes out as long thin pairs that go back together cleanly. This is the
+    same work bpy.ops.mesh.tris_convert_to_quads does. It runs on the mesh
+    data instead of through the operator, because the operator needs edit
+    mode and one mode change per part costs more than the join.
+
+    Every comparison is on, so a pair is never joined across a material, a
+    UV island, a seam or a sharp edge. Both angle limits are open at 180
+    degrees. They exist to protect a hand-made mesh from ugly joins, and a
+    CAD tessellation has nothing to protect: its thin triangles are exactly
+    the ones that belong together.
+
+    Custom normals are stored as offsets from the normals Blender
+    calculates, and a quad has a different calculated normal than its two
+    triangles. So the normals are copied out before the join and written
+    back after it (tools.stash_normals). The mesh keeps the exact CAD
+    shading it was given.
+    """
+    seen = set()
+    meshes = tris = quads = 0
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)):
+            continue
+        seen.add(o.data)
+        me = o.data
+        before = len(me.polygons)
+        tools_mod.stash_normals(me)
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(me)
+            bmesh.ops.join_triangles(
+                bm, faces=bm.faces[:],
+                angle_face_threshold=math.pi, angle_shape_threshold=math.pi,
+                topology_influence=2.0, deselect_joined=False,
+                cmp_seam=True, cmp_sharp=True, cmp_uvs=True,
+                cmp_vcols=True, cmp_materials=True)
+            bm.to_mesh(me)
+            meshes += 1
+            tris += before
+            quads += len(me.polygons)
+        except Exception as e:
+            print(f"Tris to quads failed on {me.name}: {e}")
+        finally:
+            bm.free()
+            tools_mod.restore_normals(me)
+            me.update()
+    if meshes:
+        print(f"Tris to quads: {meshes} mesh(es), {tris} faces -> {quads}")
+
+
+def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
+    """Blender's unwrap with packed islands into the 'UVMap' layer.
+
+    `method` is the unwrap operator's own method name, which is also the
+    identifier of the unwrap mode in the UV Map dropdown. Runs Blender's
+    unwrap operator once over all given objects in multi-object edit mode. The imported seams (marked at sharp normal
     discontinuities between CAD faces) define the islands. The unwrap
     operator packs them into the 0-1 square per mesh.
 
@@ -712,12 +1068,21 @@ def _unwrap_uv_objects(objs, world_scale=None):
         view_layer.objects.active = targets[0]
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.005)
+        # no_flip keeps a face from turning itself inside out, which is
+        # what leaves an island folded on top of itself. correct_aspect is
+        # off so the UVs are for a square tile. On, it reads the image in
+        # the material and squashes the UVs to its proportions.
+        try:
+            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True,
+                              correct_aspect=False)
+        except TypeError:
+            bpy.ops.uv.unwrap(method=method, margin=0.005,
+                              correct_aspect=False)
         bpy.ops.object.mode_set(mode="OBJECT")
         if world_scale is not None:
             for o in targets:
                 _scale_unwrap_to_world(o.data, world_scale)
-        print(f"UVMap unwrap: {len(targets)} mesh(es)"
+        print(f"UVMap unwrap ({method.lower()}): {len(targets)} mesh(es)"
               + ("" if world_scale is None else " (real-world scale)"))
     except Exception as e:
         print(f"UVMap unwrap failed: {e}")
@@ -725,6 +1090,60 @@ def _unwrap_uv_objects(objs, world_scale=None):
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
+
+
+def _smart_merge_objects(objs, pack="NONE", tiles=4,
+                         distortion=UV_SMART_DISTORTION, sharp=False,
+                         split=True):
+    """Grow the Smart UV islands on every unique mesh.
+
+    `distortion` is the Smart distortion setting in percent. `sharp` lets
+    Smart join across sharp edges as well. `split` lets Smart cut an island
+    where its pieces pack better.
+
+    The tile an island has to fit comes from Pack UVs. One tile for each
+    part, or no packing, gives every part its own. All parts together puts
+    the whole import in one tile, so an island may be far longer before it
+    stops fitting, and UDIM shares the import over the tiles asked for.
+    """
+    targets = []
+    seen = set()
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        targets.append(o)
+    if not targets:
+        return
+    side = None
+    if pack in ("ALL", "UDIM"):
+        total = 0.0
+        for o in targets:
+            a = np.empty(len(o.data.polygons), dtype=np.float64)
+            o.data.polygons.foreach_get("area", a)
+            total += float(a.sum())
+        if pack == "UDIM":
+            total /= max(1, int(tiles))
+        side = math.sqrt(total / uv_mod.SMART_FILL)
+    t0 = time.time()
+    charts = islands = 0
+    for o in targets:
+        try:
+            c, n = uv_mod.smart_merge(o.data, side_3d=side,
+                                      distortion=distortion / 100.0,
+                                      sharp=bool(sharp),
+                                      split=bool(split))
+        except Exception as e:
+            print(f"UV smart merge failed on {o.name}: {e}")
+            continue
+        charts += c
+        islands += n
+    print("UV smart merge: %d tangent chart(s) into %d island(s) on %d "
+          "mesh(es) in %.2fs" % (charts, islands, len(targets),
+                                 time.time() - t0))
 
 
 def _scale_unwrap_to_world(me, world_scale):
@@ -897,6 +1316,178 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
+def _region_labels(a, b, n):
+    """Connected components over the triangle pairs (a, b).
+
+    Label propagation with pointer jumping. It is the same method the closed
+    surface test uses, and it stays in numpy, so a 100,000 triangle part
+    costs a few passes over an array instead of a Python graph walk.
+    """
+    labels = np.arange(n, dtype=np.int64)
+    if not len(a):
+        return labels
+    while True:
+        prev = labels
+        mn = np.minimum(labels[a], labels[b])
+        labels = labels.copy()
+        np.minimum.at(labels, a, mn)
+        np.minimum.at(labels, b, mn)
+        labels = labels[labels]
+        if np.array_equal(labels, prev):
+            break
+    return labels
+
+
+def _boundary_loops(labels, face_of, he0, he1, open_he, va, vb, max_v,
+                    regions=None):
+    """The boundary loops of each region, as loops of half edges.
+
+    A half edge bounds its region when the face on the other side is in a
+    different region, or when there is no other side. A seam with the same
+    region on both sides is a slit inside the region, not an edge of it, so
+    it is left out. Two edges of one region that share a vertex belong to
+    the same loop.
+
+    Returns (half edges, region of each, loop id of each). Loop ids run from
+    0. `regions` limits the work to those region ids.
+    """
+    r0 = labels[face_of[he0]]
+    r1 = labels[face_of[he1]]
+    split = r0 != r1
+    hes = np.concatenate([he0[split], he1[split], open_he])
+    reg = labels[face_of[hes]]
+    if regions is not None:
+        keep = np.isin(reg, regions)
+        hes, reg = hes[keep], reg[keep]
+    if not len(hes):
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty
+    node_a = reg * np.int64(max_v) + va[hes].astype(np.int64)
+    node_b = reg * np.int64(max_v) + vb[hes].astype(np.int64)
+    nodes, inv = np.unique(np.concatenate([node_a, node_b]),
+                           return_inverse=True)
+    k = len(hes)
+    comp = _region_labels(inv[:k], inv[k:], len(nodes))[inv[:k]]
+    _ids, loop_of = np.unique(comp, return_inverse=True)
+    return hes, reg, loop_of
+
+
+# A boundary loop wraps round the part when the surface normal turns
+# through this many full turns as the loop goes round once. The foot of a
+# cylinder turns once. Every loop of a flat pattern turns zero times, even
+# the outline of a U channel, which goes out over the bends and back again.
+WRAP_MIN_TURNS = 0.5
+
+
+def _sheet_regions(bad_ids, chi, labels, face_of, he0, he1, open_he, va, vb,
+                   corner_a, corner_b, loop_norms, he_len, max_v):
+    """Which of the regions that fail the disk test are sheets with holes.
+
+    The closed surface test asks whether a region is a disk, and a region
+    with holes is not one: a disk with h holes has an Euler characteristic of
+    1 - h. But a tube is not one either, and topology cannot tell the two
+    apart. A plate with one hole and a length of pipe are both annuli.
+
+    Geometry can. Walk a boundary loop and watch the surface normal. Round
+    the end of a pipe it turns through a full circle. Round a hole in a
+    plate, or round the outline of a bent plate, it comes back to where it
+    started without going round. A region is a sheet when it has no handle
+    (genus 0), has holes, and no loop of it goes round.
+
+    Without this the test cut the bend lines of every sheet metal part that
+    has holes, trying to reach a disk it could never reach while the holes
+    were there.
+
+    Returns the ids from `bad_ids` that are sheets.
+    """
+    if not len(bad_ids):
+        return bad_ids
+    hes, reg, lid = _boundary_loops(labels, face_of, he0, he1, open_he,
+                                    va, vb, max_v, regions=bad_ids)
+    if not len(hes):
+        return bad_ids[:0]
+    n_all = int(lid.max()) + 1
+    na = loop_norms[corner_a[hes]].astype(np.float64)
+    nb = loop_norms[corner_b[hes]].astype(np.float64)
+    w = he_len[hes]
+
+    # The axis a loop could wind round is the direction its normals vary
+    # least along: the axis of a cylinder, or the length of a U channel.
+    cov = np.zeros((n_all, 3, 3), dtype=np.float64)
+    np.add.at(cov, lid, na[:, :, None] * na[:, None, :] * w[:, None, None])
+    _vals, vecs = np.linalg.eigh(cov)
+    axis = vecs[:, :, 0][lid]
+
+    # The winding number of the normal about that axis. Each edge adds the
+    # angle the normal turns along it, so the loop needs no ordering: the
+    # faces of a region wind one way, and so do its boundary edges.
+    pa = na - axis * np.sum(na * axis, axis=1, keepdims=True)
+    pb = nb - axis * np.sum(nb * axis, axis=1, keepdims=True)
+    good = ((np.linalg.norm(pa, axis=1) > 0.1)
+            & (np.linalg.norm(pb, axis=1) > 0.1))
+    turn = np.where(good,
+                    np.arctan2(np.sum(np.cross(pa, pb) * axis, axis=1),
+                               np.sum(pa * pb, axis=1)), 0.0)
+    turns = np.bincount(lid, weights=turn, minlength=n_all) / (2.0 * np.pi)
+    wraps = np.abs(turns) > WRAP_MIN_TURNS
+
+    loop_reg = np.zeros(n_all, dtype=np.int64)
+    loop_reg[lid] = reg
+    ids, pos = np.unique(loop_reg, return_inverse=True)
+    n_loops = np.bincount(pos, minlength=len(ids))
+    n_wrap = np.bincount(pos, weights=wraps.astype(np.float64),
+                         minlength=len(ids))
+    chi_of = dict(zip(bad_ids.tolist(), chi.tolist()))
+    # Genus 0 with b boundary loops has an Euler characteristic of 2 - b.
+    sheets = [int(r) for r, b, nw in zip(ids.tolist(), n_loops.tolist(),
+                                          n_wrap.tolist())
+              if b >= 2 and chi_of.get(int(r), 1) == 2 - b and nw == 0]
+    return np.array(sheets, dtype=bad_ids.dtype)
+
+
+# How many times to cut one closed region before giving up. A tube needs
+# one, a ring two. Past a handful the shape is unusual enough that more cuts
+# are unlikely to help, and each round costs a pass over every edge.
+MAX_CLOSED_CUTS = 16
+
+
+def _one_seam_per_region(edge_keys, mask, region_of, face_a, face_b):
+    """Pick one CAD face boundary in each region and return only its edges.
+
+    A closed region such as a hole made of two half cylinders has two
+    boundaries between its faces. Cutting both gives two half shells.
+    Cutting one opens the tube into a single flat island, which wastes less
+    texture and leaves no seam down the middle of the hole.
+
+    The longest boundary wins, so the cut runs the length of the hole rather
+    than around a fillet at one end.
+    """
+    keys = edge_keys[mask]
+    if not len(keys):
+        return keys
+    region = region_of[mask].astype(np.int64)
+    lo = np.minimum(face_a[mask], face_b[mask]).astype(np.int64)
+    hi = np.maximum(face_a[mask], face_b[mask]).astype(np.int64)
+    span = np.int64(max(int(hi.max()), int(lo.max())) + 1)
+    group = (region * span + lo) * span + hi
+
+    uniq, counts = np.unique(group, return_counts=True)
+    group_region = uniq // (span * span)
+    # Biggest boundary first, then one per region.
+    order = np.lexsort((-counts, group_region))
+    chosen = []
+    seen = set()
+    for i in order:
+        r = int(group_region[i])
+        if r in seen:
+            continue
+        seen.add(r)
+        chosen.append(uniq[i])
+    if not chosen:
+        return keys[:0]
+    return keys[np.isin(group, np.asarray(chosen, dtype=np.int64))]
+
+
 def _compute_edge_attributes(mesh):
     """Vectorized computation of seam and sharp edge sets.
 
@@ -988,6 +1579,11 @@ def _compute_edge_attributes(mesh):
     sharp_keys = int_edge_keys[discontinuous]
     seam_keys = sharp_keys  # seams only where normals actually split
 
+    # Smooth joins between CAD faces get no seam here. Smart decides its own
+    # later, once the mesh exists and its charts can be laid out. Cutting
+    # every CAD face boundary here would also undo Closed surfaces: a hole
+    # made of two half cylinders can only stay in one island while the
+    # boundary between its halves carries no seam.
     # --- Parametric closure seams (closed cylinders/cones/tori/splines) ---
     # A closed face has NO sharp edge along its parametric seam, so unwrap
     # has nowhere to cut and produces a degenerate result. Detection: OCC
@@ -998,7 +1594,8 @@ def _compute_edge_attributes(mesh):
     # closure (the both-endpoints rule keeps collapsed poles, where every
     # touching edge has one discontinuous corner, out of the seam set).
     # Marked as UV seam only, never sharp: shading stays smooth.
-    if _uv_options.get("split_closed", True):
+    closed_mode = _uv_options.get("closed_seams", "SINGLE")
+    if closed_mode != "NONE":
         loop_uvs = None
         get_uvs = getattr(mesh, "get_loop_uvs", None)
         if get_uvs is not None:
@@ -1021,18 +1618,28 @@ def _compute_edge_attributes(mesh):
         # characteristic V - E + F != 1: tubes, rings, sphere halves) and
         # seam their internal CAD-face boundaries, splitting them into
         # flattenable patches. UV seam only: shading is untouched.
-        smooth_pair = ~np.isin(int_edge_keys, seam_keys)
-        a = face_of[he0][smooth_pair]
-        b = face_of[he1][smooth_pair]
-        if len(a):
+        # One cut opens a tube, but a region can need more than one: a ring
+        # needs two, and a shape with more handles needs one for each. Cut,
+        # look again, and stop when every region is a disk. Split faces cuts
+        # everything at once, so one pass does it.
+        open_idx = np.where(counts == 1)[0]
+        open_he = order[group_starts[open_idx]]
+        he_len = np.linalg.norm(
+            (verts[va] - verts[vb]).astype(np.float64), axis=1)
+        for _round in range(1 if closed_mode == "SPLIT" else MAX_CLOSED_CUTS):
+            smooth_pair = ~np.isin(int_edge_keys, seam_keys)
+            a = face_of[he0][smooth_pair]
+            b = face_of[he1][smooth_pair]
+            if not len(a):
+                break
             # Connected components via label propagation + pointer jumping
             labels = np.arange(T, dtype=np.int64)
             while True:
                 prev = labels
-                m = np.minimum(labels[a], labels[b])
+                mn = np.minimum(labels[a], labels[b])
                 labels = labels.copy()
-                np.minimum.at(labels, a, m)
-                np.minimum.at(labels, b, m)
+                np.minimum.at(labels, a, mn)
+                np.minimum.at(labels, b, mn)
                 labels = labels[labels]
                 if np.array_equal(labels, prev):
                     break
@@ -1053,12 +1660,41 @@ def _compute_edge_attributes(mesh):
                    + f_counts.astype(np.int64))
             bad_ids = v_ids[chi != 1]
             if len(bad_ids):
-                cand = smooth_pair & cross_batch
-                edge_comp = labels[face_of[he0]]
-                extra = int_edge_keys[cand & np.isin(edge_comp, bad_ids)]
-                if len(extra):
-                    seam_keys = np.unique(
-                        np.concatenate([seam_keys, extra]))
+                # A sheet with holes fails the disk test too, and cutting it
+                # does not help. Leave those regions whole.
+                sheets = _sheet_regions(
+                    bad_ids, chi[chi != 1], labels, face_of, he0, he1,
+                    open_he, va, vb, corner_a, corner_b, loop_norms, he_len,
+                    max_v)
+                if len(sheets):
+                    bad_ids = bad_ids[~np.isin(bad_ids, sheets)]
+            if not len(bad_ids):
+                break
+            cand = smooth_pair & cross_batch
+            edge_comp = labels[face_of[he0]]
+            in_bad = cand & np.isin(edge_comp, bad_ids)
+            if not in_bad.any():
+                # Nothing left to cut. The region has no CAD face boundary
+                # inside it, so a seam would have to be invented across the
+                # middle of a face, which is worse than leaving it.
+                break
+            if closed_mode == "SPLIT":
+                # Seam every boundary inside the region. A hole made of two
+                # half cylinders becomes two islands.
+                extra = int_edge_keys[in_bad]
+            else:
+                # Seam the longest boundary in each region and leave the
+                # rest joined, so a hole unrolls into a single island
+                # instead of two half shells.
+                extra = _one_seam_per_region(
+                    int_edge_keys, in_bad, edge_comp,
+                    batches[face_of[he0]], batches[face_of[he1]])
+            if not len(extra):
+                break
+            before_n = len(seam_keys)
+            seam_keys = np.unique(np.concatenate([seam_keys, extra]))
+            if len(seam_keys) == before_n:
+                break
 
     return sharp_keys, seam_keys, max_v
 
@@ -1190,8 +1826,28 @@ def build_nurbs(step_reader, shp, name):
         return bpy.context.view_layer.objects.active
 
 
+# The parts the last import could not build or had to recover. The
+# background worker reads this and sends it to the session that started it,
+# which shows the popup.
+last_import_issues = ([], [])
+
+
 def _show_import_issues_popup(failed_parts, recovered_parts):
-    """Show a Blender popup dialog listing parts that had import problems."""
+    """Show a Blender popup dialog listing parts that had import problems.
+
+    A Blender with no window, such as the background worker, has no popup
+    to show, and Blender crashes if it tries. There the lists go to the
+    console only.
+    """
+    global last_import_issues
+    last_import_issues = (list(failed_parts), list(recovered_parts))
+    if bpy.app.background:
+        for name in failed_parts:
+            print("Import warning: %s produced no geometry" % name)
+        for name in recovered_parts:
+            print("Import warning: %s had corrupted geometry and was "
+                  "recovered" % name)
+        return
 
     def draw(self, context):
         layout = self.layout
@@ -1654,27 +2310,33 @@ def load_step(
     skip_construction=False,
     uv_mode="SURFACE",
     uv_normalize=True,
-    uv_split_closed=True,
+    uv_closed_seams="SINGLE",
+    uv_smart_distortion=UV_SMART_DISTORTION,
+    uv_smart_sharp=False,
+    uv_smart_split=True,
     box_uv_scale=1.0,
+    tris_to_quads=True,
+    uv_pack="NONE",
+    uv_pack_tiles=4,
+    uv_pack_margin=UV_PACK_MARGIN,
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
     separate_solids=False,
+    # Older records and scripts. Both now live in uv_mode, and a refresh
+    # passes a record back in unchanged.
+    uv_merge_tangent=None,
+    uv_unwrap_method=None,
 ):
     from . import importer
 
     global _debug_timing
     _debug_timing = _get_addon_prefs().debug_timing
 
-    # One "UVMap" layer. Its content is chosen by uv_mode. UNWRAP writes
-    # the surface UVs first (fallback content) and unwraps in place.
-    _uv_options["mode"] = uv_mode
-    _uv_options["surface"] = uv_mode in ("SURFACE", "UNWRAP")
-    _uv_options["unwrap"] = uv_mode == "UNWRAP"
-    _uv_options["box"] = uv_mode == "BOX"
-    _uv_options["normalize"] = uv_normalize
-    _uv_options["split_closed"] = uv_split_closed
-    _uv_options["box_scale"] = box_uv_scale
+    uv_mode = uv_mod.migrate_settings({
+        "uv_mode": uv_mode, "uv_unwrap_method": uv_unwrap_method,
+        "uv_merge_tangent": uv_merge_tangent})["uv_mode"]
+    _set_uv_options(uv_mode, uv_normalize, uv_closed_seams, box_uv_scale)
 
     (hierarchy_flat, hierarchy_tree, hierarchy_empties,
      hierarchy_instances) = choose_hierarchy_types(htypes)
@@ -1800,8 +2462,15 @@ def load_step(
         "skip_construction": skip_construction,
         "uv_mode": _uv_options["mode"],
         "uv_normalize": _uv_options["normalize"],
-        "uv_split_closed": _uv_options["split_closed"],
+        "uv_closed_seams": _uv_options["closed_seams"],
+        "uv_smart_distortion": uv_smart_distortion,
+        "uv_smart_sharp": uv_smart_sharp,
+        "uv_smart_split": uv_smart_split,
         "box_uv_scale": _uv_options["box_scale"],
+        "tris_to_quads": tris_to_quads,
+        "uv_pack": uv_pack,
+        "uv_pack_tiles": uv_pack_tiles,
+        "uv_pack_margin": uv_pack_margin,
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -2099,14 +2768,37 @@ def load_step(
         _print_phase2_times()
     print("\n" + repr(step_reader.import_problems))
 
-    # Optional packed angle-based unwrap (unique meshes only. linked
+    # Optional packed unwrap (unique meshes only. linked
     # copies share the datablock and get it for free). Meshes are still in
     # file units here, so real-world mode converts through unit_scale.
+    # Quads first: the unwrap then has about half the faces to flatten,
+    # and its UVs land on the mesh the user keeps.
+    if tris_to_quads:
+        _tris_to_quads_objects(created_names.values())
+
+    # A pack that rescales islands would undo a real-world scale pass, so
+    # that pass only runs when the scale is going to survive.
+    # Normalize UVs is the one answer to "may the islands be resized". With
+    # it off the pack keeps them at their real-world size instead.
+    packing = uv_pack not in (None, "NONE")
+    pack_scale = bool(uv_normalize)
+    rescales = packing and (pack_scale or uv_pack == "UDIM")
+    # Smart lays the charts out as a net and puts the seams on its edges.
+    if uv_mode == "SMART":
+        _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
+                             uv_smart_distortion, uv_smart_sharp,
+                             uv_smart_split)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
-            world_scale=(None if _uv_options.get("normalize", True)
-                         else _uv_options["unit_scale"]))
+            world_scale=(None if (_uv_options.get("normalize", True)
+                                  or rescales)
+                         else _uv_options["unit_scale"]),
+            method=uv_mode)
+
+    if packing:
+        _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
+                         uv_pack_margin, pack_scale)
 
     # remove all temporary links
     for tobj in created_objs:
@@ -2379,6 +3071,64 @@ class PG_Stepper(bpy.types.PropertyGroup):
         subtype="FILE_PATH",
     )
 
+    # UV panel: make the map again for parts already in the scene. The
+    # defaults match the import dialog, so the panel opens on the layout the
+    # parts most likely have.
+    uv_mode: bpy.props.EnumProperty(
+        items=UV_MODE_ITEMS, name="UV Map",
+        description="How to make the UVMap layer of the selected parts",
+        default="SURFACE")
+    uv_normalize: bpy.props.BoolProperty(
+        name="Normalize UVs",
+        description="Fit the UVs to the 0-1 square. Turn this off to scale "
+                    "them to real world scene units instead",
+        default=False)
+    uv_closed_seams: bpy.props.EnumProperty(
+        items=UV_CLOSED_ITEMS, name="Closed surfaces",
+        description="What to do where a cylinder, cone, sphere or torus "
+                    "closes on itself. This does not change the shading",
+        default="SINGLE")
+    uv_smart_distortion: bpy.props.FloatProperty(
+        name="Smart distortion", subtype="PERCENTAGE",
+        description="How far Smart can bend a face to join it to an "
+                    "island, as an average over the face. Squash counts in "
+                    "full. Stretch along the shared edge counts half, "
+                    "because an unrolled ring is still a clean strip. Set 0 "
+                    "to join only the faces that fit without a bend",
+        default=UV_SMART_DISTORTION, min=0.0, max=100.0, precision=0)
+    uv_smart_sharp: bpy.props.BoolProperty(
+        name="Join sharp edges",
+        description="After the smooth edges, let Smart join faces across "
+                    "sharp edges too. A face joins only if it does not "
+                    "overlap the island and the island still fits the UV "
+                    "tile. This gives fewer and larger islands",
+        default=False)
+    uv_smart_split: bpy.props.BoolProperty(
+        name="Optimize island shape",
+        description="Cut an island along a join where the pieces pack "
+                    "better. An island shaped like a V, or with a long arm, "
+                    "fills little of the rectangle around it. Clear this "
+                    "option to keep every island whole",
+        default=True)
+    box_uv_scale: bpy.props.FloatProperty(
+        name="Box UV size", unit="LENGTH",
+        description="World size of one UV tile for the Box Project mode",
+        default=1.0, min=0.0001)
+    uv_pack: bpy.props.EnumProperty(
+        items=UV_PACK_ITEMS, name="Pack UVs",
+        description="Arrange the islands of the selected parts after the UV "
+                    "map is made",
+        default="NONE")
+    uv_pack_tiles: bpy.props.IntProperty(
+        name="Tile count",
+        description="How many UDIM tiles to share the parts over",
+        default=4, min=1, max=100)
+    uv_pack_margin: bpy.props.FloatProperty(
+        name="Pack margin",
+        description="Space left around each island. The addon scales this "
+                    "down as more parts share a tile",
+        default=UV_PACK_MARGIN, min=0.0, max=0.25, precision=4)
+
     # Material database UI state
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
     mat_db_active_index: bpy.props.IntProperty(default=0)
@@ -2545,17 +3295,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_mode: bpy.props.EnumProperty(
-        items=[
-            ("NONE", "None", "Do not create a UV map", 0),
-            ("SURFACE", "CAD Surface",
-             "One island per CAD face from the parametric surface "
-             "coordinates (fast)", 1),
-            ("UNWRAP", "Unwrap",
-             "Blender's angle-based unwrap with packed islands. Sharp CAD "
-             "edges act as seams. Slower on large assemblies", 2),
-            ("BOX", "Box Project",
-             "Triplanar box projection with a world-unit tile size", 3),
-        ],
+        items=UV_MODE_ITEMS,
         name="UV Map",
         description="How the addon fills the UVMap layer",
         default="SURFACE",
@@ -2563,12 +3303,15 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
 
     uv_normalize: bpy.props.BoolProperty(
         name="Normalize UVs",
-        description="Fit the UVs to the 0-1 square. CAD Surface mode fits each "
-                    "CAD face. Unwrap mode packs the whole mesh. Turn this off "
+        description="Fit the UVs to the 0-1 square. Every island of a part is "
+                    "divided by the same number, so the islands keep their "
+                    "size against each other. Turn this off "
                     "to scale the UVs to real world scene units instead. The "
                     "islands stay packed and the addon rescales them together. "
                     "One material then shows a texture at the same size on "
-                    "every part",
+                    "every part. This also tells Pack UVs whether it may "
+                    "resize the islands. UDIM tiles always resize them, "
+                    "because their grid is fixed",
         default=False,
     )
 
@@ -2584,12 +3327,88 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
-    uv_split_closed: bpy.props.BoolProperty(
-        name="Split Closed Faces",
-        description="Mark a UV seam along the closure of cylinders and other "
-                    "closed surfaces. CAD data has no seam there, so the unwrap"
-                    " cannot flatten these faces without one. This does not "
-                    "change the shading",
+    uv_smart_distortion: bpy.props.FloatProperty(
+        name="Smart distortion",
+        subtype="PERCENTAGE",
+        description="How far Smart can bend a face to join it to an "
+                    "island, as an average over the face. Squash counts in "
+                    "full. Stretch along the shared edge counts half, "
+                    "because an unrolled ring is still a clean strip. Set 0 "
+                    "to join only the faces that fit without a bend",
+        default=UV_SMART_DISTORTION,
+        min=0.0,
+        max=100.0,
+        precision=0,
+    )
+
+    uv_smart_sharp: bpy.props.BoolProperty(
+        name="Join sharp edges",
+        description="After the smooth edges, let Smart join faces across "
+                    "sharp edges too. A face joins only if it does not "
+                    "overlap the island and the island still fits the UV "
+                    "tile. This gives fewer and larger islands",
+        default=False,
+    )
+
+    uv_smart_split: bpy.props.BoolProperty(
+        name="Optimize island shape",
+        description="Cut an island along a join where the pieces pack "
+                    "better. An island shaped like a V, or with a long arm, "
+                    "fills little of the rectangle around it. Clear this "
+                    "option to keep every island whole",
+        default=True,
+    )
+
+    uv_closed_seams: bpy.props.EnumProperty(
+        items=UV_CLOSED_ITEMS,
+        name="Closed surfaces",
+        description="What to do where a cylinder, cone, sphere or torus "
+                    "closes on itself. CAD data has no seam there, so an "
+                    "unwrap has nowhere to cut. This does not change the "
+                    "shading",
+        default="SINGLE",
+    )
+
+    uv_pack: bpy.props.EnumProperty(
+        items=UV_PACK_ITEMS,
+        name="Pack UVs",
+        description="Pack the UV islands after the UV map is made. Packing "
+                    "scales the islands to fill the tile, so it replaces the "
+                    "real world UV scale",
+        default="NONE",
+    )
+
+    uv_pack_tiles: bpy.props.IntProperty(
+        name="UDIM tiles",
+        description="How many UDIM tiles to spread the parts over. The parts "
+                    "are shared out by surface area, so each tile carries a "
+                    "similar amount",
+        default=4,
+        min=1,
+        max=100,
+    )
+
+    uv_pack_margin: bpy.props.FloatProperty(
+        name="Pack margin",
+        description="Space left around each UV island, as a fraction of the "
+                    "tile. Blender puts this around every island, and a CAD "
+                    "part has about one island per face, so the addon divides "
+                    "it down when many parts share a tile. Raise it if a bake "
+                    "bleeds between islands",
+        default=0.005,
+        min=0.0,
+        max=0.25,
+        precision=4,
+    )
+
+    tris_to_quads: bpy.props.BoolProperty(
+        name="Tris to Quads",
+        description="Pair the tessellation triangles back into quads after "
+                    "the import. A CAD tessellation cuts every flat face into "
+                    "thin triangle pairs, and this puts them back. It never "
+                    "joins across a material, a UV island, a seam or a sharp "
+                    "edge. It does not retopologize: the vertices do not move "
+                    "and the shape does not change",
         default=True,
     )
 
@@ -2676,8 +3495,15 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "skip_construction": self.skip_construction,
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
-            "uv_split_closed": self.uv_split_closed,
+            "uv_closed_seams": self.uv_closed_seams,
+            "uv_smart_distortion": self.uv_smart_distortion,
+            "uv_smart_sharp": self.uv_smart_sharp,
+            "uv_smart_split": self.uv_smart_split,
             "box_uv_scale": self.box_uv_scale,
+            "tris_to_quads": self.tris_to_quads,
+            "uv_pack": self.uv_pack,
+            "uv_pack_tiles": self.uv_pack_tiles,
+            "uv_pack_margin": self.uv_pack_margin,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -2750,8 +3576,15 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 skip_construction=self.skip_construction,
                 uv_mode=self.uv_mode,
                 uv_normalize=self.uv_normalize,
-                uv_split_closed=self.uv_split_closed,
+                uv_closed_seams=self.uv_closed_seams,
+                uv_smart_distortion=self.uv_smart_distortion,
+                uv_smart_sharp=self.uv_smart_sharp,
+                uv_smart_split=self.uv_smart_split,
                 box_uv_scale=self.box_uv_scale,
+                tris_to_quads=self.tris_to_quads,
+                uv_pack=self.uv_pack,
+                uv_pack_tiles=self.uv_pack_tiles,
+                uv_pack_margin=self.uv_pack_margin,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,
@@ -3302,6 +4135,7 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1004
 
     def draw(self, context):
         layout = self.layout
@@ -3344,17 +4178,25 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Info(bpy.types.Panel):
-    """Version line at the top of the tab, with the update notice."""
-    bl_label = "STEPper NEXT: Info"
+    """Version line at the top of the tab, with the update notice.
+
+    The version and the tip jar are drawn in the panel header, so the line
+    is one row high and the body stays empty until there is an update.
+
+    Do not put HIDE_HEADER on this panel. Blender registers a headerless
+    panel in front of every panel that has a header, whatever bl_order says,
+    and the tab of a category sits where its first panel sits. One headerless
+    panel here therefore pulls the whole STEPper NEXT tab above Item, Tool
+    and View.
+    """
+    bl_label = ""
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
-    bl_options = {"HIDE_HEADER"}
-    bl_order = 0
+    bl_order = 1000
 
-    def draw(self, context):
-        layout = self.layout
-        row = layout.row(align=True)
+    def draw_header(self, context):
+        row = self.layout.row(align=True)
         row.label(text="STEPper NEXT v%s" % updater_mod.version_string(),
                   icon="TOOL_SETTINGS")
         # The tip jar: a heart, deliberately unlabelled so the version line
@@ -3362,16 +4204,18 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
         row.operator("wm.url_open", text="",
                      icon="FUND").url = updater_mod.KOFI_URL
 
+    def draw(self, context):
         update = updater_mod.available_update()
-        if update:
-            box = layout.box().column(align=True)
-            box.label(text="Version %s is available" % update["version"],
-                      icon="INFO")
-            download = box.operator(
-                "wm.url_open", icon="IMPORT",
-                text="Download %s" % update["version"])
-            download.url = update["url"]
-            box.label(text="Install the zip as usual to update.")
+        if not update:
+            return
+        box = self.layout.box().column(align=True)
+        box.label(text="Version %s is available" % update["version"],
+                  icon="INFO")
+        download = box.operator(
+            "wm.url_open", icon="IMPORT",
+            text="Download %s" % update["version"])
+        download.url = update["url"]
+        box.label(text="Install the zip as usual to update.")
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
@@ -3379,6 +4223,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1001
 
     def draw(self, context):
         prg = context.scene.stepper
@@ -3404,10 +4249,8 @@ class STEP_PT_STEPper(bpy.types.Panel):
                      icon='X')
         row.operator("stepper.prune_restore", text="Restore",
                      icon='LOOP_BACK')
-        row = col.row(align=True)
-        row.operator("stepper.mesh_cleanup", text="Clean Up Meshes",
+        col.operator("stepper.mesh_cleanup", text="Clean Up Meshes",
                      icon='MESH_DATA')
-        row.operator("stepper.add_box_uv", text="Box Project UVs", icon='UV')
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
@@ -3415,6 +4258,7 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1003
 
     def draw(self, context):
         layout = self.layout
@@ -3434,11 +4278,36 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
         row.label(text=f"Cached files: {len(global_file_cache)}/{MAX_FILE_CACHE}")
 
 
+class STEP_PT_STEPper_UV(bpy.types.Panel):
+    bl_label = "STEPper NEXT: UV"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "STEPper NEXT"
+    bl_order = 1002
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        prg = context.scene.stepper
+        layout = self.layout
+        col = layout.column()
+        import_ui.draw_uv_mode(prg, col)
+        col.prop(prg, "uv_pack")
+        sub = col.row()
+        sub.active = prg.uv_pack == "UDIM"
+        sub.prop(prg, "uv_pack_tiles")
+        sub = col.row()
+        sub.active = prg.uv_pack != "NONE"
+        sub.prop(prg, "uv_pack_margin")
+        layout.operator("stepper.reapply_uv", text="Apply to Selected",
+                        icon="UV")
+
+
 class STEP_PT_STEPper_Debug(bpy.types.Panel):
     bl_label = "STEPper NEXT: Debug"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "STEPper NEXT"
+    bl_order = 1005
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -3786,6 +4655,7 @@ classes = (
     STEP_PT_STEPper,
     STEP_PT_STEPper_Reload,
     STEP_PT_MaterialDB,
+    STEP_PT_STEPper_UV,
     STEP_PT_STEPper_Debug,
 ) + (import_ui.classes + uv_mod.classes + tools_mod.classes
      + curves_mod.classes + formats_classes + analyzer_mod.classes

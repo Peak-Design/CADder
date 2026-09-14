@@ -74,12 +74,21 @@
 #     swatch), which the addon never writes, so it always came back as
 #     Blender's default 0.8 gray. It now reads the Principled BSDF's Base
 #     Color input, which is where add_material puts the CAD color
+#   - v2.4.7: Imported files panel, listing every STEP file the .blend has
+#     imported and refreshing one from disk. A refresh keeps the objects
+#     and moves only the mesh, the material slots and the CAD placement on
+#     to them, so modifiers, constraints, animation, collections,
+#     parenting, vertex groups, materials you assigned and the placement
+#     you gave them all survive. It can no longer change the size either:
+#     a file imported in the background, or at a custom scale, came back a
+#     thousand times smaller, because the settings it was imported with
+#     were recorded on a worker scene that is deleted after the append
+#     (refresh.py)
+#   - The object color now carries the CAD color, so a Solid viewport
+#     set to Object color matches the file without a material preview
 #   - Import options: "Group in a collection" puts everything one file
 #     creates under a collection named after it, and "Separate solids"
 #     gives every body of a multibody part its own object
-#   - Imported files panel: lists every STEP file the .blend has imported
-#     and refreshes one from disk, keeping the collections, parenting and
-#     visibility arranged around it (refresh.py)
 #   - The file cache now checks the size and modification time on disk, so
 #     re-exporting over the same path no longer imports yesterday's
 #     geometry
@@ -90,6 +99,93 @@
 #   - Update notice in the sidebar with a download link for your platform,
 #     plus a Ko-fi link, and all user facing copy rewritten in Simplified
 #     Technical English
+#   - v2.5.0: the UV release. CAD Surfaces UVs now carry the proportions of
+#     the surface. OCC hands back raw parameters, and on a cylinder u is an
+#     angle while v is a length, so a drum arrived as a thin tall ribbon.
+#     Each direction is scaled by the length of its own derivative, which
+#     takes the median anisotropy on a 182 part assembly from 157 to 1.0
+#     and the share of surface stretched more than twice as far one way as
+#     the other from 55 percent to 0
+#   - Patches of one surface share one UV chart. A boolean through a
+#     cylinder leaves two or three faces on one surface, and each was
+#     fitted to its own box, so a drilled hole came out as three islands
+#     with a packing margin between parts of one tube (3,431 islands to
+#     2,827, none folded)
+#   - Two CAD faces no longer share one folded island. Every face was
+#     normalized into its own 0 to 1 box, so two flat faces of the same
+#     size wrote the same UVs and Blender read them as one island, folded
+#     on itself. Each face takes a small offset of its own (folded islands
+#     8 to 0)
+#   - Every island of a part now holds the same number of texels for each
+#     millimeter of surface. With Normalize UVs on, each face was fitted to
+#     the square on its own, so a 5 mm face and a 200 mm face came out the
+#     same size (9.2 to 1.0). Where the packer may resize, it averages the
+#     island scale first (Box Project 1.2 to 1.0, all parts in one tile
+#     17.2 to 1.0)
+#   - The UV Map dropdown holds every way to make the UVs: None, CAD
+#     Surfaces, CAD Surfaces (Smart), Unwrap (Conformal), Unwrap (Angle
+#     Based), Unwrap (Minimum Stretch) and Box Project. The unwrap was fixed
+#     at angle based, which can fold a long cylinder on to itself. The old
+#     Unwrap mode maps to Unwrap (Angle Based), so a refresh of an older
+#     import makes the same map (uv.migrate_settings)
+#   - New import option "Pack UVs": None, all parts together, each part on
+#     its own, or into a set number of UDIM tiles. The islands used to keep
+#     whatever place the UV mode gave them, which on 1000 parts spread them
+#     over 147 tiles and filled about 1 percent. A "Pack margin" setting
+#     comes with it, and the addon scales the margin down as more parts
+#     share a tile
+#   - "Split Closed Faces" becomes "Closed surfaces" with three choices:
+#     None, Single seam (the default) or Split faces. Single seam cuts a
+#     closed region until it is flat, so a hole unrolls into one island and
+#     its halves stay joined
+#   - New import option "Tris to Quads", on by default. It pairs the
+#     tessellation triangles back into quads, which takes 1000 parts from
+#     540,000 faces to 285,000 for about 2 percent of the import time. No
+#     vertex moves and the CAD shading is unchanged
+#   - New UV Map mode "CAD Surfaces (Smart)". A sheet metal part is a
+#     plate, a bend and another plate, and none of those boundaries is
+#     sharp, so the run is one continuous surface that a press brake
+#     flattens into one rectangle. Smart builds the islands one face at a
+#     time, the way a paper model is cut out, and keeps a join only if the
+#     island does not land on itself and still fits the UV tile
+#     (uv.smart_merge). A face that does not fit by a turn, such as a
+#     rounded rim or the end ring of a tube, is bent along the island's
+#     edge, within the new "Smart distortion" limit. A rounded tube comes
+#     out as two islands instead of six. The new option "Join sharp edges"
+#     runs a second pass across sharp edges, and Smart cuts an island along
+#     its joins where the pieces pack better (uv._split_islands). The option
+#     "Optimize island shape" controls that cut
+#   - Regenerate pairs the triangles into quads again and unwraps with the
+#     method the part was imported with. It left the triangles and always
+#     used Conformal
+#   - Tris to Quads and Clean Up Meshes keep the CAD shading. Both went
+#     through bmesh, which moves custom normals when faces join
+#   - Parts with more than one body import whole. Vertices were welded by
+#     position across the whole part, so two bodies that touch were welded
+#     together and a duplicate filter dropped one body's triangles where
+#     they met. Faces were matched with their orientation, so a color
+#     label that holds a face turned over meshed the face a second time.
+#     And each labeled face was meshed again on its own, which can split
+#     its edges differently from its neighbors. A buoyancy module goes
+#     from 1,476 edges shared by more than two faces to none, and a gear
+#     motor from 146 open edges to 14
+#   - Pack UVs and the unwrap modes keep the UVs square when the material
+#     has an image texture that is not square. Blender's Pack Islands and
+#     Unwrap fit the islands to that image, so on a 2 by 1 texture a square
+#     face came out 4 times too narrow. The pack now runs with the
+#     materials hidden (main._hide_materials), and Unwrap with
+#     correct_aspect off
+#   - A background import no longer fails when a part produces no geometry.
+#     The worker opened the warning popup, and Blender with no window
+#     crashes on that. The worker now sends the list to the session that
+#     started it, which shows the popup
+#   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
+#     selected parts again with the same settings as the import dialog, so
+#     one part can get a treatment its neighbor does not. It replaces the
+#     Box Project UVs button, which is now one mode of its dropdown
+#   - The STEPper NEXT sidebar tab now sits after Item, Tool and View. A
+#     panel with no header registers in front of every panel that has one,
+#     whatever bl_order says, and that pulled the whole tab to the top
 
 #   - rig/ subpackage added (SW To Blender): builds a constrained armature
 #     from the .rig.json manifest written by the Peak.SwToBlender SolidWorks
@@ -136,7 +232,7 @@ bl_info = {
     "author": "ambi, Peak-Design",
     "description": "STEP OpenCASCADE import",
     "blender": (5, 1, 0),
-    "version": (2, 4, 6),
+    "version": (2, 5, 0),
     "location": "3D View > Tools panel > STEPper NEXT",
     "category": "Import",
 }

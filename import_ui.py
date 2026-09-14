@@ -10,6 +10,8 @@ import os
 
 import bpy
 
+from . import uv as uv_mod
+
 STEP_EXTENSIONS = (".step", ".stp", ".st", ".iges", ".igs", ".brep", ".brp")
 
 # Quality presets: name -> (linear deflection in METERS, angular in RADIANS).
@@ -42,8 +44,11 @@ PERSISTED_PROPS = (
     "up_as", "hierarchy_types", "custom_scale", "user_scale", "apply_scale",
     "tessellation_relative", "quality_preset", "lin_deflection_len",
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
-    "eng_materials", "uv_mode", "uv_normalize", "uv_split_closed",
-    "box_uv_scale", "skip_construction", "import_curves",
+    "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
+    "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
+    "box_uv_scale", "uv_pack", "uv_pack_tiles",
+    "uv_pack_margin", "tris_to_quads",
+    "skip_construction", "import_curves",
     "group_in_collection", "separate_solids",
 )
 
@@ -73,6 +78,8 @@ def _restore_last_used(op, prefs):
         return
     if not isinstance(stored, dict):
         return
+    # Settings saved by an older version name the UV map in other terms.
+    uv_mod.migrate_settings(stored)
     for key, value in stored.items():
         if key not in PERSISTED_PROPS:
             continue
@@ -165,6 +172,35 @@ def seed_from_prefs(op, prefs):
         _restore_last_used(op, prefs)
 
 
+def draw_uv_mode(owner, layout):
+    """The UV Map dropdown and the settings that go with it.
+
+    The import dialog and the UV panel show the same settings, so both draw
+    them here. A setting the chosen mode does not use stays in place but
+    inactive, so the layout does not move when the mode changes.
+    """
+    mode = owner.uv_mode
+    layout.prop(owner, "uv_mode")
+    sub = layout.row()
+    sub.active = mode in uv_mod.SURFACE_MODES
+    sub.prop(owner, "uv_normalize")
+    sub = layout.row()
+    sub.active = mode == "BOX"
+    sub.prop(owner, "box_uv_scale")
+    sub = layout.row()
+    sub.active = mode == "SMART"
+    sub.prop(owner, "uv_smart_distortion")
+    sub = layout.row()
+    sub.active = mode == "SMART"
+    sub.prop(owner, "uv_smart_sharp")
+    sub = layout.row()
+    sub.active = mode == "SMART"
+    sub.prop(owner, "uv_smart_split")
+    sub = layout.row()
+    sub.active = mode == "SURFACE" or mode in uv_mod.UNWRAP_MODES
+    sub.prop(owner, "uv_closed_seams")
+
+
 def draw_import_dialog(op, layout, prefs):
     """Collapsible import dialog (Blender 4.1+ layout.panel API)."""
     layout.use_property_split = True
@@ -205,14 +241,15 @@ def draw_import_dialog(op, layout, prefs):
     if body:
         body.prop(op, "material_database", text="Material DB")
         body.prop(op, "eng_materials")
-        body.prop(op, "uv_mode")
+        draw_uv_mode(op, body)
+        body.prop(op, "uv_pack")
         sub = body.row()
-        sub.active = op.uv_mode in {"SURFACE", "UNWRAP"}
-        sub.prop(op, "uv_normalize")
+        sub.active = op.uv_pack == "UDIM"
+        sub.prop(op, "uv_pack_tiles")
         sub = body.row()
-        sub.active = op.uv_mode == "BOX"
-        sub.prop(op, "box_uv_scale")
-        body.prop(op, "uv_split_closed")
+        sub.active = op.uv_pack != "NONE"
+        sub.prop(op, "uv_pack_margin")
+        body.prop(op, "tris_to_quads")
 
     header, body = layout.panel("stepper_advanced", default_closed=True)
     header.label(text="Advanced")
@@ -294,7 +331,11 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "htypes": prefs.preferred_hierarchy,
                 "apply_scale": True, "skip_construction": False,
                 "uv_mode": "SURFACE", "uv_normalize": False,
-                "uv_split_closed": True, "box_uv_scale": 1.0,
+                "uv_closed_seams": "SINGLE", "box_uv_scale": 1.0,
+                "uv_smart_distortion": _main.UV_SMART_DISTORTION,
+                "uv_smart_sharp": False, "uv_smart_split": True,
+                "tris_to_quads": True, "uv_pack": "NONE",
+                "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
                 "import_curves": False, "eng_materials": True,
                 "group_in_collection": False, "separate_solids": False}
         if prefs.remember_import_settings and prefs.last_import_settings:
@@ -303,9 +344,14 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
             except (TypeError, ValueError):
                 stored = {}
             if isinstance(stored, dict):
+                uv_mod.migrate_settings(stored)
                 for key in ("apply_scale", "skip_construction", "uv_mode",
-                            "uv_normalize", "uv_split_closed",
-                            "box_uv_scale", "import_curves",
+                            "uv_normalize", "uv_closed_seams",
+                            "uv_smart_distortion", "uv_smart_sharp",
+                            "uv_smart_split",
+                            "box_uv_scale", "tris_to_quads", "uv_pack",
+                            "uv_pack_tiles", "uv_pack_margin",
+                            "import_curves",
                             "group_in_collection", "separate_solids",
                             "eng_materials"):
                     if key in stored:

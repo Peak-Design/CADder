@@ -36,7 +36,7 @@ Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 - The CAD color is also written to the object color, so a Solid viewport set to Object color matches the file
 - Engineering material metadata (AP242/AP214 name, description, density) imported as custom properties, and optionally as named Blender materials
 - Material database system for automatic material replacement on import
-- UV generation from CAD surfaces, angle-based unwrap, or box projection, with optional real-world UV scale and automatic seams on cylindrical/closed faces
+- UV generation from CAD surfaces (face by face, or joined into larger islands), Blender unwrap, or box projection, with optional real-world UV scale and automatic seams on cylindrical/closed faces
 
 **Workflow**
 
@@ -243,14 +243,220 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 
 | Mode | Description |
 |------|-------------|
-| **CAD Surface** | One island per CAD face, taken from the parametric surface coordinates. Fast, and the default. |
-| **Unwrap** | Blender's angle-based unwrap with packed islands. Sharp CAD edges act as seams. Slower on large assemblies. |
-| **Box Project** | Triplanar projection with a world-unit tile size. |
 | **None** | No UV layer. |
+| **CAD Surfaces** | One island per CAD face, taken from the parametric surface coordinates. The fastest mode, and the default. |
+| **CAD Surfaces (Smart)** | Joins CAD faces that meet smoothly into larger islands, bends a face to fit where it has to, and cuts an island where its pieces pack better. It can join across sharp edges too. A bent sheet metal part comes out as its flat pattern, a rounded tube as two islands. See below. |
+| **Unwrap (Conformal)** | Blender's unwrap with packed islands. Sharp CAD edges act as seams. Keeps the angles. |
+| **Unwrap (Angle Based)** | The same unwrap with the angle based method. It can fold a long cylinder on to itself. |
+| **Unwrap (Minimum Stretch)** | The same unwrap with the minimum stretch method. The slowest mode. |
+| **Box Project** | Triplanar projection with a world-unit tile size. |
 
-**Normalize UVs** is off by default. When it is on, the addon fits the UVs to the 0-1 square. When it is off, the addon scales the UVs to real world scene units instead. The islands stay packed and the addon rescales them together. One shared material then shows its texture at the same physical size on every part. This is what most CAD work needs.
+> **Recommended settings for large models:** import with **UV Map** set to
+> **CAD Surfaces** and **Pack UVs** set to **None**. CAD Surfaces takes its
+> UVs from the CAD surface while the part is meshed, so it adds almost no
+> time.
+>
+> The other UV modes and packing add a lot of time on a large model. For
+> example, Smart adds about 35% and packing each part on its own adds about
+> 86%. Use them on single parts: select the parts, then click **Apply UVs
+> to Selected** in the **STEPper NEXT: UV** panel.
 
-**Split Closed Faces** is on by default. It marks a UV seam along the closure of cylinders, cones and tori. It also marks one across smooth joined face groups that form closed tubes or rings. CAD data has no seam in these places, and an unwrap without one gives badly distorted islands. This does not change the shading.
+The three unwrap modes are slower on large assemblies. Measured on a 182
+part assembly, by share of surface area stretched more than twice as far one
+way as the other: Conformal 0%, Angle Based 6%, Minimum Stretch 54%. The
+Unwrap mode of 2.4 is Unwrap (Angle Based), and a file imported with it
+refreshes the same way.
+
+**Normalize UVs** is off by default. When it is off, the addon scales the UVs to real world scene units. One UV unit is then one scene unit on every island, so one shared material shows its texture at the same physical size on every part. This is what most CAD work needs.
+
+When it is on, the addon fits the UVs to the 0-1 square. Every island of a part is divided by the same number, the largest island of that part. The islands keep their size against each other, so a 5 mm face gets a fifth of the UV length of a 25 mm face and both hold the same number of texels for each millimeter. Measured as the ratio between the densest and the sparsest island of a part: 1.0 in CAD Surfaces and in the unwrap modes.
+
+**Closed surfaces** chooses what happens where a cylinder, cone, sphere or torus closes on itself. It applies to CAD Surfaces and the unwrap modes. CAD data marks no seam there, so an unwrap has nowhere to cut and returns a badly distorted island. None leaves it alone. Single seam, the default, cuts once, so a hole unrolls into one flat island and its two halves stay joined. Split faces cuts every boundary inside the closed region, so a hole made of two half cylinders becomes two islands.
+
+Measured on a 182 part assembly, by share of surface stretched more than five times as far one way as the other: None 45%, Single seam 0.2%, Split faces 0.1%. Single seam reaches that with 2,958 islands against 3,381 for Split faces, so it wastes less texture on island margins. None of these change the shading.
+
+A sheet with holes is not cut. A plate with a hole has the same topology as a length of pipe, so topology alone cannot tell them apart. The addon also walks each boundary loop and watches the surface normal. Round the end of a pipe it turns through a full circle, and that region gets its cut. Round a hole in a plate, or round the outline of a bent plate, it comes back without going round, and the region stays whole.
+
+### CAD Surfaces (Smart)
+
+Smart joins CAD faces that meet smoothly. A sheet metal part is a plate, a
+bend and another plate. None of those boundaries is sharp, so the run is one
+continuous surface that a press brake flattens into one rectangle.
+
+Smart builds each island the way a paper model is cut out. CAD Surfaces
+already gives each face a flat chart of its own. A plane chart is exact, and
+a cylinder chart is the surface rolled out, circumference by height. So a
+face joins the island without a solver: the addon turns its chart until the
+shared edge lies on the island.
+
+Some faces do not fit by a turn. A rounded rim is part of a torus, and its
+chart misses the straight edge of a rolled out wall by a few percent. The
+flat end of a tube is a ring, and it meets that edge along a circle. Smart
+bends these faces instead. It measures each point of the face along the
+shared edge and out from it, and sets the point down the same distance
+along and out from the edge of the island. A rim becomes a strip along the
+wall, and a ring unrolls into a strip. Where the edge of the island is cut,
+as at the seam of a rolled out wall, the face is cut at the same place.
+
+**Smart distortion** limits the bend, as an average over the face. The
+default is 35%. Squash counts in full, because it lowers the texel density.
+Stretch along the shared edge counts half, because an unrolled ring is still
+a clean strip that is easy to texture. The ends of a tube 60 mm across with
+a 30 mm bore score about 27%. A full disk would have to stretch without
+limit at its middle, so it stays an island of its own. Set 0 to turn the
+bend off.
+
+Smart starts from the largest face of the part and tries its smooth
+neighbors, largest first. A face joins only when all of these are true:
+
+- It fits the island by a turn, or by a bend within the Smart distortion
+  limit.
+- It does not land on the island. A bent face must not land on itself
+  either.
+- The island still fits the UV tile.
+
+A face that fails is tried again when another of its neighbors joins the
+island, because that edge can fit better. A face that never fits waits for
+a later island. The next island starts from the largest face that is left,
+until no face is left.
+
+**Join sharp edges** runs a second pass after the smooth one. It joins the
+islands of the first pass across sharp edges, with the same tests. A join
+across a fold is the same turn as a join across a smooth edge, because each
+chart is flat already. A gearbox or a machined part has faces with sharp
+edges all round, so without this option most of them stay islands of their
+own. The option is off by default, because it adds about 25 percent to a
+large import and does not always pack tighter.
+
+Last, Smart cuts an island that has grown into an awkward shape. Every
+island is a tree of faces, joined one at a time, so it can be cut along any
+join, and each piece keeps its layout. A net shaped like a V, or with a long
+arm out at an angle, leaves most of the rectangle round it empty. Smart
+tries each join and makes the cut that makes the rectangles of the pieces
+smallest, if that saves at least 10 percent. The margin the packer leaves
+round each island counts too, so Smart does not cut off small pieces. Then
+it tries the pieces again. **Optimize island shape** controls this cut. It
+is on by default. Clear it to keep every island as large as it grew.
+
+The tile comes from **Pack UVs**. With **None** or **Each part on its own**,
+the tile is the square the part packs into by itself. With **All parts
+together**, it is one tile for the whole import, so an island can grow much
+longer. **Into UDIM tiles** shares the import over the tiles you ask for. A
+tile is never smaller than the longest single face, because the addon never
+splits a CAD face.
+
+Smart makes its own cuts, so the **Closed surfaces** setting does not apply
+to it. A turn does not change the texel density, and a bend changes it only
+within the limit.
+
+Measured results, with no island overlapping itself in any of them.
+Coverage is the share of the UV tile the islands fill after Blender packs
+each part into its own tile, so higher is better texel density:
+
+| Part | CAD Surfaces | Smart | Smart, Join sharp edges |
+|------|--------------|-------|-------------------------|
+| Cylinder 60 mm across, both rims rounded | 5 islands, 56% | 3 islands, 57% | 3 islands, 57% |
+| The same with a 30 mm bore | 6 islands, 73% | 2 islands, 79% | 2 islands, 79% |
+| Plate and boss, rounded all round, with a bore | 31 islands, 58% | 3 islands, 86% | 3 islands, 86% |
+| Block with rounded edges | 26 islands, 88% | 4 islands, 75% | 4 islands, 75% |
+| Hydraulic part | 138 islands, 58% | 122 islands, 59% | 30 islands, 62% |
+| Buoyancy module | 171 islands, 70% | 56 islands, 72% | 40 islands, 72% |
+| Gear motor, 10 parts | 2,282 islands, 43% | 1,899 islands, 43% | 507 islands, 51% |
+| Machined assembly, 182 parts | 440 islands, 57% | 340 islands, 57% | 151 islands, 53% |
+| Sheet metal skid, 1,113 parts | 3,032 islands, 51% | 1,428 islands, 51% | 692 islands, 51% |
+
+Small flat faces pack very tightly on their own. That is why CAD Surfaces
+fills the tile best on the block with rounded edges, which is 26 plain
+faces, while Smart gives four clean islands.
+
+On the sheet metal part, Smart cuts the flat patterns at a bend. They
+measure 3,338 by 977 mm, and the part packs into a 2,419 mm square on its
+own. Kept whole, they would force a 3,425 mm tile and fill at most 35
+percent of it. Cut, they give about twice the texel density. Set **Pack
+UVs** to **All parts together** to keep them whole.
+
+Smart adds its own pass to the import: about 35% on the sheet metal skid,
+and about 40% on the machined assembly. Join sharp edges adds about 25% more
+on the skid.
+
+### Pack UVs
+
+**Pack UVs** repacks the islands after the UV map is made. Without it the
+islands keep the place the UV mode gave them, which spreads a large assembly
+over many UDIM tiles and leaves most of the texture empty. Measured on 1000
+parts: no packing puts the islands across 147 tiles and fills about 1 percent
+of them.
+
+| Mode | Result on 1000 parts | Cost |
+|------|----------------------|------|
+| **None** | 147 tiles, 1% filled | none |
+| **All parts together** | 1 tile, 54% filled | +2% |
+| **Into UDIM tiles** (4) | 4 tiles, 68% filled | +3% |
+| **Into UDIM tiles** (16) | 16 tiles, 76% filled | +6% |
+| **Each part on its own** | one tile for each part, 74% filled | +86% |
+
+Use **All parts together** to merge the parts and texture the import as one
+piece. Use **Each part on its own** to give every part its own texture: it is
+the slow choice, because the packer has to run once for each part. Use **Into
+UDIM tiles** for a middle way, and set how many tiles to spread the parts
+over. The parts are shared out by surface area, so each tile carries a
+similar amount.
+
+The UVs are always for a square texture. Blender's own Pack Islands and
+Unwrap read the image texture in the material and fit the islands to its
+proportions, so on a 2 by 1 texture a square face becomes a thin rectangle.
+The addon hides the materials from these operators while they run, and puts
+them back after. If you pack by hand in the UV Editor, Blender still does
+this on a textured part.
+
+**Pack margin** is the space left around each island. Blender puts this
+around every island, and a CAD part has about one island per face, so a whole
+assembly in one tile is thousands of islands. The addon divides the margin
+down as more parts share a tile. Without that correction the default margin
+fills only 6 percent of the tile on a 300 part import, against 80 percent
+with it. Raise the margin if a bake bleeds between islands.
+
+**Normalize UVs** decides whether the packer may resize the islands. With
+it on the islands are scaled to fill the tile. With it off the packer only
+arranges them and every island keeps its real world size, so the packed
+result can be larger than one tile. UDIM tiles always resize, because their
+grid is fixed and an island that overruns one tile lands in the next.
+
+Where the packer may resize, it runs Average Islands Scale first. The packer
+applies one factor to the whole group, so on its own it keeps whatever size
+difference the islands arrive with. Averaging first gives every island in
+the group the same texel density. Box Project needs this most, because it
+flattens each face onto one of three planes and a face at an angle to all
+three arrives compressed.
+
+### Tris to Quads
+
+**Tris to Quads** is on by default. It pairs the tessellation triangles back
+into quads. OCCT tessellates to triangles, so a flat CAD face arrives as thin
+triangle pairs that go straight back together. It never joins across a
+material, a UV island, a seam or a sharp edge.
+
+This is not a remesh. No vertex moves and none is added or lost, and the
+custom split normals from the CAD surface come through, so the shading does
+not change. On 1000 parts it costs about 2 percent of the import and takes
+the face count from 540,000 to 285,000.
+
+### The UV panel
+
+The **STEPper NEXT: UV** panel in the sidebar makes the UV map of the
+selected parts again. It holds the same settings as the import dialog, so
+one part can get a treatment its neighbor does not. A bent bracket can be
+one flat pattern while the machined block beside it stays face by face.
+
+Box Project reads the mesh and nothing else, so it runs on the parts as they
+are. The other modes need the parametric surfaces, so the addon reads the
+source CAD file again and replaces the mesh, the same way **Regenerate**
+does. Work you did on the mesh itself does not survive that. Transforms,
+parenting, modifiers, materials and custom properties do.
+
+The settings go on to each object. A **Regenerate** or a **Refresh from
+disk** later makes the UV map you chose in the panel, not the one the import
+made.
 
 ## Import Defaults
 
@@ -266,6 +472,8 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |
+| 2.4.7   | 5.1     | Imported files panel with Refresh from disk. A refresh keeps your modifiers, collections, parenting, materials and placement, and can no longer change the size of the assembly. The object color now matches the CAD color. New "Group in a collection" and "Separate solids" import options. Material databases can live in a folder of your choosing. Update notice and Ko-fi link in the sidebar. The file cache checks the file on disk, so re-exporting over the same path no longer imports old geometry |
 | 2.4.6   | 5.1     | Fixed engineering materials always being created gray instead of keeping the part's imported color |
 | 2.4.5   | 5.1     | Engineering material import (AP242/AP214 name, description, density) as custom properties and optional named materials. Single `UVMap` layer with a UV mode dropdown, real-world UV scaling and automatic seams on closed/cylindrical faces. Import options remembered between sessions. Parented-empties imports now leave everything at scale 1. Recursive folder batch import. Multi-file drag & drop fix |
 | 2.4.4   | 5.1     | Code-review hardening: multi-level Prune/Restore, detail slider no longer overridden by the quality preset, batch import honours preference defaults, Regenerate/Reload fixed for IGES/BREP, background worker inherits preferences and cannot hang or outlive Blender, long CAD material names, edit-mode guards, tooltip and layout polish |

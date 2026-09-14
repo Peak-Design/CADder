@@ -126,6 +126,10 @@ class STEPPER_OT_background_import(bpy.types.Operator):
         self._file_index = 0
         self._reap = []          # finished workers still shutting down
         self._exit_ticks = 0
+        # Parts the workers could not build or had to recover, for one
+        # popup when the batch is done.
+        self._failed = []
+        self._recovered = []
         STEPPER_OT_background_import._running = True
 
         if not self._spawn_next(context):
@@ -228,6 +232,9 @@ class STEPPER_OT_background_import(bpy.types.Operator):
                              "saving": 96.0}[phase]
                 self._status = (f"{os.path.basename(self._current_file)}: "
                                 f"{phase}… (Esc to cancel)")
+            elif phase == "issues":
+                self._failed.extend(msg.get("failed", []))
+                self._recovered.extend(msg.get("recovered", []))
             elif phase == "done":
                 self._pct = 100.0
                 done_blend = msg.get("blend")
@@ -289,6 +296,9 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             self._cleanup(context)
             self.report({"INFO"},
                         f"Background import finished ({self._appended} file(s))")
+            if self._failed or self._recovered:
+                from . import main
+                main._show_import_issues_popup(self._failed, self._recovered)
             return {"FINISHED"}
 
         return {"RUNNING_MODAL"}

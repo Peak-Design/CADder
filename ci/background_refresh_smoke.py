@@ -167,6 +167,20 @@ bpy.ops.stepper.refresh_file(filepath=STEP)
 check(widths() == appended,
       "and keeps it with no record at all (%s vs %s)" % (widths(), appended))
 
+# -- a part that fails, in a Blender with no window ---------------------------
+# The worker has no window, and Blender crashes when it opens a popup there.
+# A file with one part that fails crashed the worker before it saved, so the
+# whole background import failed. Now the list goes to the console, and the
+# worker sends it to the session that shows the popup.
+print("\n== the import warning in a Blender with no window")
+m._show_import_issues_popup(["broken part"], [])
+check(m.last_import_issues == (["broken part"], []),
+      "the warning is kept for the worker to send on, and Blender is still "
+      "running")
+src = open(os.path.join(_ADDON, "worker.py"), encoding="utf-8").read()
+check('"phase": "issues"' in src,
+      "the worker sends the failed parts to the session that started it")
+
 if FAILS:
     print("\nbackground_refresh_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

@@ -72,3 +72,23 @@ class ShapeKey:
         if not isinstance(other, ShapeKey):
             return NotImplemented
         return self.shape.IsEqual(other.shape)
+
+
+class SameKey(ShapeKey):
+    """Key for one piece of geometry, whatever way round it faces.
+
+    ShapeKey tells a face from the same face turned over. A color label
+    can hold a face turned the other way from the same face in its body, and
+    under ShapeKey the two count as different faces, so the face would be
+    meshed twice. OCP's hash leaves the orientation out already.
+    """
+
+    __slots__ = ()
+
+    def __eq__(self, other):
+        if not isinstance(other, ShapeKey):
+            return NotImplemented
+        return self.shape.IsSame(other.shape)
+
+    # Defining __eq__ drops the inherited hash, so restore it.
+    __hash__ = ShapeKey.__hash__

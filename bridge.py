@@ -451,11 +451,38 @@ def _run_job(payload: dict) -> dict:
         said.close()
 
 
+def _apply_poses_from(poses: dict) -> int:
+    """Moves the scene onto the poses the CAD application pushed. The same
+    path an Update from CAD takes, so one rule decides how a pose reaches
+    the objects."""
+    from .rig import ui as rig_ui
+
+    return rig_ui._apply_poses(bpy.context, poses)
+
+
 def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 want, have_manifest, said):
     """The stages themselves. Split out so the reporter closes whatever
     ends the job."""
     from .rig import matching, ui as rig_ui
+
+    # A pose push. The CAD application moved parts and says where they
+    # are now: no geometry, no manifest file, no rig rebuild beyond what
+    # moving the bones needs. This is the fast half of a send, for
+    # iterating on a mechanism's position.
+    poses = payload.get("poses")
+    if poses and not mesh_path and not step_path and not manifest_path:
+        with _ops_context():
+            if rig_ui._STATE.get("manifest") is None:
+                return {"ok": False, "stages": stages,
+                        "error": "Send the assembly to Blender first: this "
+                                 "scene has no manifest to update."}
+            said.stage("moving the parts to where the CAD has them", 0, 100)
+            said_count = len(poses.get("components") or [])
+            moved = _apply_poses_from(poses)
+            stages["poses"] = {"moved": moved, "components": said_count}
+            bpy.context.view_layer.update()
+        return {"ok": True, "stages": stages, "log": log}
 
     with _ops_context():
         scene = bpy.context.scene

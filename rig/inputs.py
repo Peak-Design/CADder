@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """Which joint drives a mechanism.
 
 A one-degree mechanism can usually be driven from more than one joint: a
@@ -26,6 +26,11 @@ from typing import Dict, List, Optional
 
 from .manifest import Manifest, Mechanism
 
+# The couplings that hold one degree of freedom from either end. A cam,
+# a table and a mirror are shapes rather than ratios, and pushing a cam's
+# follower never turns the cam.
+_INVERTIBLE = ("gear", "rack_pinion", "linear_coupler")
+
 _TYPE_WORDS = {
     "revolute": "hinge",
     "prismatic": "slide",
@@ -44,9 +49,14 @@ _TYPE_WORDS = {
 def mechanisms(manifest: Manifest) -> List[List[str]]:
     """The mechanisms as lists of loop ids: the exporter's block when there
     is one, else loops grouped by shared joints. Loop ids sorted within a
-    group, groups sorted by their first loop."""
+    group, groups sorted by their first loop.
+
+    A COUPLED PAIR has no loops, so it is named by its own mechanism id
+    instead. Everything here takes such a list back and resolves it either
+    way; the id cannot collide with a loop id, because a mechanism only
+    ever stands in for itself when it owns no loops."""
     if manifest.mechanisms:
-        return [sorted(m.loop_ids) for m in manifest.mechanisms]
+        return [sorted(m.loop_ids) or [m.id] for m in manifest.mechanisms]
     parent: Dict[str, str] = {lp.id: lp.id for lp in manifest.loops}
 
     def find(x):
@@ -77,7 +87,56 @@ def _mechanism(manifest: Manifest, loop_ids: List[str]) -> Optional[Mechanism]:
     for m in manifest.mechanisms:
         if set(m.loop_ids) == wanted:
             return m
+    for m in manifest.mechanisms:
+        if not m.loop_ids and m.id in wanted:
+            return m
     return None
+
+
+def _pair(manifest: Manifest, mech: Optional[Mechanism]):
+    """The (driven joint, driver joint) of a COUPLED PAIR mechanism, or
+    None. A mechanism with no loops whose two inputs are a coupling and
+    that coupling's own driver is a pair: one degree of freedom held from
+    either end, like a rack and its pinion.
+
+    Read off the manifest rather than flagged, so a manifest needs no new
+    field to say it.
+    """
+    if mech is None or mech.loop_ids or len(mech.inputs) != 2:
+        return None
+    by_id = manifest.joint_by_id()
+    ids = [o.joint for o in mech.inputs]
+    for driven_id, driver_id in (ids, list(reversed(ids))):
+        driven = by_id.get(driven_id)
+        driver = by_id.get(driver_id)
+        if driven is None or driver is None:
+            return None
+        if driven.coupling is not None \
+                and driven.coupling.driver_joint == driver_id \
+                and driven.coupling.kind in _INVERTIBLE:
+            return driven, driver
+    return None
+
+
+def _turn_coupling_round(manifest: Manifest, mech: Mechanism):
+    """Moves the coupling to the other half of the pair.
+
+    The number stays what the mate said: a rack and pinion's metres per
+    radian is the same fact whichever end is held, and drivers.py reads the
+    channel to write off the joint's own type. A ratio of like for like has
+    no such handle, so it is the one that inverts here.
+    """
+    found = _pair(manifest, mech)
+    if found is None:
+        return False
+    driven, driver = found
+    coupling = driven.coupling
+    driven.coupling = None
+    coupling.driver_joint = driven.id
+    if coupling.kind in ("gear", "linear_coupler") and coupling.ratio:
+        coupling.ratio = 1.0 / coupling.ratio
+    driver.coupling = coupling
+    return True
 
 
 def _loops(manifest: Manifest, loop_ids: List[str]):
@@ -89,6 +148,11 @@ def candidates(manifest: Manifest, loop_ids: List[str]) -> List[str]:
     """Every input the mechanism can take, the exporter's choice first."""
     mech = _mechanism(manifest, loop_ids)
     if mech is not None:
+        if _pair(manifest, mech) is not None:
+            # Both halves: the driven one is offered BECAUSE taking it
+            # turns the coupling round, so nothing ends up posing a
+            # channel something else writes.
+            return [o.joint for o in mech.inputs]
         return [o.joint for o in mech.inputs if not _driven(manifest, o.joint)]
     out: List[str] = []
     for lp in _loops(manifest, loop_ids):
@@ -175,12 +239,20 @@ def apply(manifest: Manifest, loop_ids: List[str], joint_id: str) -> List[str]:
     option is applied whole: the previous option's swaps are undone, the
     new one's made, and the mechanism's loops replaced. Without it, every
     loop that lists the joint as a candidate takes that candidate (driver,
-    cut, closure kind). Returns the loops that changed."""
+    cut, closure kind).
+
+    Returns what changed: the loop ids, or the mechanism id for a coupled
+    pair, which owns no loops. Empty means nothing moved."""
     mech = _mechanism(manifest, loop_ids)
     if mech is not None:
         index = next((i for i, o in enumerate(mech.inputs) if o.joint == joint_id), None)
         if index is None or index == mech.active:
             return []
+        if _pair(manifest, mech) is not None:
+            if not _turn_coupling_round(manifest, mech):
+                return []
+            mech.active = index
+            return [mech.id]
         old, new = mech.inputs[mech.active], mech.inputs[index]
         _flip(manifest, old.flipped_joints)
         _flip(manifest, new.flipped_joints)

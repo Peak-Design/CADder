@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """Coupling annotations -> scripted drivers on bone channels.
 
 Every driver reads exactly one TRANSFORMS variable targeting the armature
@@ -199,8 +199,22 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
                 warnings.append(
                     "joint {}: rack_pinion coupling without meters_per_radian".format(joint.id))
                 continue
-            _add_driver(arm_obj, own_pb, "location",
-                        source_bone, "ROT_Y", c.meters_per_radian * unit_scale)
+            travel = c.meters_per_radian * unit_scale
+            if joint.type == "revolute":
+                # The pair held from the RACK instead: the pinion is the
+                # driven half and turns as the rack runs. The mate's number
+                # says the same thing either way round, so the joint's own
+                # type decides which channel is written and which way up
+                # the number goes (inputs.py turns the pair round).
+                if abs(travel) < 1e-12:
+                    warnings.append(
+                        "joint {}: rack_pinion travel per radian is zero".format(joint.id))
+                    continue
+                _add_driver(arm_obj, own_pb, "rotation_euler",
+                            source_bone, "LOC_Y", 1.0 / travel)
+            else:
+                _add_driver(arm_obj, own_pb, "location",
+                            source_bone, "ROT_Y", travel)
             count += 1
         elif c.kind == "linear_coupler":
             if c.ratio is None:

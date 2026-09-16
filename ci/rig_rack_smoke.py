@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """Headless smoke for a rack and pinion: turn the pinion, the rack slides.
 
     blender -b --factory-startup -P ci/rig_rack_smoke.py
@@ -25,7 +25,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from CADder.rig import graph, manifest as man_mod, rig_build  # noqa: E402
+from CADder.rig import graph, inputs, manifest as man_mod, rig_build  # noqa: E402
 
 METRES_PER_RADIAN = 0.0127
 
@@ -68,7 +68,19 @@ MANIFEST = {
          "coupling": {"kind": "rack_pinion", "driver_joint": "j002",
                       "meters_per_radian": METRES_PER_RADIAN}},
     ],
-    "loops": [], "warnings": [],
+    "loops": [],
+    # A coupled pair is a mechanism: one degree of freedom held from
+    # either end. Oscar, 2026-09-16: "can we ensure that the rack and
+    # pinion example gives us an option of either driver?"
+    "mechanisms": [{
+        "id": "mech001",
+        "loops": [],
+        "inputs": [{"joint": "j002", "loops": [], "flipped_joints": [],
+                    "joint_limits": []},
+                   {"joint": "j001", "loops": [], "flipped_joints": [],
+                    "joint_limits": []}],
+    }],
+    "warnings": [],
 }
 
 
@@ -118,8 +130,41 @@ def main():
            "the rack can be dragged off its slide: %s"
            % list(rack.lock_location))
 
+    # The other input: the pair turns round, the rack becomes the thing
+    # you grab, and the pinion follows it.
+    mechs = inputs.mechanisms(m)
+    _check(len(mechs) == 1, "the coupled pair is not offered: %s" % mechs)
+    _check(inputs.candidates(m, mechs[0]) == ["j002", "j001"],
+           "both halves must be offered, got %s" % inputs.candidates(m, mechs[0]))
+    _check(inputs.current(m, mechs[0]) == "j002",
+           "the exporter's own choice must come first")
+    _check(inputs.apply(m, mechs[0], "j001"),
+           "taking the rack as the input changed nothing")
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    plan = graph.build(m)
+    result = rig_build.build(bpy.context, m, plan)
+    arm = result.armature_object
+    rack = arm.pose.bones[result.bone_names["g001"]]
+    pinion = arm.pose.bones[result.bone_names["g002"]]
+
+    paths = [fc.data_path for fc in arm.animation_data.drivers]
+    _check(any(pinion.name in p and "rotation" in p for p in paths),
+           "no driver on the pinion's rotation: %s" % paths)
+    _check(not any(rack.name in p for p in paths),
+           "the rack is still driven: %s" % paths)
+
+    start = pinion.matrix.to_quaternion()
+    for slide in (0.0127, -0.0127):
+        rack.location[1] = slide
+        bpy.context.view_layer.update()
+        turned = start.rotation_difference(pinion.matrix.to_quaternion()).angle
+        _check(abs(turned - 1.0) < 1e-4,
+               "%.4f m of rack turned the pinion %.6f rad, want 1" % (slide, turned))
+
     print("rig_rack_smoke: OK: one radian of pinion slides the rack %.4f m, "
-          "both ways, and the rack stays on its line" % METRES_PER_RADIAN)
+          "both ways, the rack stays on its line, and the pair drives just "
+          "as well from the rack" % METRES_PER_RADIAN)
 
 
 main()

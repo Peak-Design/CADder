@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """The driver choice: mechanisms, candidates, labels, applying a choice."""
 
 import os
@@ -276,6 +276,89 @@ class MechanismInputsTest(unittest.TestCase):
         data["mechanisms"][0]["inputs"][1]["flipped_joints"] = ["j999"]
         with self.assertRaises(man_mod.ManifestError):
             man_mod.parse(data)
+
+
+def _rack_pinion():
+    """A rack and a pinion, offered as a mechanism of their own: one degree
+    of freedom held from either end."""
+    return {
+        "manifest_version": "1.0.0",
+        "generator": {"name": "test", "version": "0"},
+        "units": {"length": "meter", "angle": "radian"},
+        "frame": {"handedness": "right", "up_axis": "Z",
+                  "transform_convention": "row_major_4x4_global"},
+        "step_export": {"file": "x.step", "ap": "AP214", "sha1": None,
+                        "occurrence_matching": None},
+        "components": [
+            {"id": "c%03d" % i, "sw_path": n + "-1", "step_name": n,
+             "step_occurrence_path": None, "transform": _t(0, 0, 0)}
+            for i, n in enumerate(["frame", "rack", "pinion"], 1)
+        ],
+        "rigid_groups": [
+            {"id": "g000", "name": "frame", "components": ["c001"],
+             "grounded": True, "frame": _t(0, 0, 0), "bbox_diag": 0.3},
+            {"id": "g001", "name": "rack", "components": ["c002"],
+             "grounded": False, "frame": None, "bbox_diag": 0.15},
+            {"id": "g002", "name": "pinion", "components": ["c003"],
+             "grounded": False, "frame": None, "bbox_diag": 0.03},
+        ],
+        "joints": [
+            dict(_joint("j001", "prismatic", "g000", "g001", [0, 0, 0]),
+                 coupling={"kind": "rack_pinion", "driver_joint": "j002",
+                           "meters_per_radian": 0.0127}),
+            _joint("j002", "revolute", "g000", "g002", [0, 0, 0]),
+        ],
+        "loops": [],
+        "mechanisms": [{
+            "id": "mech001", "loops": [],
+            "inputs": [{"joint": "j002", "loops": [], "flipped_joints": [],
+                        "joint_limits": []},
+                       {"joint": "j001", "loops": [], "flipped_joints": [],
+                        "joint_limits": []}],
+        }],
+        "warnings": [],
+    }
+
+
+class CoupledPairTest(unittest.TestCase):
+    """A coupled pair is a mechanism with no loops. Taking its other input
+    turns the coupling round instead of leaving the user to pose a channel
+    a driver writes (Oscar, 2026-09-16, on the rack and pinion)."""
+
+    def setUp(self):
+        self.m = man_mod.parse(_rack_pinion())
+        self.mech = inputs.mechanisms(self.m)[0]
+
+    def test_a_pair_with_no_loops_is_named_by_its_own_id(self):
+        self.assertEqual(self.mech, ["mech001"])
+
+    def test_both_halves_are_offered(self):
+        self.assertEqual(inputs.candidates(self.m, self.mech), ["j002", "j001"])
+        self.assertEqual(inputs.current(self.m, self.mech), "j002")
+
+    def test_taking_the_rack_turns_the_coupling_round(self):
+        self.assertEqual(inputs.apply(self.m, self.mech, "j001"), ["mech001"])
+        by_id = self.m.joint_by_id()
+        self.assertIsNone(by_id["j001"].coupling)
+        self.assertEqual(by_id["j002"].coupling.kind, "rack_pinion")
+        self.assertEqual(by_id["j002"].coupling.driver_joint, "j001")
+        # The mate's number is the same fact either way round.
+        self.assertAlmostEqual(by_id["j002"].coupling.meters_per_radian, 0.0127)
+        self.assertEqual(inputs.current(self.m, self.mech), "j001")
+
+    def test_taking_the_same_input_again_changes_nothing(self):
+        self.assertEqual(inputs.apply(self.m, self.mech, "j002"), [])
+
+    def test_a_shape_coupling_is_not_a_pair(self):
+        # A cam is not a ratio: pushing the follower never turns the cam.
+        data = _rack_pinion()
+        data["joints"][0]["coupling"] = {
+            "kind": "table", "driver_joint": "j002",
+            "samples": [[0.0, 0.0], [1.0, 0.01]]}
+        m = man_mod.parse(data)
+        mech = inputs.mechanisms(m)[0]
+        self.assertEqual(inputs.candidates(m, mech), ["j002"])
+        self.assertEqual(inputs.apply(m, mech, "j001"), [])
 
 
 if __name__ == "__main__":

@@ -119,11 +119,11 @@ def main():
     path = write_mesh(os.path.join(tempfile.gettempdir(), "hier.swmesh"))
     m = man_mod.parse(MANIFEST)
 
-    # FLAT: one collection per part name under hier.flat, materials per part
+    # FLAT: one collection per part name under hier, materials per part
     objs, report = native_import.build(bpy.context, path, manifest=m, hierarchy="FLAT")
     _check(len(objs) == 3, "FLAT built %d objects" % len(objs))
-    _check(bpy.data.collections.get("hier.flat") is not None, "no hier.flat collection")
-    groups = sorted(c.name for c in bpy.data.collections["hier.flat"].children)
+    _check(bpy.data.collections.get("hier") is not None, "no hier collection")
+    groups = sorted(c.name for c in bpy.data.collections["hier"].children)
     _check(groups == ["base", "pin"], "FLAT groups %s" % groups)
     base = bpy.data.objects["base-1"]
     _check([mt.name for mt in base.data.materials] == ["SW red"],
@@ -138,12 +138,16 @@ def main():
 
     # TREE: nested collections, the pins under sub-1
     objs, _ = native_import.build(bpy.context, path, manifest=m, hierarchy="TREE")
-    _check(bpy.data.collections.get("hier.flat") is None, "the FLAT import was not replaced")
+    # The second import replaced the first: one collection of that name,
+    # not a numbered copy beside it.
+    named = [c.name for c in bpy.data.collections if c.name.startswith("hier")]
+    _check(named.count("hier") == 1 and "hier.001" not in named,
+           "the FLAT import was not replaced: %s" % named)
     sub = bpy.data.collections.get("sub-1")
-    _check(sub is not None and sub.name in [c.name for c in bpy.data.collections["hier.hierarchy"].children],
-           "no sub-1 collection under hier.hierarchy")
+    _check(sub is not None and sub.name in [c.name for c in bpy.data.collections["hier"].children],
+           "no sub-1 collection under hier")
     _check(sorted(o.name for o in sub.objects) == ["pin-1", "pin-2"], "the pins are not in sub-1")
-    _check("base-1" in [o.name for o in bpy.data.collections["hier.hierarchy"].objects], "the base is not at the root")
+    _check("base-1" in [o.name for o in bpy.data.collections["hier"].objects], "the base is not at the root")
 
     # EMPTIES: the pins parented under an empty at the subassembly's pose
     objs, _ = native_import.build(bpy.context, path, manifest=m, hierarchy="EMPTIES")
@@ -168,17 +172,17 @@ def main():
         _check(o.instance_type == "COLLECTION" and o.instance_collection is bpy.data.collections["pin"],
                "%s does not instance the pin prototype" % name)
         _check(o.get("RIG_component_id") in ("c003", "c004"), "%s lost its component id" % name)
-    lc = bpy.context.view_layer.layer_collection.children["hier.hierarchy"] \
-        if "hier.hierarchy" in bpy.context.view_layer.layer_collection.children else None
+    lc = bpy.context.view_layer.layer_collection.children["hier"] \
+        if "hier" in bpy.context.view_layer.layer_collection.children else None
     excluded = [c.name for c in bpy.context.view_layer.layer_collection.children if c.exclude]
     _check("hier.components" in excluded, "the prototype collection is not hidden")
 
-    # Up axis and one collection per file
+    # Up axis. The import always lands in one collection named after the
+    # file, whatever the hierarchy inside it is.
     objs, report = native_import.build(bpy.context, path, manifest=m, hierarchy="FLAT",
-                                       up_as="YPOS", group_in_collection=True)
+                                       up_as="YPOS")
     top = bpy.data.collections.get("hier")
-    _check(top is not None and "hier.flat" in [c.name for c in top.children],
-           "group_in_collection did not wrap the import")
+    _check(top is not None, "the import is not in a collection named after the file")
     pin2 = bpy.data.objects["pin-2"]
     _check([round(v, 3) for v in pin2.matrix_world.translation] == [0.7, 0.0, 0.0],
            "Y up moved a point on the X axis")

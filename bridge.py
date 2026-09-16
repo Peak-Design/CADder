@@ -533,7 +533,6 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                     manifest=rig_ui._STATE.get("manifest"),
                     up_as=opts.get("up_as") or "ZPOS",
                     hierarchy=opts.get("hierarchy_types") or "FLAT",
-                    group_in_collection=bool(opts.get("group_in_collection")),
                     report_to=said)
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,

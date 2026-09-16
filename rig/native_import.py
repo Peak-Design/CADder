@@ -348,7 +348,7 @@ def _object_colour(obj):
 
 def build(context, path, manifest=None, collection_name=None,
           unit_scale=1.0, material_prefix="SW ", up_as="ZPOS",
-          hierarchy="FLAT", group_in_collection=False, report_to=None):
+          hierarchy="FLAT", report_to=None):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
     The report is what ties this into the existing pipeline: every entry is
@@ -374,11 +374,13 @@ def build(context, path, manifest=None, collection_name=None,
 
     remove_previous(None, context.scene.collection)
     destination = context.scene.collection
-    if group_in_collection:
-        destination = _collection(stem, stem, "file", destination)
-    suffix = {"FLAT": ".flat", "TREE": ".hierarchy", "EMPTIES": ".hierarchy",
-              "COLLECTION_INSTANCES": ".hierarchy"}[hierarchy]
-    root = _collection(stem + suffix, stem, suffix[1:], destination)
+    # One collection, named after the assembly. The shape of what is
+    # inside it is the hierarchy option's business, not the name's
+    # (Oscar, 2026-09-16: a send should simply put the assembly in a
+    # collection of its own name).
+    role = {"FLAT": "flat", "TREE": "hierarchy", "EMPTIES": "hierarchy",
+            "COLLECTION_INSTANCES": "hierarchy"}[hierarchy]
+    root = _collection(stem, stem, role, destination)
 
     materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
     meshes = {}

@@ -4553,6 +4553,15 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         update=_enable_bridge_changed,
     )
 
+    cad_link_advanced: bpy.props.BoolProperty(
+        name="Show the STEP rig panel",
+        description="Show the STEP Rig panel in the CAD Link tab: the "
+                    "manifest file and the rig pipeline run by hand. A "
+                    "direct send from the CAD add-in does all of that "
+                    "itself, so most users never need it",
+        default=False,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -4630,6 +4639,8 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
 
         col = layout.box().column(align=True)
         col.prop(self, "enable_bridge")
+        if self.enable_bridge:
+            col.prop(self, "cad_link_advanced")
         if bridge_mod is not None and bridge_mod.is_running():
             col.label(text="Listening on 127.0.0.1:%d"
                            % bridge_mod.port(), icon="CHECKMARK")

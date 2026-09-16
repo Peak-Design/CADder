@@ -265,14 +265,26 @@ def _group(name, fill):
 
     An older file can hold a group of the same name from an earlier
     version of this addon. Such a group is filled again in place, so
-    every material that already points at it gets the new contents."""
-    group = None
-    for candidate in bpy.data.node_groups:
-        if candidate.bl_idname != "ShaderNodeTree":
-            continue
-        if candidate.name == name or candidate.name.startswith(name + "."):
-            group = candidate
-            break
+    every material that already points at it gets the new contents.
+
+    Only a group carrying the version stamp is ever refilled. The name
+    alone is not enough: a group of the same name can be somebody else's,
+    and Blender renames on collision, so "Add SW Decal.001" is as likely
+    to be a copy a user made to edit as it is to be this one renamed.
+    Refilling either of those would throw away their work."""
+    exact = bpy.data.node_groups.get(name)
+    if exact is not None and exact.bl_idname == "ShaderNodeTree"             and exact.get(_VERSION_KEY) is not None:
+        group = exact
+    else:
+        # This group under a name Blender gave it when the plain one was
+        # taken. Only ours, and only when the plain name is not ours.
+        group = None
+        for candidate in bpy.data.node_groups:
+            if candidate.bl_idname != "ShaderNodeTree":
+                continue
+            if candidate.name.startswith(name + ".")                     and candidate.get(_VERSION_KEY) is not None:
+                group = candidate
+                break
     if group is not None and group.get(_VERSION_KEY) == GROUP_VERSION:
         return group
     if group is None:

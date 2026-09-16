@@ -132,6 +132,30 @@ def main():
            == groups[appearance.FRAME_GROUP].node_tree,
            "the second decal material points at another group")
 
+    # A group of the user's own, under the name this one would take, is
+    # left alone: the version stamp says which group is this addon's, and
+    # only a stamped one is ever emptied and filled again.
+    mine = bpy.data.node_groups[appearance.MIX_GROUP]
+    # What Blender does when the plain name is taken: this one is the
+    # numbered copy, the user's holds the name.
+    mine.name = appearance.MIX_GROUP + ".001"
+    theirs = bpy.data.node_groups.new(appearance.MIX_GROUP, "ShaderNodeTree")
+    theirs.nodes.new("ShaderNodeValue")
+    appearance.GROUP_VERSION += 1          # as a new release would
+    try:
+        rebuilt = native_import._material(
+            swmesh.Material(name="third logo", rgba=(0.28, 0.66, 0.33, 1),
+                            appearance_json=json.dumps(dict(decal, colour=[0.4, 0.4, 0.4]))),
+            "SW ", 1.0)
+    finally:
+        appearance.GROUP_VERSION -= 1
+    _check(len(theirs.nodes) == 1, "a group of the user's own was emptied")
+    used = [n.node_tree for n in _nodes(rebuilt, "ShaderNodeGroup")]
+    _check(theirs not in used, "the decal took over the user's group")
+    _check(mine in used, "the addon's own group was not found under its new name")
+    bpy.data.node_groups.remove(theirs)
+    mine.name = appearance.MIX_GROUP
+
     # Reuse by identity: the same appearance again is the same material,
     # the same name with another appearance is a new one.
     again = native_import._material(scene.materials[0], "SW ", 1.0)

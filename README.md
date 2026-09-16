@@ -152,7 +152,8 @@ The **CADder** tab holds the link at the top and the STEP import
 panels below it. The link is one panel with three sub-panels, two of
 them closed:
 
-- **SolidWorks Bridge**: **Quality**, and **Update from CAD**. The four quality
+- **SolidWorks Bridge**: **Quality**, **Update from CAD**, and **Lock
+  Rig**. The four quality
   names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
   and Custom takes a chord of its own. Update from CAD asks the CAD
   application for the geometry of the selected parts again at that
@@ -164,6 +165,15 @@ them closed:
   parts added or removed and mates changed. One dropdown per mechanism
   that offers a choice of input sits in the **Mechanism Input**
   sub-panel below. Changing the input rebuilds the rig for that choice.
+
+  **Lock Rig** keeps the rig that is standing. A send still replaces the
+  geometry and still attaches it to the bones, and the rig itself is left
+  alone: bones renamed, controls added, constraints changed, all of it
+  survives. The lock is saved with the file, and it is on the armature, so
+  a rig that goes to somebody else arrives locked as it was left. What it
+  costs: the rest pose stays as it was built, so a part that moved in the
+  CAD application follows its bone until the rig is unlocked and built
+  again.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
   Build Rig, Relink Geometry). A direct send runs all of it, so this

@@ -249,7 +249,9 @@ def remove_previous(stem=None, scene_collection=None):
                 for o in bpy.data.objects)
         except ReferenceError:
             continue
-        if not still_driven:
+        # A locked rig outlives its geometry on purpose: the send is
+        # bringing the parts back, and the rig is to receive them.
+        if not still_driven and not arm.get("RIG_locked"):
             orphaned.append(arm)
     if orphaned:
         from . import rig_build

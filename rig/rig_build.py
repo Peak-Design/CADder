@@ -70,6 +70,37 @@ _RAIL_WIDTH = 2e-5
 # still be treated as sampling error rather than bad data.
 _RAIL_SNAP = 1e-3
 
+# A rig the user has locked. Everything that would replace or remove a rig
+# asks first: a rig that has been edited by hand is work the CAD
+# application cannot send again, so a send replaces the geometry and
+# leaves the rig standing (Oscar, 2026-09-16).
+LOCK_TAG = "RIG_locked"
+
+
+class RigLocked(Exception):
+    """Raised instead of replacing a rig the user locked."""
+
+
+def is_locked(arm_obj):
+    return bool(arm_obj is not None and arm_obj.get(LOCK_TAG))
+
+
+def locked_rig(context=None):
+    """The locked rig standing in the scene, or None.
+
+    Looks at the scene rather than at one collection: a locked rig moved
+    somewhere else in the outliner is still locked."""
+    if bpy is None:
+        return None
+    try:
+        objects = (context or bpy.context).scene.objects
+    except AttributeError:
+        objects = bpy.data.objects
+    for obj in objects:
+        if obj.type == "ARMATURE" and obj.get("RIG_rig") and is_locked(obj):
+            return obj
+    return None
+
 
 @dataclass
 class BuildResult:
@@ -800,7 +831,8 @@ def _remove_previous_rig(collection):
     where it finds it as ITS rest: released mid-pose, a cam turned to 90
     degrees became the new rig's zero and every follower was out of time
     with it (live cam-follower, 2026-09-15, switching the input)."""
-    doomed = [o for o in list(collection.objects) if o.get("RIG_rig")]
+    doomed = [o for o in list(collection.objects)
+              if o.get("RIG_rig") and not is_locked(o)]
     posed = False
     for obj in doomed:
         if obj.type != "ARMATURE":
@@ -845,7 +877,12 @@ def remove_rig(arm_obj):
     For a rig whose every driven part has gone. The direct link replaces
     the whole native import, so a different assembly sent into the same
     session left the previous assembly's rig standing over nothing (live
-    2026-09-14)."""
+    2026-09-14).
+
+    A locked rig is kept, and False says so: the user asked for it to
+    outlive its geometry."""
+    if is_locked(arm_obj):
+        return False
     scene_root_names = {s.collection.name for s in bpy.data.scenes}
     cols = [c for c in arm_obj.users_collection
             if c.name not in scene_root_names and not c.get("CADLINK_widgets")]
@@ -874,6 +911,7 @@ def remove_rig(arm_obj):
             bpy.data.collections.remove(col)
         except (ReferenceError, RuntimeError):
             pass
+    return True
 
 
 def _thread_through(pts, rest, tolerance):
@@ -1062,6 +1100,12 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             frame = Matrix.Identity(4)
 
     # ---- Phase 1: Object mode, datablocks only -------------------------
+    # Before anything is created or removed: a locked rig is not rebuilt,
+    # and a half-built one is worse than none.
+    standing = locked_rig(context)
+    if standing is not None:
+        raise RigLocked(
+            "%s is locked. Unlock it to build the rig again." % standing.name)
     _ensure_object_mode(context)
 
     rig_name = _rig_name(manifest)

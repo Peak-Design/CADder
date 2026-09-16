@@ -399,6 +399,35 @@ if bpy is not None:
                             "their SW poses".format(report.already_ok))
             return {"FINISHED"}
 
+    class CADLINK_OT_lock_rig(bpy.types.Operator):
+        """The lock lives on the armature, so it is saved with the file and
+        a rig sent to somebody else arrives locked as it was left."""
+
+        bl_idname = "cadlink.lock_rig"
+        bl_label = "Lock Rig"
+        bl_description = ("Keep this rig when the assembly is sent again, so "
+                          "edits made to it by hand survive. The geometry is "
+                          "still replaced and attached to it")
+        bl_options = {"REGISTER", "UNDO"}
+
+        @classmethod
+        def poll(cls, context):
+            if _find_rig(context) is None:
+                cls.poll_message_set("No rig in this scene to lock")
+                return False
+            return True
+
+        def execute(self, context):
+            arm = _find_rig(context)
+            locked = not rig_build.is_locked(arm)
+            if locked:
+                arm[rig_build.LOCK_TAG] = True
+            elif rig_build.LOCK_TAG in arm.keys():
+                del arm[rig_build.LOCK_TAG]
+            self.report({"INFO"}, "%s is %s"
+                        % (arm.name, "locked" if locked else "unlocked"))
+            return {"FINISHED"}
+
     class CADLINK_OT_build_rig(bpy.types.Operator):
         bl_idname = "cadlink.build_rig"
         bl_label = "Build Rig"
@@ -406,7 +435,15 @@ if bpy is not None:
 
         @classmethod
         def poll(cls, context):
-            return _STATE["manifest"] is not None
+            if _STATE["manifest"] is None:
+                return False
+            standing = rig_build.locked_rig(context)
+            if standing is not None:
+                cls.poll_message_set(
+                    "%s is locked. Unlock it to build the rig again"
+                    % standing.name)
+                return False
+            return True
 
         def execute(self, context):
             m = _STATE["manifest"]
@@ -424,6 +461,10 @@ if bpy is not None:
                 # run against exactly the plan that gets built.
                 plan = graph.build(m)
                 result = rig_build.build(context, m, plan, frame_rows=frame_rows)
+            except rig_build.RigLocked as exc:
+                # Not an error: the user asked for this rig to stay.
+                self.report({"INFO"}, str(exc))
+                return {"CANCELLED"}
             except ManifestError as exc:
                 _STATE["error"] = str(exc)
                 self.report({"ERROR"}, str(exc))
@@ -581,7 +622,13 @@ if bpy is not None:
         the scene: the rig is rebuilt first, which releases the geometry
         from its bones, the objects are moved onto the new poses, and the
         geometry goes back on the bones. Without a rig the objects simply
-        move. Returns how many moved."""
+        move. Returns how many moved.
+
+        A LOCKED rig is not rebuilt, so its parts stay on their bones and
+        follow them instead of the CAD poses. That is the trade the lock
+        makes: the rest pose the rig was built on is kept, and a part that
+        moved in the CAD application moves only when the rig is unlocked
+        and built again."""
         manifest = _STATE.get("manifest")
         entries = (reply or {}).get("components") or []
         by_id = {}
@@ -812,6 +859,17 @@ if bpy is not None:
                                      icon="FILE_REFRESH")
             update.quality = quality_dial(settings)
 
+            # The lock: what a send does to the rig standing in the scene.
+            # Only shown when there is a rig, because that is the only time
+            # it means anything.
+            arm = _find_rig(context)
+            if arm is not None:
+                locked = rig_build.is_locked(arm)
+                row = layout.row()
+                row.operator("cadlink.lock_rig", text="Lock Rig",
+                             icon="LOCKED" if locked else "UNLOCKED",
+                             depress=locked)
+
             # Joining is offered only when there is something to join, and
             # the count is the whole message, so the button carries it.
             host, others = joining.joinable(context)
@@ -1034,6 +1092,7 @@ if bpy is not None:
         CADLINK_OT_import_step,
         CADLINK_OT_match_geometry,
         CADLINK_OT_sync_poses,
+        CADLINK_OT_lock_rig,
         CADLINK_OT_build_rig,
         CADLINK_OT_relink_geometry,
         CADLINK_OT_join_rigs,

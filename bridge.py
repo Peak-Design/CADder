@@ -604,17 +604,28 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                     }
 
         if have_manifest and want("build_rig"):
-            said.stage("building the rig", 88, 96)
-            if "FINISHED" not in bpy.ops.cadlink.build_rig():
-                return {"ok": False,
-                        "error": rig_ui._STATE["error"] or "rig build failed",
-                        "stages": stages}
-            build = rig_ui._STATE["build"]
-            stages["rig"] = {
-                "bones": len(build.bone_names),
-                "helpers": len(build.helper_names),
-                "warnings": list(build.warnings),
-            }
+            # A rig the user locked is kept, and the send says so rather
+            # than failing: the geometry still arrives and still attaches
+            # to it, which is the whole point of locking one.
+            from .rig import rig_build
+            standing = rig_build.locked_rig(bpy.context)
+            if standing is not None:
+                said.stage("keeping the locked rig", 88, 96)
+                stages["rig"] = {"locked": standing.name}
+                log.append("the rig %s is locked: it was kept as it is, and "
+                           "the parts were attached to it" % standing.name)
+            else:
+                said.stage("building the rig", 88, 96)
+                if "FINISHED" not in bpy.ops.cadlink.build_rig():
+                    return {"ok": False,
+                            "error": rig_ui._STATE["error"] or "rig build failed",
+                            "stages": stages}
+                build = rig_ui._STATE["build"]
+                stages["rig"] = {
+                    "bones": len(build.bone_names),
+                    "helpers": len(build.helper_names),
+                    "warnings": list(build.warnings),
+                }
 
         said.stage("attaching the parts to the rig", 96, 100)
         if have_manifest and want("relink") \

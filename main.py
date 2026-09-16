@@ -3045,7 +3045,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
     STEP_AddonPreferences and are accessed via _get_addon_prefs().
     """
     detail_level: bpy.props.IntProperty(
-        name="Mesh detail",
+        name="Mesh Detail",
         description="Tessellation detail level (100 = balanced default). "
                     "Higher values produce more polygons",
         default=100,
@@ -3053,7 +3053,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
     )
 
     lin_deflection: bpy.props.FloatProperty(
-        name="Linear deflection",
+        name="Linear Deflection",
         description="Maximum distance between the mesh and the true "
                     "surface, in file units. Smaller values produce more "
                     "polygons",
@@ -3063,7 +3063,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
     )
 
     ang_deflection: bpy.props.FloatProperty(
-        name="Angular deflection",
+        name="Angular Deflection",
         description="Maximum angle between adjacent facets, in radians. "
                     "Smaller values produce more polygons",
         default=0.5,
@@ -3097,7 +3097,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "closes on itself. This does not change the shading",
         default="SINGLE")
     uv_smart_distortion: bpy.props.FloatProperty(
-        name="Smart distortion", subtype="PERCENTAGE",
+        name="Smart Distortion", subtype="PERCENTAGE",
         description="How far Smart can bend a face to join it to an "
                     "island, as an average over the face. Squash counts in "
                     "full. Stretch along the shared edge counts half, "
@@ -3105,21 +3105,21 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "to join only the faces that fit without a bend",
         default=UV_SMART_DISTORTION, min=0.0, max=100.0, precision=0)
     uv_smart_sharp: bpy.props.BoolProperty(
-        name="Join sharp edges",
+        name="Join Sharp Edges",
         description="After the smooth edges, let Smart join faces across "
                     "sharp edges too. A face joins only if it does not "
                     "overlap the island and the island still fits the UV "
                     "tile. This gives fewer and larger islands",
         default=False)
     uv_smart_split: bpy.props.BoolProperty(
-        name="Optimize island shape",
+        name="Optimize Island Shape",
         description="Cut an island along a join where the pieces pack "
                     "better. An island shaped like a V, or with a long arm, "
                     "fills little of the rectangle around it. Clear this "
                     "option to keep every island whole",
         default=True)
     box_uv_scale: bpy.props.FloatProperty(
-        name="Box UV size", unit="LENGTH",
+        name="Box UV Size", unit="LENGTH",
         description="World size of one UV tile for the Box Project mode",
         default=1.0, min=0.0001)
     uv_pack: bpy.props.EnumProperty(
@@ -3128,11 +3128,11 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "map is made",
         default="NONE")
     uv_pack_tiles: bpy.props.IntProperty(
-        name="Tile count",
+        name="Tile Count",
         description="How many UDIM tiles to share the parts over",
         default=4, min=1, max=100)
     uv_pack_margin: bpy.props.FloatProperty(
-        name="Pack margin",
+        name="Pack Margin",
         description="Space left around each island. The addon scales this "
                     "down as more parts share a tile",
         default=UV_PACK_MARGIN, min=0.0, max=0.25, precision=4)
@@ -3141,7 +3141,7 @@ class PG_Stepper(bpy.types.PropertyGroup):
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
     mat_db_active_index: bpy.props.IntProperty(default=0)
     mat_db_apply_selection_only: bpy.props.BoolProperty(
-        name="Selection only",
+        name="Selection Only",
         description="Apply material mappings only to selected objects",
         default=False,
     )
@@ -3221,7 +3221,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=0.01, min=0.00001)
 
     lin_deflection: bpy.props.FloatProperty(
-        name="Linear deflection",
+        name="Linear Deflection",
         description="Maximum distance between the mesh and the true "
                     "surface, in file units. Smaller values produce more "
                     "polygons",
@@ -3231,7 +3231,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     ang_deflection: bpy.props.FloatProperty(
-        name="Angular deflection",
+        name="Angular Deflection",
         description="Maximum angle between adjacent facets, in radians. "
                     "Smaller values produce more polygons",
         default=0.5,
@@ -3240,7 +3240,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     detail_level: bpy.props.IntProperty(
-        name="Mesh detail",
+        name="Mesh Detail",
         description="Tessellation detail level (100 = balanced default). "
                     "Higher values produce more polygons",
         default=100,
@@ -3248,14 +3248,14 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     custom_scale: bpy.props.BoolProperty(
-        name="Custom scale",
+        name="Custom Scale",
         description="Set the unit scale by hand instead of reading it from the "
                     "file",
         default=False,
     )
 
     apply_scale: bpy.props.BoolProperty(
-        name="Apply scale",
+        name="Apply Scale",
         description="Bake scale into mesh vertices so object scale is (1, 1, 1)",
         default=True,
     )
@@ -3275,7 +3275,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     lin_deflection_len: bpy.props.FloatProperty(
-        name="Linear deflection",
+        name="Linear Deflection",
         description="Maximum distance between the mesh and the true surface. "
                     "Smaller values increase polygon count",
         unit="LENGTH",
@@ -3286,7 +3286,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     ang_deflection_rot: bpy.props.FloatProperty(
-        name="Angular deflection",
+        name="Angular Deflection",
         description="Maximum angle between adjacent mesh faces. "
                     "Smaller values increase polygon count",
         unit="ROTATION",
@@ -3296,7 +3296,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     skip_construction: bpy.props.BoolProperty(
-        name="Skip construction geometry",
+        name="Skip Construction Geometry",
         description="Skip parts whose names match the construction-geometry "
                     "filters in the addon preferences (sketches, axes, wires...)",
         default=False,
@@ -3336,7 +3336,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_smart_distortion: bpy.props.FloatProperty(
-        name="Smart distortion",
+        name="Smart Distortion",
         subtype="PERCENTAGE",
         description="How far Smart can bend a face to join it to an "
                     "island, as an average over the face. Squash counts in "
@@ -3350,7 +3350,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_smart_sharp: bpy.props.BoolProperty(
-        name="Join sharp edges",
+        name="Join Sharp Edges",
         description="After the smooth edges, let Smart join faces across "
                     "sharp edges too. A face joins only if it does not "
                     "overlap the island and the island still fits the UV "
@@ -3359,7 +3359,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_smart_split: bpy.props.BoolProperty(
-        name="Optimize island shape",
+        name="Optimize Island Shape",
         description="Cut an island along a join where the pieces pack "
                     "better. An island shaped like a V, or with a long arm, "
                     "fills little of the rectangle around it. Clear this "
@@ -3387,7 +3387,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_pack_tiles: bpy.props.IntProperty(
-        name="UDIM tiles",
+        name="UDIM Tiles",
         description="How many UDIM tiles to spread the parts over. The parts "
                     "are shared out by surface area, so each tile carries a "
                     "similar amount",
@@ -3397,7 +3397,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     uv_pack_margin: bpy.props.FloatProperty(
-        name="Pack margin",
+        name="Pack Margin",
         description="Space left around each UV island, as a fraction of the "
                     "tile. Blender puts this around every island, and a CAD "
                     "part has about one island per face, so the addon divides "
@@ -3421,7 +3421,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     box_uv_scale: bpy.props.FloatProperty(
-        name="Box UV size",
+        name="Box UV Size",
         description="World size of one UV tile for the Box Project mode",
         unit="LENGTH",
         default=1.0,
@@ -3429,14 +3429,14 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     import_curves: bpy.props.BoolProperty(
-        name="Import curves",
+        name="Import Curves",
         description="Import free edges (sketches, construction wires) as "
                     "curve objects, in a collection named \"Cad Curves\"",
         default=False,
     )
 
     separate_solids: bpy.props.BoolProperty(
-        name="Separate solids",
+        name="Separate Solids",
         description="Give every body of a multibody part its own object. Use "
                     "this for a file that holds several solids, shells or "
                     "surfaces with no assembly structure to tell them apart",
@@ -3444,7 +3444,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     group_in_collection: bpy.props.BoolProperty(
-        name="Group in a collection",
+        name="Group in a Collection",
         description="Put everything this file creates under one collection "
                     "named after the file. A second import then does not "
                     "interleave with the first. The whole assembly moves, hides"
@@ -3453,7 +3453,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     tessellation_relative: bpy.props.BoolProperty(
-        name="Relative tessellation",
+        name="Relative Tessellation",
         description="Scale the deflection with the size of each feature. Small "
                     "parts keep their detail and large parts do not explode the"
                     " triangle count. This also turns on parallel meshing",
@@ -3461,7 +3461,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     )
 
     lin_deflection_rel: bpy.props.FloatProperty(
-        name="Relative deflection",
+        name="Relative Deflection",
         description="Deflection as a fraction of each edge's size "
                     "(smaller = finer mesh)",
         default=0.005,
@@ -3619,7 +3619,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
 
 class STEP_OT_ClearCache(bpy.types.Operator):
     bl_idname = "object.occ_clear_cache"
-    bl_label = "Clear STEP cache"
+    bl_label = "Clear STEP Cache"
     bl_description = "Clear the STEP cache so the next import reads the file again"
 
     def execute(self, context):
@@ -3637,7 +3637,7 @@ class STEP_OT_ClearCache(bpy.types.Operator):
 
 class STEP_OT_FixASCII(bpy.types.Operator):
     bl_idname = "object.occ_fix_ascii"
-    bl_label = "Attempt STEP ASCII fix"
+    bl_label = "Fix STEP Text Encoding"
     bl_description = (
         "Repair invalid characters in a STEP file.\n"
         "Use this for files that crash Blender on import.\n"
@@ -3680,8 +3680,9 @@ class STEP_OT_FixASCII(bpy.types.Operator):
 
 class STEP_OT_PrintDebug(bpy.types.Operator):
     bl_idname = "object.occ_print_debug"
-    bl_label = "Print STEP debug info"
-    bl_description = "Print STEP debug info"
+    bl_label = "Print STEP Debug Information"
+    bl_description = ("Print what the reader found in this STEP file to "
+                      "the system console")
 
     def execute(self, context):
         from pathlib import Path
@@ -3739,7 +3740,7 @@ class STEP_OT_ReloadSTEP(bpy.types.Operator):
 
 class STEP_OT_ClearFileCache(bpy.types.Operator):
     bl_idname = "object.occ_clear_file_cache"
-    bl_label = "Clear this file from cache"
+    bl_label = "Clear This File from Cache"
     bl_description = (
         "Remove the STEP file of the selected object from the cache. The next "
         "import reads it from disk again"
@@ -3761,7 +3762,7 @@ class STEP_OT_ClearFileCache(bpy.types.Operator):
 
 class STEP_OT_RebuildSelected(bpy.types.Operator):
     bl_idname = "object.occ_rebuild_selected"
-    bl_label = "Rebuild selected objects from the STEP file"
+    bl_label = "Rebuild Selected Objects"
     bl_description = ((
         "Rebuild the selected objects from the STEP file. This old tool is "
         "experimental and fails on some shapes. Use Regenerate Selected in the "
@@ -4140,49 +4141,49 @@ class STEP_UL_MaterialMappings(bpy.types.UIList):
 
 
 class STEP_PT_MaterialDB(bpy.types.Panel):
-    bl_label = "CADder: Material DB"
+    bl_label = "CADder - Material Database"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1004
+    bl_order = 1005
 
     def draw(self, context):
         layout = self.layout
         stepper = context.scene.stepper
         prefs = _get_addon_prefs()
 
-        # Database selector
-        box = layout.box()
-        box.label(text="Database")
-        row = box.row(align=True)
+        # The database picker, with delete beside it: a well known icon
+        # on a destructive action, so the icon carries it.
+        row = layout.row(align=True)
         row.prop(prefs, "active_matdb", text="")
         sub = row.row(align=True)
         sub.enabled = prefs.active_matdb != "NONE"
         sub.operator("stepper.mat_db_delete", text="", icon='TRASH')
 
-        row = box.row(align=True)
+        row = layout.row(align=True)
         row.operator("stepper.mat_db_create", text="New", icon='ADD')
         sub = row.row(align=True)
         sub.enabled = prefs.active_matdb != "NONE"
-        sub.operator("stepper.mat_db_duplicate", text="Duplicate", icon='DUPLICATE')
-        row.operator("stepper.mat_db_refresh", text="Load", icon='IMPORT')
+        sub.operator("stepper.mat_db_duplicate", text="Duplicate")
+        row.operator("stepper.mat_db_refresh", text="Load")
 
-        # Mappings list
+        # The list names itself, so it needs no heading row above it.
         if len(stepper.mat_db_mappings) > 0:
-            box = layout.box()
-            box.label(text="Material Mappings")
-            box.template_list(
+            layout.separator()
+            layout.template_list(
                 "STEP_UL_MaterialMappings", "",
                 stepper, "mat_db_mappings",
                 stepper, "mat_db_active_index",
                 rows=5,
             )
-            row = box.row(align=True)
-            row.operator("stepper.mat_db_update", text="Update", icon='FILE_REFRESH')
-            row.operator("stepper.mat_db_save", text="Save", icon='EXPORT')
+            row = layout.row(align=True)
+            row.operator("stepper.mat_db_update", text="Update",
+                         icon='FILE_REFRESH')
+            row.operator("stepper.mat_db_save", text="Save")
 
-            row = box.row(align=True)
-            row.operator("stepper.mat_db_apply", text="Apply", icon='CHECKMARK')
+            row = layout.row(align=True)
+            row.operator("stepper.mat_db_apply", text="Apply",
+                         icon='CHECKMARK')
             row.prop(stepper, "mat_db_apply_selection_only")
 
 
@@ -4228,59 +4229,58 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
-    bl_label = "CADder: Tools"
+    bl_label = "CADder - Tools"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1001
+    bl_order = 1002
 
     def draw(self, context):
         prg = context.scene.stepper
 
         layout = self.layout
 
-        # These resolution values feed the Regenerate operator below (with
-        # its "Use CADder Panel Resolution" option, on by default)
-        box = layout.box()
-        col = box.column(align=True)
-        col.label(text="Regenerate Resolution:")
+        # The resolution feeds the Regenerate operator below, so the two
+        # sit together. A heading beats a label row with a colon.
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
         if _get_addon_prefs().simpler_parameters:
-            col.prop(prg, "detail_level")
+            col.prop(prg, "detail_level", text="Detail")
         else:
-            col.prop(prg, "lin_deflection")
-            col.prop(prg, "ang_deflection")
-        box.operator("stepper.regenerate", text="Regenerate Selected",
-                     icon='FILE_REFRESH')
+            col.prop(prg, "lin_deflection", text="Linear")
+            col.prop(prg, "ang_deflection", text="Angular")
+        layout.operator("stepper.regenerate", text="Regenerate Selected",
+                        icon='FILE_REFRESH')
+
+        layout.separator()
 
         col = layout.column(align=True)
         row = col.row(align=True)
         row.operator("stepper.prune_hierarchy", text="Prune Hierarchy",
                      icon='X')
-        row.operator("stepper.prune_restore", text="Restore",
-                     icon='LOOP_BACK')
-        col.operator("stepper.mesh_cleanup", text="Clean Up Meshes",
-                     icon='MESH_DATA')
+        row.operator("stepper.prune_restore", text="Restore")
+        col.operator("stepper.mesh_cleanup", text="Clean Up Meshes")
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
-    bl_label = "CADder: File"
+    bl_label = "CADder - File"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1003
+    bl_order = 1004
 
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
         col.operator("stepper.batch_import_folder",
                      text="Batch Import Folder", icon='FILE_FOLDER')
-        col.operator("stepper.analyze_file", text="Analyze STEP File",
-                     icon='VIEWZOOM')
+        col.operator("stepper.analyze_file", text="Analyze STEP File")
         col = layout.column(align=True)
         col.operator(STEP_OT_ReloadSTEP.bl_idname, text="Reload STEP File",
                      icon='FILE_REFRESH')
         col.operator(STEP_OT_ClearFileCache.bl_idname,
-                     text="Clear This File From Cache", icon='TRASH')
+                     text="Clear This File from Cache", icon='TRASH')
         col.operator(STEP_OT_ClearCache.bl_idname, text="Clear All Cache",
                      icon='TRASH')
         row = layout.row()
@@ -4288,11 +4288,11 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_UV(bpy.types.Panel):
-    bl_label = "CADder: UV"
+    bl_label = "CADder - UV"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1002
+    bl_order = 1003
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -4312,11 +4312,11 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Debug(bpy.types.Panel):
-    bl_label = "CADder: Debug"
+    bl_label = "CADder - Debug"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1005
+    bl_order = 1007
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -4324,16 +4324,16 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
         prg = context.scene.stepper
 
         bxp = layout.box()
-        bxp.label(text="Enforce ASCII")
+        bxp.label(text="Text Encoding")
         col = bxp.row().column(align=True)
 
         row = col.row()
         row.prop(prg, "fix_ascii_file")
         row = col.row()
-        row.operator("object.occ_fix_ascii", text="Attempt fix STEP charset")
+        row.operator("object.occ_fix_ascii", text="Fix Text Encoding")
 
         # row = layout.row()
-        # row.label(text="Error messages:")
+        # row.label(text="Error Messages")
 
         if (
             context.object is not None
@@ -4341,7 +4341,7 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
             and context.object["STEP_file"] in global_file_cache
         ):
             bxp = layout.box()
-            bxp.label(text="Reported problems:")
+            bxp.label(text="Reported Problems")
 
             row = bxp.row()
             col = row.column(align=True)
@@ -4351,7 +4351,7 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
                 row.label(text=k + ": " + repr(v))
 
             bxs = layout.box()
-            bxs.label(text="Skipped shapes:")
+            bxs.label(text="Skipped Shapes")
 
             row = bxs.row()
             col = row.column(align=True)
@@ -4361,12 +4361,12 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
                     row.label(text=repr(v))
             else:
                 row = col.row()
-                row.label(text="No skipped shapes")
+                row.label(text="No Skipped Shapes")
 
         else:
             bxp = layout.box()
             row = bxp.row()
-            row.label(text="Select active STEP object")
+            row.label(text="Select an imported STEP object", icon="INFO")
 
 
 def _get_addon_prefs():
@@ -4378,32 +4378,32 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     build_materials: bpy.props.BoolProperty(
-        name="Build materials",
+        name="Build Materials",
         description="Build materials from STEP file colors",
         default=True,
     )
 
     hack_skip_zero_solids: bpy.props.BoolProperty(
-        name="Skip faulty solids",
+        name="Skip Faulty Solids",
         description="Skip corrupted/empty parts entirely (no healing or recovery attempts)",
         default=False,
     )
 
     simpler_parameters: bpy.props.BoolProperty(
-        name="Artist friendly parameters",
+        name="Artist-Friendly Parameters",
         description="Show one detail slider instead of the linear and angular "
                     "deflection values",
         default=True,
     )
 
     skip_empty_objects: bpy.props.BoolProperty(
-        name="Skip empty objects",
+        name="Skip Empty Objects",
         description="Do not create objects for parts that produce no geometry",
         default=True,
     )
 
     debug_timing: bpy.props.BoolProperty(
-        name="Debug timing",
+        name="Debug Timing",
         description="Print detailed timing information during import",
         default=False,
     )
@@ -4415,7 +4415,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     matdb_dir: bpy.props.StringProperty(
-        name="Material database folder",
+        name="Material Database Folder",
         description="Folder that holds the .blend material databases. Leave it "
                     "empty to use the MaterialDB folder inside the addon. Every"
                     " reinstall wipes that folder, and you cannot share it "
@@ -4425,7 +4425,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     remember_import_settings: bpy.props.BoolProperty(
-        name="Remember import settings",
+        name="Remember Import Settings",
         description="Save the import dialog options after every import and "
                     "restore them in the next Blender session. This needs Save "
                     "Preferences on Quit, or a manual preferences save. Turn "
@@ -4434,7 +4434,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     last_import_settings: bpy.props.StringProperty(
-        name="Last import settings",
+        name="Last Import Settings",
         description="Options from the last import (the addon manages this)",
         default="",
         options={"HIDDEN"},
@@ -4473,7 +4473,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     background_import: bpy.props.BoolProperty(
-        name="Background import",
+        name="Background Import",
         description="Import in a background process so Blender stays "
                     "responsive (Esc cancels). Small files still import "
                     "directly",
@@ -4481,7 +4481,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     background_min_mb: bpy.props.FloatProperty(
-        name="Background threshold (MB)",
+        name="Background Threshold (MB)",
         description="Import files smaller than this directly. The background "
                     "process takes too long to start to be worth it for them",
         default=2.0,
@@ -4489,14 +4489,14 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     perf_calibration: bpy.props.StringProperty(
-        name="Performance calibration",
+        name="Performance Calibration",
         description="Import speed measured on this machine, used by the "
                     "analyzer (the addon manages this)",
         default="{}",
     )
 
     check_for_updates: bpy.props.BoolProperty(
-        name="Check for updates",
+        name="Check for Updates",
         description="Ask GitHub once a day if a newer release exists, and show "
                     "a notice in the sidebar. The addon sends no information "
                     "about you or your files",
@@ -4504,21 +4504,21 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     update_last_check: bpy.props.StringProperty(
-        name="Last update check",
+        name="Last Update Check",
         description="Date of the last update check (the addon manages this)",
         default="",
         options={"HIDDEN"},
     )
 
     update_latest_tag: bpy.props.StringProperty(
-        name="Latest release tag",
+        name="Latest Release Tag",
         description="Newest release tag seen on GitHub (the addon manages this)",
         default="",
         options={"HIDDEN"},
     )
 
     update_latest_url: bpy.props.StringProperty(
-        name="Latest release download",
+        name="Latest Release Download",
         description="Download address for the newest release (the addon manages"
                     " this)",
         default="",
@@ -4526,7 +4526,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     construction_filter_names: bpy.props.StringProperty(
-        name="Construction name filters",
+        name="Construction Name Filters",
         description="Comma separated name prefixes to skip when Skip "
                     "construction geometry is on",
         default="Axes,Sketches,Lines,Hatches,Wires,Curves,Construction,"
@@ -4545,7 +4545,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             print("CADder: bridge toggle failed:", exc)
 
     enable_bridge: bpy.props.BoolProperty(
-        name="CAD Link (experimental)",
+        name="CAD Link (Experimental)",
         description="Show the CAD Link sidebar tab. The addon also listens on"
                     " localhost so a CAD add-in (today: SW To Blender for "
                     "SolidWorks) can send exports into this Blender instance."
@@ -4557,7 +4557,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     )
 
     cad_link_advanced: bpy.props.BoolProperty(
-        name="Show the STEP rig panel",
+        name="STEP Rig Panel",
         description="Show the STEP Rig panel in the CAD Link tab: the "
                     "manifest file and the rig pipeline run by hand. A "
                     "direct send from the CAD add-in does all of that "
@@ -4567,66 +4567,77 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
 
         must_have_str = ".".join(str(i) for i in must_have_python)
         if sys.version_info[:2] != must_have_python:
             box = layout.box().column(align=True)
             box.alert = True
-            box.label(text="CADder: Python version check failure", icon="ERROR")
-
-            row = box.row()
-            row.label(text="Current version: " + str(".".join(str(i) for i in sys.version_info[:2])))
-            row = box.row()
-            row.label(text="Please install Blender with Python " + must_have_str)
-            row = box.row()
-            row.label(text="https://www.blender.org/")
+            box.label(text="CADder needs Python %s" % must_have_str,
+                      icon="ERROR")
+            box.label(text="This Blender runs Python %s"
+                           % ".".join(str(i) for i in sys.version_info[:2]))
+            box.operator("wm.url_open", icon="URL",
+                         text="Blender Downloads").url =                 "https://www.blender.org/download/"
             return
 
-        row = layout.row()
-        row.prop(self, "build_materials")
+        # A heading takes the repeated word out of the rows below it.
+        col = layout.column(heading="Import")
+        col.prop(self, "build_materials")
+        col.prop(self, "skip_empty_objects")
+        col.prop(self, "hack_skip_zero_solids")
+        col.prop(self, "simpler_parameters")
+        col.prop(self, "debug_timing")
 
-        row = layout.row()
-        row.prop(self, "hack_skip_zero_solids")
+        layout.separator()
 
-        row = layout.row()
-        row.prop(self, "simpler_parameters")
-
-        row = layout.row()
-        row.prop(self, "skip_empty_objects")
-
-        row = layout.row()
-        row.prop(self, "debug_timing")
-
-        col = layout.box().column(align=True)
-        col.label(text="Material database:")
+        col = layout.column()
         col.prop(self, "active_matdb")
         col.prop(self, "matdb_dir")
         if not self.matdb_dir.strip():
-            col.label(text="Using the addon's own folder. A reinstall "
-                           "wipes it", icon="INFO")
+            col.label(text="The addon folder holds the databases. "
+                           "A reinstall clears it", icon="INFO")
 
-        col = layout.box().column(align=True)
-        col.label(text="Import dialog defaults:")
+        layout.separator()
+
+        col = layout.column()
         col.prop(self, "remember_import_settings")
-        sub = col.column(align=True)
-        # Last-used settings override these three, so gray them out
+        sub = col.column()
+        # The last used settings win over these three, so they are dead
+        # while that switch is on.
         sub.active = not self.remember_import_settings
         sub.prop(self, "preferred_up_axis")
         sub.prop(self, "preferred_hierarchy")
         sub.prop(self, "default_quality_preset")
         col.prop(self, "construction_filter_names")
 
-        col = layout.box().column(align=True)
-        col.prop(self, "background_import")
-        if self.background_import:
-            col.prop(self, "background_min_mb")
+        layout.separator()
 
-        col = layout.box().column(align=True)
+        col = layout.column()
+        col.prop(self, "background_import")
+        sub = col.column()
+        sub.active = self.background_import
+        sub.prop(self, "background_min_mb")
+
+        layout.separator()
+
+        col = layout.column()
+        col.prop(self, "enable_bridge")
+        sub = col.column()
+        sub.active = self.enable_bridge
+        sub.prop(self, "cad_link_advanced")
+        if bridge_mod is not None and bridge_mod.is_running():
+            col.label(text="Listening on 127.0.0.1:%d"
+                           % bridge_mod.port(), icon="CHECKMARK")
+
+        layout.separator()
+
+        col = layout.column()
         col.prop(self, "check_for_updates")
         update = updater_mod.available_update(self)
         if update:
             row = col.row()
-            row.alert = True
             row.label(text="Version %s is available" % update["version"],
                       icon="INFO")
             download = col.operator(
@@ -4637,16 +4648,8 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             col.label(text="CADder %s is up to date"
                            % updater_mod.version_string(), icon="CHECKMARK")
         kofi = col.operator("wm.url_open", icon="FUND",
-                            text="Support development on Ko-fi")
+                            text="Support Development on Ko-fi")
         kofi.url = updater_mod.KOFI_URL
-
-        col = layout.box().column(align=True)
-        col.prop(self, "enable_bridge")
-        if self.enable_bridge:
-            col.prop(self, "cad_link_advanced")
-        if bridge_mod is not None and bridge_mod.is_running():
-            col.label(text="Listening on 127.0.0.1:%d"
-                           % bridge_mod.port(), icon="CHECKMARK")
 
 
 def menu_func_import(self, context):

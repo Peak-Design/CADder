@@ -247,7 +247,7 @@ if bpy is not None:
 
     class CADLINK_OT_pick_manifest(bpy.types.Operator):
         bl_idname = "cadlink.pick_manifest"
-        bl_label = "Browse for Manifest"
+        bl_label = "Browse for Manifest..."
         bl_description = "Pick a .rig.json manifest and load it"
 
         filepath: bpy.props.StringProperty(subtype="FILE_PATH")
@@ -433,7 +433,7 @@ if bpy is not None:
 
     class CADLINK_OT_relink_geometry(bpy.types.Operator):
         bl_idname = "cadlink.relink_geometry"
-        bl_label = "Re-link Geometry"
+        bl_label = "Relink Geometry"
         bl_description = "Parent matched geometry to the rig, preserving world transforms"
 
         @classmethod
@@ -765,15 +765,19 @@ if bpy is not None:
             return False
         return bool(getattr(prefs, "cad_link_advanced", False))
 
-    class CADLINK_PT_panel(bpy.types.Panel):
-        """What a user needs while working: the link, and the one button
-        that brings the CAD model over again."""
+    class CADLINK_PT_bridge(bpy.types.Panel):
+        """The live link, at the top of the CADder tab.
 
-        bl_label = "CAD Link"
-        bl_idname = "CADLINK_PT_panel"
+        What a user needs while working is one button: bring the CAD
+        model over again. Everything else is in a sub-panel, closed.
+        """
+
+        bl_label = "CADder - SolidWorks Bridge"
+        bl_idname = "CADLINK_PT_bridge"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
-        bl_category = "CAD Link"
+        bl_category = "CADder"
+        bl_order = 1001
 
         @classmethod
         def poll(cls, context):
@@ -783,38 +787,58 @@ if bpy is not None:
             layout = self.layout
             settings = context.scene.cad_link
 
-            # Update from CAD is the whole panel for most users: the parts
-            # came over a direct send, and this asks the CAD application
-            # for them again, as coarse or as smooth as the user wants.
-            # The link port and the selection are in the Info panel below.
             col = layout.column(align=True)
+            col.use_property_split = True
+            col.use_property_decorate = False
             col.prop(settings, "update_quality", text="Quality")
             if settings.update_quality == "CUSTOM":
-                col.prop(settings, "update_quality_factor", text="")
-            update = col.operator("cadlink.update_from_cad", icon="FILE_REFRESH")
+                col.prop(settings, "update_quality_factor", text="Chord")
+
+            update = layout.operator("cadlink.update_from_cad",
+                                     icon="FILE_REFRESH")
             update.quality = quality_dial(settings)
 
-            # The input of a mechanism is a real choice about this model,
-            # so it stays in front of the user when there is one to make.
-            m = _STATE["manifest"]
-            if m is not None and settings.mechanisms:
-                box = layout.box()
-                box.label(text="Mechanism input", icon="CON_KINEMATIC")
-                for entry in settings.mechanisms:
-                    box.prop(entry, "driver", text=entry.name)
-
+            # Joining is offered only when there is something to join, and
+            # the count is the whole message, so the button carries it.
             host, others = joining.joinable(context)
             if others:
-                box = layout.box()
-                box.label(text="{} + {}".format(
-                    host.name, ", ".join(o.name for o in others)),
-                    icon="ARMATURE_DATA")
-                box.operator("cadlink.join_rigs", icon="GROUP_BONE")
+                layout.operator("cadlink.join_rigs",
+                                text="Join %d Rigs" % (len(others) + 1),
+                                icon="GROUP_BONE")
 
+            # An error belongs beside the button that produced it. Color
+            # is never the only signal, so it carries an icon as well.
             if _STATE["error"]:
-                err = layout.box()
-                err.alert = True
-                err.label(text=_STATE["error"], icon="ERROR")
+                box = layout.box()
+                box.alert = True
+                box.label(text=_STATE["error"], icon="ERROR")
+
+    class CADLINK_PT_mechanism(bpy.types.Panel):
+        """Which joint drives a mechanism.
+
+        A real choice about this model, so it sits in the open, right
+        under the button, and only when there is a choice to make.
+        """
+
+        bl_label = "Mechanism Input"
+        bl_idname = "CADLINK_PT_mechanism"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "CADder"
+        bl_parent_id = "CADLINK_PT_bridge"
+
+        @classmethod
+        def poll(cls, context):
+            return (_cad_link_enabled(context)
+                    and _STATE["manifest"] is not None
+                    and bool(context.scene.cad_link.mechanisms))
+
+        def draw(self, context):
+            layout = self.layout
+            layout.use_property_split = True
+            layout.use_property_decorate = False
+            for entry in context.scene.cad_link.mechanisms:
+                layout.prop(entry, "driver", text=entry.name)
 
     class CADLINK_PT_step(bpy.types.Panel):
         """The manifest and the rig pipeline, by hand. A direct send runs
@@ -825,8 +849,8 @@ if bpy is not None:
         bl_idname = "CADLINK_PT_step"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
-        bl_category = "CAD Link"
-        bl_parent_id = "CADLINK_PT_panel"
+        bl_category = "CADder"
+        bl_parent_id = "CADLINK_PT_bridge"
         bl_options = {"DEFAULT_CLOSED"}
 
         @classmethod
@@ -842,12 +866,16 @@ if bpy is not None:
             row.operator("cadlink.pick_manifest", text="", icon="FILEBROWSER")
             layout.operator("cadlink.load_manifest", icon="FILE_REFRESH")
 
+            layout.separator()
+
+            # The stages in the order they run, which is the order a user
+            # repairs them in.
             col = layout.column(align=True)
             col.operator("cadlink.import_step", icon="IMPORT")
-            col.operator("cadlink.match_geometry", icon="VIEWZOOM")
-            col.operator("cadlink.sync_poses", icon="SNAP_ON")
-            col.operator("cadlink.build_rig", icon="ARMATURE_DATA")
-            col.operator("cadlink.relink_geometry", icon="LINKED")
+            col.operator("cadlink.match_geometry")
+            col.operator("cadlink.sync_poses")
+            col.operator("cadlink.build_rig")
+            col.operator("cadlink.relink_geometry")
 
     class CADLINK_PT_info(bpy.types.Panel):
         """Everything the last import, match, pose sync and rig build had
@@ -858,8 +886,8 @@ if bpy is not None:
         bl_idname = "CADLINK_PT_info"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
-        bl_category = "CAD Link"
-        bl_parent_id = "CADLINK_PT_panel"
+        bl_category = "CADder"
+        bl_parent_id = "CADLINK_PT_bridge"
         bl_options = {"DEFAULT_CLOSED"}
 
         @classmethod
@@ -873,10 +901,10 @@ if bpy is not None:
             try:
                 from .. import bridge
                 if bridge.is_running():
-                    row.label(text="Listening on port {}".format(bridge.port()),
+                    row.label(text="Listening on port %d" % bridge.port(),
                               icon="PLUGIN")
                 else:
-                    row.label(text="Not listening", icon="UNLINKED")
+                    row.label(text="Not Listening", icon="UNLINKED")
             except Exception:
                 pass
 
@@ -884,79 +912,87 @@ if bpy is not None:
                         if o.get("RIG_component_id")]
             if selected:
                 tolerance = selected[0].get("SWMESH_tolerance_m")
-                text = "{} part(s) selected".format(len(selected))
+                text = "%d part(s) selected" % len(selected)
                 if tolerance:
-                    text += ", {:.3g} m chord".format(tolerance)
+                    text += ", %.3g m chord" % tolerance
                 layout.label(text=text, icon="MESH_DATA")
+
+            host, others = joining.joinable(context)
+            if others:
+                layout.label(text="%s + %s" % (
+                    host.name, ", ".join(o.name for o in others)),
+                    icon="ARMATURE_DATA")
 
             m = _STATE["manifest"]
             if m is not None:
                 box = layout.box()
-                box.label(text="Manifest v{}: {} joints, {} groups, {} loops".format(
-                    m.manifest_version, len(m.joints), len(m.rigid_groups),
-                    len(m.loops)), icon="FILE_TEXT")
+                box.label(
+                    text="Manifest v%s: %d joints, %d groups, %d loops"
+                    % (m.manifest_version, len(m.joints), len(m.rigid_groups),
+                       len(m.loops)), icon="FILE_TEXT")
                 for w in m.warnings[:5]:
-                    box.label(text="{}: {}".format(w.code, w.message), icon="ERROR")
+                    box.label(text="%s: %s" % (w.code, w.message), icon="ERROR")
                 if len(m.warnings) > 5:
-                    box.label(text="... {} more warnings".format(
-                        len(m.warnings) - 5))
+                    box.label(text="... %d more warnings"
+                              % (len(m.warnings) - 5))
 
             report = _STATE["match_report"]
             if report is not None:
                 box = layout.box()
-                box.label(text="Matched {} / ambiguous {} / unmatched {}".format(
-                    len(report.matched), len(report.ambiguous),
-                    len(report.unmatched)), icon="VIEWZOOM")
-                box.label(text="Frame: {}".format(
-                    matching.describe_frame(report.frame_rows)),
-                    icon="ORIENTATION_GLOBAL")
+                box.label(
+                    text="Matched %d / ambiguous %d / unmatched %d"
+                    % (len(report.matched), len(report.ambiguous),
+                       len(report.unmatched)), icon="VIEWZOOM")
+                box.label(text="Frame: %s"
+                          % matching.describe_frame(report.frame_rows),
+                          icon="ORIENTATION_GLOBAL")
                 for cid in report.unmatched[:10]:
-                    box.label(text="unmatched: {}".format(cid), icon="X")
+                    box.label(text="unmatched: %s" % cid, icon="X")
                 if len(report.unmatched) > 10:
-                    box.label(text="... {} more".format(len(report.unmatched) - 10))
+                    box.label(text="... %d more" % (len(report.unmatched) - 10))
                 for cid, names in report.ambiguous[:10]:
-                    box.label(
-                        text="ambiguous: {} ({})".format(cid, ", ".join(names[:3])),
-                        icon="QUESTION")
+                    box.label(text="ambiguous: %s (%s)"
+                              % (cid, ", ".join(names[:3])), icon="QUESTION")
                 if len(report.ambiguous) > 10:
-                    box.label(text="... {} more".format(len(report.ambiguous) - 10))
+                    box.label(text="... %d more" % (len(report.ambiguous) - 10))
                 if report.notes:
-                    box.label(text="Matched on thin evidence:", icon="INFO")
+                    box.label(text="Matched on Thin Evidence", icon="INFO")
                     for note in report.notes[:5]:
                         box.label(text=note)
                     if len(report.notes) > 5:
-                        box.label(text="... {} more".format(len(report.notes) - 5))
+                        box.label(text="... %d more" % (len(report.notes) - 5))
 
-            preport_pose = _STATE["pose_report"]
-            if preport_pose is not None and (preport_pose.moved
-                                             or preport_pose.skipped):
+            pose_report = _STATE["pose_report"]
+            if pose_report is not None and (pose_report.moved
+                                            or pose_report.skipped):
                 box = layout.box()
-                box.label(text="Poses: {} moved, {} in place, {} skipped".format(
-                    len(preport_pose.moved), preport_pose.already_ok,
-                    len(preport_pose.skipped)), icon="SNAP_ON")
-                for name, dist in preport_pose.moved[:5]:
-                    box.label(text="{} ({:.1f} mm)".format(name, dist * 1000.0))
-                for name, reason in preport_pose.skipped[:5]:
-                    box.label(text="{}: {}".format(name, reason), icon="ERROR")
+                box.label(text="Poses: %d moved, %d in place, %d skipped"
+                          % (len(pose_report.moved), pose_report.already_ok,
+                             len(pose_report.skipped)), icon="SNAP_ON")
+                for name, dist in pose_report.moved[:5]:
+                    box.label(text="%s (%.1f mm)" % (name, dist * 1000.0))
+                for name, reason in pose_report.skipped[:5]:
+                    box.label(text="%s: %s" % (name, reason), icon="ERROR")
 
             build = _STATE["build"]
             if build is not None:
                 box = layout.box()
-                box.label(text="Rig: {} bones, {} helpers".format(
-                    len(build.bone_names), len(build.helper_names)),
-                    icon="ARMATURE_DATA")
+                box.label(text="Rig: %d bones, %d helpers"
+                          % (len(build.bone_names), len(build.helper_names)),
+                          icon="ARMATURE_DATA")
                 for w in build.warnings[:5]:
                     box.label(text=w, icon="ERROR")
 
             jreport = _STATE.get("join_report")
             if jreport is not None and jreport.bones_added:
                 box = layout.box()
-                box.label(text="Joined {} bone(s) onto {}".format(
-                    jreport.bones_added, jreport.attached_to or "no bone"),
-                    icon="GROUP_BONE")
+                box.label(text="Joined %d bone(s) onto %s"
+                          % (jreport.bones_added,
+                             jreport.attached_to or "no bone"),
+                          icon="GROUP_BONE")
                 if jreport.renamed:
-                    box.label(text="{} renamed to keep names unique".format(
-                        len(jreport.renamed)))
+                    box.label(text="%d renamed to keep names unique"
+                              % len(jreport.renamed))
                 for w in jreport.warnings[:3]:
                     box.label(text=w[:60], icon="ERROR")
 
@@ -964,20 +1000,19 @@ if bpy is not None:
             if preport is not None and preport.violations:
                 box = layout.box()
                 box.alert = True
-                box.label(text="{} transform drift violations".format(
-                    len(preport.violations)), icon="ERROR")
+                box.label(text="%d transform drift violations"
+                          % len(preport.violations), icon="ERROR")
                 for name, drift in preport.violations[:5]:
-                    box.label(text="{}: {:.2e}".format(name, drift))
+                    box.label(text="%s: %.2e" % (name, drift))
             if preport is not None and preport.posed_bones:
                 box = layout.box()
                 box.alert = True
-                box.label(text="{} bone(s) off rest at re-link".format(
-                    len(preport.posed_bones)), icon="ERROR")
+                box.label(text="%d bone(s) off rest at relink"
+                          % len(preport.posed_bones), icon="ERROR")
                 box.label(text="A constraint rejects the rest pose.")
-                box.label(text="Check the limits of that joint against value_at_rest.")
+                box.label(text="Check the joint limits against its rest value.")
                 for name, off in preport.posed_bones[:5]:
-                    box.label(text="{}: {:.4f}".format(name, off))
-
+                    box.label(text="%s: %.4f" % (name, off))
 
     classes = (
         CADLINK_OT_pick_manifest,
@@ -989,7 +1024,8 @@ if bpy is not None:
         CADLINK_OT_relink_geometry,
         CADLINK_OT_join_rigs,
         CADLINK_OT_update_from_cad,
-        CADLINK_PT_panel,
+        CADLINK_PT_bridge,
+        CADLINK_PT_mechanism,
         CADLINK_PT_step,
         CADLINK_PT_info,
     )

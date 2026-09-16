@@ -262,7 +262,7 @@ def draw_import_dialog(op, layout, prefs):
 class STEPPER_FH_step(bpy.types.FileHandler):
     """Viewport drag & drop for STEP files (single or multiple)."""
     bl_idname = "STEPPER_FH_step"
-    bl_label = "STEP import (CADder)"
+    bl_label = "STEP Import (CADder)"
     bl_import_operator = "import_scene.occ_import_step"
     bl_file_extensions = ";".join(STEP_EXTENSIONS)
 

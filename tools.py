@@ -33,7 +33,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     use_scene_settings: bpy.props.BoolProperty(
-        name="Use CADder Panel Resolution",
+        name="CADder Panel Resolution",
         description="Use the resolution values from the CADder panel. Turn "
                     "this off to use the original import settings of each "
                     "object",
@@ -428,17 +428,17 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
     """Merge close vertices and dissolve coplanar faces. Keep the sharp edges
     and the imported shading"""
     bl_idname = "stepper.mesh_cleanup"
-    bl_label = "Cleanup selected meshes"
+    bl_label = "Clean Up Selected Meshes"
     bl_options = {"REGISTER", "UNDO"}
 
     merge_distance: bpy.props.FloatProperty(
-        name="Merge distance", unit="LENGTH", default=0.00001, min=0.0,
+        name="Merge Distance", unit="LENGTH", default=0.00001, min=0.0,
         precision=6)
     dissolve_angle: bpy.props.FloatProperty(
-        name="Dissolve angle", unit="ROTATION", default=radians(1.0),
+        name="Dissolve Angle", unit="ROTATION", default=radians(1.0),
         min=0.0, max=radians(30.0))
     protect_over_45: bpy.props.BoolProperty(
-        name="Protect edges over 45°",
+        name="Protect Edges over 45°",
         description="Temporarily mark steep edges sharp so limited dissolve "
                     "cannot remove them",
         default=True,
@@ -510,7 +510,7 @@ class STEPPER_OT_add_box_uv(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     box_uv_scale: bpy.props.FloatProperty(
-        name="Box UV size", unit="LENGTH", default=1.0, min=0.0001)
+        name="Box UV Size", unit="LENGTH", default=1.0, min=0.0001)
 
     @classmethod
     def poll(cls, context):

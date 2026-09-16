@@ -670,7 +670,7 @@ if bpy is not None:
         """Re-import this STEP file from disk. Your modifiers, collections,
         parenting and placement are kept"""
         bl_idname = "stepper.refresh_file"
-        bl_label = "Refresh from disk"
+        bl_label = "Refresh from Disk"
         bl_options = {"REGISTER", "UNDO"}
 
         filepath: bpy.props.StringProperty()
@@ -767,7 +767,7 @@ if bpy is not None:
         """Forget how this file was imported. The objects stay. Only the
         remembered import settings go."""
         bl_idname = "stepper.forget_file"
-        bl_label = "Forget settings"
+        bl_label = "Forget Settings"
         bl_options = {"REGISTER", "UNDO"}
 
         filepath: bpy.props.StringProperty()
@@ -778,7 +778,7 @@ if bpy is not None:
             return {"FINISHED"}
 
     class STEP_PT_ImportedFiles(bpy.types.Panel):
-        bl_label = "CADder: Imported files"
+        bl_label = "CADder - Imported Files"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "CADder"
@@ -788,7 +788,7 @@ if bpy is not None:
             layout = self.layout
             files = imported_files()
             if not files:
-                layout.label(text="No STEP file imported in this blend",
+                layout.label(text="No STEP file imported in this .blend file",
                              icon="INFO")
                 return
 

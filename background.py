@@ -85,7 +85,7 @@ class STEPPER_OT_background_import(bpy.types.Operator):
     """Import STEP files in a background process. The interface stays responsive
     and Esc cancels the import."""
     bl_idname = "stepper.background_import"
-    bl_label = "Background STEP import"
+    bl_label = "Background STEP Import"
 
     # JSON: {"files": ["path", ...], "op_kwargs": {...}}
     job_json: bpy.props.StringProperty(options={"HIDDEN", "SKIP_SAVE"})

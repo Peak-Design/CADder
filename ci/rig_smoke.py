@@ -208,7 +208,11 @@ def run():
     import bpy
     from CADder import rig
     rig.register()
-    _check(hasattr(bpy.types, "CADLINK_PT_panel"), "panel did not register")
+    for panel in ("CADLINK_PT_bridge", "CADLINK_PT_mechanism",
+                  "CADLINK_PT_step", "CADLINK_PT_info"):
+        _check(hasattr(bpy.types, panel), panel + " did not register")
+    _check(bpy.types.CADLINK_PT_bridge.bl_category == "CADder",
+           "the bridge panel is not in the CADder tab")
 
     from CADder.rig import graph, manifest as manifest_mod, rig_build
 

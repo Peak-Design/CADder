@@ -58,17 +58,15 @@ JUMP_FLOOR = 0.02               # of the rig's own diagonal
 STEPS = 90                      # each way, per control
 GRID = 7                        # per axis, for a mechanism with two inputs
 
-# A path or surface joint holds its body at the NEAREST point of a curve or
-# a face (rig_build's _make_path_rail says why Clamp To cannot be used).
-# Nearest point is not continuous: drag the body sideways past the middle
-# between two parts of the same curve and the nearest point IS somewhere
-# else. That is the mechanism working, so a jump there is reported as
-# something to know rather than something to fix.
+# Some bodies are held by a PROJECTION rather than by a joint: a path or
+# surface joint puts its body at the nearest point of a curve or a face
+# (rig_build's _make_path_rail says why Clamp To cannot be used), and a cam
+# follower sits where the cam profile puts it. A projection is not
+# continuous. Drag the body sideways past the middle between two parts of
+# the same curve, or drag a cam out from under its follower, and the
+# nearest point IS somewhere else. That is the mechanism working, so a jump
+# in one of these is reported as something to know rather than to fix.
 SNAPPED = "SHRINKWRAP"
-
-
-def _snapped(pb):
-    return any(con.type == SNAPPED for con in pb.constraints)
 
 
 def _free_channels(pb):
@@ -109,6 +107,17 @@ class Rig(object):
         self.arm = self.result.armature_object
         self.bodies = [self.arm.pose.bones[n]
                        for n in self.result.bone_names.values()]
+        self.snapped = set()
+        for gid, name in self.result.bone_names.items():
+            pb = self.arm.pose.bones[name]
+            if any(con.type == SNAPPED for con in pb.constraints):
+                self.snapped.add(name)
+                continue
+            bp = self.plan.bone_by_group.get(gid)
+            joint = bp.joint if bp is not None else None
+            if (joint is not None and joint.coupling is not None
+                    and joint.coupling.kind == "cam"):
+                self.snapped.add(name)
         self.pairs = []
         for lplan in self.plan.loops:
             helper = self.result.helper_names.get(lplan.loop.id)
@@ -152,11 +161,17 @@ class Rig(object):
                             "XYZ"[index])
 
 
-def _moves(before, after):
-    return max((a - b).length for a, b in zip(before, after)) if before else 0.0
+def _moves(rig, before, after):
+    """The body that moved furthest between two poses, and how far."""
+    worst, who = 0.0, None
+    for pb, a, b in zip(rig.bodies, after, before):
+        step = (a - b).length
+        if step > worst:
+            worst, who = step, pb.name
+    return worst, who
 
 
-def walk(rig, setter, steps, note, faults, snapped=False):
+def walk(rig, setter, steps, note, faults):
     """Drives one channel out from rest, one way, and watches the two
     numbers. Returns how far it got before the mechanism bound."""
     rig.rest()
@@ -171,19 +186,20 @@ def walk(rig, setter, steps, note, faults, snapped=False):
         gap, now = rig.read()
         if gap > GAP_TOL:
             break                       # the mechanism binds here, as it may
-        hops.append((_moves(where, now), value))
+        move, who = _moves(rig, where, now)
+        hops.append((move, value, who))
         where = now
         reached = value
     if len(hops) > 4:
-        typical = sorted(h for h, _v in hops)[len(hops) // 2]
+        typical = sorted(h for h, _v, _w in hops)[len(hops) // 2]
         floor = JUMP_FLOOR * rig.diag
-        for move, value in hops:
+        for move, value, who in hops:
             if move > max(typical * JUMP_FACTOR, floor):
                 faults.append(
-                    "%s%s: a body jumped %.5f m in one step at %.4f, against "
+                    "%s%s: %s jumped %.5f m in one step at %.4f, against "
                     "%.7f m on a normal step"
-                    % ("(snapped) " if snapped else "", note, move, value,
-                       typical))
+                    % ("(snapped) " if who in rig.snapped else "", note, who,
+                       move, value, typical))
                 break
     return reached
 
@@ -202,7 +218,7 @@ def sweep_one(rig, pb, path, index, faults):
             value = way * reach * i / float(STEPS)
             getattr(pb, path)[index] = value
             return value
-        out.append(walk(rig, setter, STEPS, name, faults, _snapped(pb)))
+        out.append(walk(rig, setter, STEPS, name, faults))
     return name, out[1], out[0]
 
 

@@ -9,6 +9,12 @@ BSDF with the colour or image, a roughness from how sharp the reflections
 are, metal from the library category, transmission for glass, a normal or
 bump map, and decals laid over the base colour.
 
+Each decal is two node groups and an image, not the twenty maths nodes
+the placement takes. "SW Decal Frame" says where the decal sits and
+"Add SW Decal" lays it over what is under it. Every decal in the file
+shares the same two groups, so a user who wants decals to behave
+differently edits one place.
+
 The raw JSON stays on the material (SWMESH_appearance), so a material
 database can swap the reading for an authored material by name.
 
@@ -241,8 +247,147 @@ def projection(g, mapping, unit_scale, x0, y0):
     return combine.outputs[0], mode, x1 + 2 * _X_STEP
 
 
+# A decal takes about twenty maths nodes to place and lay down. Loose in
+# the material they bury the shader, so they live in two node groups: one
+# says where the decal sits, the other lays it over what is under it.
+# Both are built once per file and every decal shares them, which is also
+# what makes them worth editing: a change inside one reaches every decal.
+FRAME_GROUP = "SW Decal Frame"
+MIX_GROUP = "Add SW Decal"
+# Raise this when the contents of a group change. A file saved by an
+# older version then gets the new contents rather than the ones it saved.
+GROUP_VERSION = 1
+_VERSION_KEY = "SW_decal_group_version"
+
+
+def _group(name, fill):
+    """The shader node group of this name, built if it is not there yet.
+
+    An older file can hold a group of the same name from an earlier
+    version of this addon. Such a group is filled again in place, so
+    every material that already points at it gets the new contents."""
+    group = None
+    for candidate in bpy.data.node_groups:
+        if candidate.bl_idname != "ShaderNodeTree":
+            continue
+        if candidate.name == name or candidate.name.startswith(name + "."):
+            group = candidate
+            break
+    if group is not None and group.get(_VERSION_KEY) == GROUP_VERSION:
+        return group
+    if group is None:
+        group = bpy.data.node_groups.new(name, "ShaderNodeTree")
+    else:
+        group.nodes.clear()
+        group.interface.clear()
+    group[_VERSION_KEY] = GROUP_VERSION
+    fill(group)
+    return group
+
+
+def _socket(tree, name, kind, into, **props):
+    socket = tree.interface.new_socket(name=name, in_out=into, socket_type=kind)
+    for key, value in props.items():
+        try:
+            setattr(socket, key, value)
+        except (AttributeError, TypeError):
+            pass
+    return socket
+
+
+def _fill_frame(tree):
+    """Where a decal sits: object coordinates in, image coordinates out.
+
+    The frame itself (centre, the two directions across the image, the
+    tile size and the turn) arrives on the sockets, so one group serves
+    every decal in the file. A negative width or height mirrors that
+    axis, which is how SolidWorks asks for a mirrored decal."""
+    _socket(tree, "Origin", "NodeSocketVector", "INPUT")
+    _socket(tree, "Horizontal", "NodeSocketVector", "INPUT",
+            default_value=(1.0, 0.0, 0.0))
+    _socket(tree, "Vertical", "NodeSocketVector", "INPUT",
+            default_value=(0.0, 1.0, 0.0))
+    _socket(tree, "Projection", "NodeSocketVector", "INPUT",
+            default_value=(0.0, 0.0, 1.0))
+    _socket(tree, "Width", "NodeSocketFloat", "INPUT", default_value=1.0)
+    _socket(tree, "Height", "NodeSocketFloat", "INPUT", default_value=1.0)
+    _socket(tree, "Rotation", "NodeSocketFloat", "INPUT", subtype="ANGLE")
+    _socket(tree, "Vector", "NodeSocketVector", "OUTPUT")
+    _socket(tree, "Facing", "NodeSocketFloat", "OUTPUT")
+
+    g = _Graph(tree)
+    ins = g.node("NodeGroupInput", -1400, 0)
+    outs = g.node("NodeGroupOutput", 700, 0)
+    coord = g.node("ShaderNodeTexCoord", -1400, 420)
+
+    rel = g.vmath("SUBTRACT", coord.outputs["Object"], ins.outputs["Origin"],
+                  -1150, 300)
+    a = g.vmath("DOT_PRODUCT", rel, ins.outputs["Horizontal"], -900, 400)
+    b = g.vmath("DOT_PRODUCT", rel, ins.outputs["Vertical"], -900, 200)
+    sin_t = g.math("SINE", ins.outputs["Rotation"], None, -900, 0)
+    cos_t = g.math("COSINE", ins.outputs["Rotation"], None, -900, -150)
+
+    ar = g.math("ADD", g.math("MULTIPLY", a, cos_t, -650, 450),
+                g.math("MULTIPLY", b, sin_t, -650, 300), -400, 400)
+    br = g.math("SUBTRACT", g.math("MULTIPLY", b, cos_t, -650, 150),
+                g.math("MULTIPLY", a, sin_t, -650, 0), -400, 100)
+
+    u = g.math("ADD", g.math("DIVIDE", ar, ins.outputs["Width"], -150, 400),
+               0.5, 100, 400)
+    v = g.math("ADD", g.math("DIVIDE", br, ins.outputs["Height"], -150, 100),
+               0.5, 100, 100)
+    combine = g.node("ShaderNodeCombineXYZ", 400, 300)
+    g.link(u, combine.inputs[0])
+    g.link(v, combine.inputs[1])
+    g.link(combine.outputs[0], outs.inputs["Vector"])
+
+    # SolidWorks does not print a decal through to the far side of a
+    # part, so only the faces turned toward the projection take it.
+    facing = g.math("GREATER_THAN",
+                    g.vmath("DOT_PRODUCT", coord.outputs["Normal"],
+                            ins.outputs["Projection"], -150, -300),
+                    0.0, 100, -300)
+    g.link(facing, outs.inputs["Facing"])
+
+
+def _fill_mix(tree):
+    """One decal over what is already on the face."""
+    _socket(tree, "Base Color", "NodeSocketColor", "INPUT",
+            default_value=(0.8, 0.8, 0.8, 1.0))
+    _socket(tree, "Decal Color", "NodeSocketColor", "INPUT",
+            default_value=(1.0, 1.0, 1.0, 1.0))
+    _socket(tree, "Decal Alpha", "NodeSocketFloat", "INPUT",
+            default_value=1.0, min_value=0.0, max_value=1.0)
+    _socket(tree, "Facing", "NodeSocketFloat", "INPUT",
+            default_value=1.0, min_value=0.0, max_value=1.0)
+    _socket(tree, "Mask", "NodeSocketFloat", "INPUT",
+            default_value=1.0, min_value=0.0, max_value=1.0)
+    _socket(tree, "Invert Mask", "NodeSocketFloat", "INPUT",
+            default_value=0.0, min_value=0.0, max_value=1.0)
+    _socket(tree, "Color", "NodeSocketColor", "OUTPUT")
+
+    g = _Graph(tree)
+    ins = g.node("NodeGroupInput", -700, 0)
+    outs = g.node("NodeGroupOutput", 500, 0)
+
+    factor = g.math("MULTIPLY", ins.outputs["Decal Alpha"],
+                    ins.outputs["Facing"], -450, 200)
+    factor = g.math("MULTIPLY", factor, ins.outputs["Mask"], -250, 200)
+    flipped = g.math("SUBTRACT", 1.0, factor, -250, 0)
+    choose = g.node("ShaderNodeMix", -50, 100, data_type="FLOAT")
+    g.link(ins.outputs["Invert Mask"], choose.inputs["Factor"])
+    g.link(factor, choose.inputs["A"])
+    g.link(flipped, choose.inputs["B"])
+
+    mix = g.node("ShaderNodeMix", 250, 0, data_type="RGBA", blend_type="MIX")
+    g.link(choose.outputs["Result"], mix.inputs["Factor"])
+    g.link(ins.outputs["Base Color"], mix.inputs["A"])
+    g.link(ins.outputs["Decal Color"], mix.inputs["B"])
+    g.link(mix.outputs["Result"], outs.inputs["Color"])
+
+
 def decal_projection(g, decal, unit_scale, x0, y0):
-    """The texture vector and the facing factor for a decal.
+    """One "SW Decal Frame" group node, set up for this decal.
 
     A decal reads its frame differently from an appearance: U is the
     direction it is projected along, V the image's horizontal, and U x V
@@ -256,7 +401,10 @@ def decal_projection(g, decal, unit_scale, x0, y0):
     where SolidWorks draws it to a fraction of a millimetre in the top
     view, upright, 40 mm long). The x value is not used: on that decal it
     equals the centre point's own distance along the horizontal. A second
-    decal with other offsets is what would test this further."""
+    decal with other offsets is what would test this further.
+
+    A mirrored axis travels as a negative width or height, which is what
+    the group divides by, so the group needs no switch for it."""
     m = decal.get("mapping") or {}
     face = decal.get("face") or {}
     s = float(unit_scale) if unit_scale else 1.0
@@ -271,28 +419,20 @@ def decal_projection(g, decal, unit_scale, x0, y0):
     width = max(float(m.get("width") or 1.0), 1e-9) * s
     height = max(float(m.get("height") or m.get("width") or 1.0), 1e-9) * s
     theta = math.radians(float(m.get("rotation") or 0.0) - float(face.get("angle") or 0.0))
-    cos_t, sin_t = math.cos(theta), math.sin(theta)
 
-    coord = g.node("ShaderNodeTexCoord", x0, y0)
-    rel = g.vmath("SUBTRACT", coord.outputs["Object"], origin, x0 + _X_STEP, y0)
-    a = g.vmath("DOT_PRODUCT", rel, H, x0 + 2 * _X_STEP, y0 + 100)
-    b = g.vmath("DOT_PRODUCT", rel, Vt, x0 + 2 * _X_STEP, y0 - 100)
-    x1 = x0 + 3 * _X_STEP
-    ar = g.math("ADD", g.math("MULTIPLY", a, cos_t, x1, y0 + 150),
-                g.math("MULTIPLY", b, sin_t, x1, y0 + 50), x1 + _X_STEP, y0 + 100)
-    br = g.math("SUBTRACT", g.math("MULTIPLY", b, cos_t, x1, y0 - 50),
-                g.math("MULTIPLY", a, sin_t, x1, y0 - 150), x1 + _X_STEP, y0 - 100)
-    x1 += 2 * _X_STEP
     mirror = -1.0 if (m.get("width_mirror") or face.get("mirrored")) else 1.0
-    u = g.math("ADD", g.math("DIVIDE", ar, width * mirror, x1, y0 + 100), 0.5, x1 + _X_STEP, y0 + 100)
-    v = g.math("ADD", g.math("DIVIDE", br, height * (-1.0 if m.get("height_mirror") else 1.0),
-                             x1, y0 - 100), 0.5, x1 + _X_STEP, y0 - 100)
-    combine = g.node("ShaderNodeCombineXYZ", x1 + 2 * _X_STEP, y0)
-    g.link(u, combine.inputs[0])
-    g.link(v, combine.inputs[1])
-    facing = g.math("GREATER_THAN", g.vmath("DOT_PRODUCT", coord.outputs["Normal"], P,
-                                            x1, y0 - 300), 0.0, x1 + _X_STEP, y0 - 300)
-    return combine.outputs[0], facing, x1 + 3 * _X_STEP
+
+    frame = g.node("ShaderNodeGroup", x0, y0,
+                   node_tree=_group(FRAME_GROUP, _fill_frame),
+                   label=os.path.basename(decal.get("image") or "decal"))
+    frame.inputs["Origin"].default_value = origin
+    frame.inputs["Horizontal"].default_value = H
+    frame.inputs["Vertical"].default_value = Vt
+    frame.inputs["Projection"].default_value = P
+    frame.inputs["Width"].default_value = width * mirror
+    frame.inputs["Height"].default_value =         height * (-1.0 if m.get("height_mirror") else 1.0)
+    frame.inputs["Rotation"].default_value = theta
+    return frame.outputs["Vector"], frame.outputs["Facing"], x0 + 2 * _X_STEP
 
 
 def build(mat, spec, rgba, unit_scale=1.0):
@@ -390,22 +530,25 @@ def build(mat, spec, rgba, unit_scale=1.0):
         vec, facing, x_end = decal_projection(g, decal, unit_scale, -1800, y)
         tex = g.node("ShaderNodeTexImage", x_end, y, image=img, projection="FLAT", extension="CLIP")
         g.link(vec, tex.inputs["Vector"])
-        factor = g.math("MULTIPLY", tex.outputs["Alpha"], facing, x_end + 300, y + 100)
+        over = g.node("ShaderNodeGroup", 1500, y,
+                      node_tree=_group(MIX_GROUP, _fill_mix),
+                      label=os.path.basename(decal.get("image") or "decal"))
+        g.link(facing, over.inputs["Facing"])
+        g.link(tex.outputs["Color"], over.inputs["Decal Color"])
+        g.link(tex.outputs["Alpha"], over.inputs["Decal Alpha"])
         mask = _image(decal.get("mask_image"), non_color=True) if int(decal.get("mask_type") or 0) == 1 else None
         if mask is not None:
             mtex = g.node("ShaderNodeTexImage", x_end, y - 280, image=mask, projection="FLAT", extension="CLIP")
             g.link(vec, mtex.inputs["Vector"])
-            factor = g.math("MULTIPLY", factor, mtex.outputs["Color"], x_end + 300, y - 200)
+            g.link(mtex.outputs["Color"], over.inputs["Mask"])
         if decal.get("mask_invert"):
-            factor = g.math("SUBTRACT", 1.0, factor, x_end + 450, y - 200)
-        mix = g.node("ShaderNodeMix", 1500, y, data_type="RGBA", blend_type="MIX")
-        g.link(factor, mix.inputs["Factor"])
+            over.inputs["Invert Mask"].default_value = 1.0
         if base_socket is not None:
-            g.link(base_socket, mix.inputs["A"])
+            g.link(base_socket, over.inputs["Base Color"])
         else:
-            mix.inputs["A"].default_value = (colour[0], colour[1], colour[2], 1.0)
-        g.link(tex.outputs["Color"], mix.inputs["B"])
-        base_socket = mix.outputs["Result"]
+            over.inputs["Base Color"].default_value = (
+                colour[0], colour[1], colour[2], 1.0)
+        base_socket = over.outputs["Color"]
         y -= 600
 
     if base_socket is not None:

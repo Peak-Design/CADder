@@ -99,10 +99,38 @@ def main():
     _check(m_tex.node_tree.nodes["Principled BSDF"].inputs["Base Color"].is_linked,
            "the checker does not drive the base colour")
 
-    mixes = _nodes(m_decal, "ShaderNodeMix")
-    _check(len(mixes) == 1, "the decal is not mixed over the base colour")
+    # A decal is two group nodes and an image, not twenty loose maths
+    # nodes: one group says where it sits, the other lays it over what is
+    # under it.
+    groups = {n.node_tree.name: n for n in _nodes(m_decal, "ShaderNodeGroup")}
+    _check(appearance.FRAME_GROUP in groups and appearance.MIX_GROUP in groups,
+           "the decal did not use the node groups: %s" % list(groups))
+    _check(not _nodes(m_decal, "ShaderNodeMath"),
+           "maths nodes are still loose in the decal material")
+    over = groups[appearance.MIX_GROUP]
+    _check(over.outputs["Color"].is_linked, "the decal group drives nothing")
+    _check(over.inputs["Decal Color"].is_linked
+           and over.inputs["Decal Alpha"].is_linked
+           and over.inputs["Facing"].is_linked,
+           "the decal group is not fed the image")
     decal_tex = [n for n in _nodes(m_decal, "ShaderNodeTexImage") if n.image.name == "logo.png"]
     _check(decal_tex and decal_tex[0].extension == "CLIP", "the decal image does not clip")
+    _check(decal_tex[0].inputs["Vector"].links[0].from_node
+           == groups[appearance.FRAME_GROUP],
+           "the decal image is not placed by the frame group")
+
+    # Both groups are shared, so a second decal material adds no second
+    # copy and an edit inside one reaches every decal in the file.
+    before = len(bpy.data.node_groups)
+    other_decal = native_import._material(
+        swmesh.Material(name="another logo", rgba=(0.28, 0.66, 0.33, 1),
+                        appearance_json=json.dumps(dict(decal, colour=[0.1, 0.2, 0.3]))),
+        "SW ", 1.0)
+    _check(len(bpy.data.node_groups) == before,
+           "a second decal material copied the node groups")
+    _check(_nodes(other_decal, "ShaderNodeGroup")[0].node_tree
+           == groups[appearance.FRAME_GROUP].node_tree,
+           "the second decal material points at another group")
 
     # Reuse by identity: the same appearance again is the same material,
     # the same name with another appearance is a new one.

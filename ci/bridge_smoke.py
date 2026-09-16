@@ -162,6 +162,53 @@ def main():
     stuck = [o.name for o in bpy.data.objects if o.mode != "OBJECT"]
     assert not stuck, "objects left in non-object mode: %s" % stuck
 
+    # A pose push: the CAD application moved a part and says where it is
+    # now. No geometry, no manifest file, no rig rebuild beyond what the
+    # new poses need. The manifest of the send above is still in the
+    # scene, which is what the push writes into.
+    moved_rows = [1, 0, 0, 0.45, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    result = {}
+
+    def client_poses():
+        result["resp"] = request(base + "/cadlink/import", token, {
+            "poses": {"document": "bridge-smoke", "components": [
+                {"id": "c002", "sw_path": "arm-1", "transform": moved_rows},
+            ]},
+        })
+
+    t = threading.Thread(target=client_poses, daemon=True)
+    t.start()
+    pump_while(t)
+    resp = result["resp"]
+    assert resp["ok"], resp
+    assert resp["stages"]["poses"]["components"] == 1, resp["stages"]
+    from STEPper_NEXT.rig import ui as rig_ui
+    arm_component = next(c for c in rig_ui._STATE["manifest"].components
+                         if c.id == "c002")
+    assert abs(arm_component.transform[0][3] - 0.45) < 1e-9,         "the push did not reach the manifest: %s" % (arm_component.transform,)
+
+    # A push into a scene with no manifest is refused, and says what to do.
+    manifest_was = rig_ui._STATE["manifest"]
+    rig_ui._STATE["manifest"] = None
+    result = {}
+
+    def client_no_manifest():
+        try:
+            result["resp"] = request(base + "/cadlink/import", token, {
+                "poses": {"components": [
+                    {"id": "c002", "sw_path": "arm-1", "transform": moved_rows},
+                ]},
+            })
+        except urllib.error.HTTPError as exc:
+            result["resp"] = json.loads(exc.read().decode("utf-8"))
+
+    t = threading.Thread(target=client_no_manifest, daemon=True)
+    t.start()
+    pump_while(t)
+    rig_ui._STATE["manifest"] = manifest_was
+    assert not result["resp"]["ok"], result["resp"]
+    assert "Send the assembly" in result["resp"]["error"], result["resp"]
+
     # An exception that escapes _run_job entirely (even a BaseException)
     # must come back as an HTTP error, not kill the pump: a dead pump
     # leaves the server listening while every send stalls for 30 minutes.
@@ -211,7 +258,8 @@ def main():
     check_option_parity()
 
     print("bridge_smoke: OK: ping, auth, a full pipeline job over "
-          "HTTP on port %d, and import-option parity" % port)
+          "HTTP on port %d, a pose push into the manifest, a push with no "
+          "manifest refused, and import-option parity" % port)
 
 
 def check_option_parity():

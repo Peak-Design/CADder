@@ -29,6 +29,22 @@ if bpy is not None:
             # and two file buttons with different behavior reads as a bug.
             default="",
         )
+        # How fine Update from CAD asks the CAD application to tessellate.
+        # The four names are the names of its own Export Options, so the
+        # same name gives the same triangles over either route.
+        update_quality: bpy.props.EnumProperty(
+            name="Quality",
+            description="How fine the CAD application cuts the parts that "
+                        "Update from CAD brings over",
+            items=ui.QUALITY_ITEMS,
+            default="FINE",
+        )
+        update_quality_factor: bpy.props.FloatProperty(
+            name="Chord",
+            description="Chord tolerance against the size of each part: "
+                        "0 is a coarse preview, 1 is a smooth close-up",
+            default=0.75, min=0.0, max=1.0, subtype="FACTOR",
+        )
         # One entry per mechanism that offers a choice of input
         # (inputs.py); filled on manifest load, drawn as dropdowns.
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)

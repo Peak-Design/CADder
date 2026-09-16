@@ -118,22 +118,28 @@ pose, builds the armature and parents the geometry, all without a file
 dialog. The listener accepts connections only from this machine, and only
 with the token the add-in reads from the user's own app data.
 
-The tab has three boxes:
+The tab holds one panel and two closed sub-panels:
 
-- **Link**: the listener's port, and for selected parts that came in over
-  the link, **Update from CAD**, which asks the CAD application for the
-  geometry again and swaps it in without losing the pose, the materials or
-  the rig. Its scope is the selected parts, the collections they are in, or
-  the whole send, and its purpose is Geometry, Geometry and poses, Poses,
-  or Everything. Everything asks for the assembly again and rebuilds the
-  scene from it, which is what catches parts added or removed and mates
-  changed.
-- **Manifest**: the `.rig.json` to build from, with the joint, group and
-  loop counts and the exporter's warnings after a load.
-- **Rig**: the pipeline buttons in the order they run (Import STEP, Match
-  Geometry, Snap to CAD Poses, Build Rig, Re-link Geometry), and above
-  them one dropdown per mechanism that offers a choice of input. Changing
-  the input rebuilds the rig for that choice.
+- **CAD Link**: **Quality**, and **Update from CAD**. The four quality
+  names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
+  and Custom takes a chord of its own. Update from CAD asks the CAD
+  application for the geometry of the selected parts again at that
+  quality, and swaps it in without losing the pose, the materials or the
+  rig. Press F9 after it for its scope (the selected parts, the
+  collections they are in, or the whole send) and its purpose (Geometry,
+  Geometry and poses, Poses, or Everything). Everything asks for the
+  assembly again and rebuilds the scene from it, which is what catches
+  parts added or removed and mates changed. One dropdown per mechanism
+  that offers a choice of input sits below the button. Changing the input
+  rebuilds the rig for that choice.
+- **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
+  the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
+  Build Rig, Re-link Geometry). A direct send runs all of it, so this
+  panel appears only when **Show the STEP rig panel** is on in the addon
+  preferences.
+- **Info**: the listener's port, what is selected, the joint, group and
+  loop counts of the manifest, the exporter's warnings, and the match,
+  pose and rig reports of the last run.
 
 The manual route still works: export from the add-in to disk, then point
 **Manifest** at the `.rig.json` and press the buttons in order. The STEP

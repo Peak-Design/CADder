@@ -188,6 +188,36 @@ def _cad_link_enabled(context):
     return bool(getattr(prefs, "enable_bridge", False))
 
 
+# The quality names of the CAD add-in's own Export Options, and the dial
+# each one sends. The numbers are SendToBlenderCommand.QualityDial in the
+# SolidWorks add-in: a send and an update at the same name must give the
+# same triangles.
+QUALITY_DIAL = {
+    "DRAFT": 0.15,
+    "BALANCED": 0.45,
+    "FINE": 0.75,
+    "ULTRA": 1.0,
+}
+
+QUALITY_ITEMS = [
+    ("DRAFT", "Draft", "A coarse preview, fastest to send"),
+    ("BALANCED", "Balanced", "The default of the CAD add-in"),
+    ("FINE", "Fine", "Smooth enough for a close-up"),
+    ("ULTRA", "Ultra", "The finest the CAD application gives"),
+    ("CUSTOM", "Custom", "The chord set below, not one of the four names"),
+]
+
+
+def quality_dial(settings):
+    """The chord dial for Update from CAD: 0 is coarse, 1 is fine.
+
+    The CAD application turns it into a chord tolerance against the size
+    of each part, so one dial suits a bracket and a chassis alike."""
+    if settings.update_quality == "CUSTOM":
+        return settings.update_quality_factor
+    return QUALITY_DIAL.get(settings.update_quality, 0.75)
+
+
 def _find_rig(context):
     build = _STATE.get("build")
     if build is not None and build.armature_object is not None:
@@ -649,7 +679,7 @@ if bpy is not None:
             ],
             default="GEOMETRY")
         quality: bpy.props.FloatProperty(
-            name="Quality", default=0.9, min=0.0, max=1.0, subtype="FACTOR",
+            name="Quality", default=0.75, min=0.0, max=1.0, subtype="FACTOR",
             description=("Chord tolerance, relative to each part's own size: "
                          "0 is a coarse preview, 1 is a smooth close-up"))
 
@@ -753,29 +783,16 @@ if bpy is not None:
             layout = self.layout
             settings = context.scene.cad_link
 
-            row = layout.row()
-            try:
-                from .. import bridge
-                if bridge.is_running():
-                    row.label(text="Listening on port {}".format(bridge.port()),
-                              icon="PLUGIN")
-                else:
-                    row.label(text="Not listening", icon="UNLINKED")
-            except Exception:
-                pass
-
             # Update from CAD is the whole panel for most users: the parts
             # came over a direct send, and this asks the CAD application
-            # for them again.
-            selected = [o for o in context.selected_objects
-                        if o.get("RIG_component_id")]
-            if selected:
-                tolerance = selected[0].get("SWMESH_tolerance_m")
-                text = "{} part(s) selected".format(len(selected))
-                if tolerance:
-                    text += ", {:.3g} m chord".format(tolerance)
-                layout.label(text=text, icon="MESH_DATA")
-            layout.operator("cadlink.update_from_cad", icon="FILE_REFRESH")
+            # for them again, as coarse or as smooth as the user wants.
+            # The link port and the selection are in the Info panel below.
+            col = layout.column(align=True)
+            col.prop(settings, "update_quality", text="Quality")
+            if settings.update_quality == "CUSTOM":
+                col.prop(settings, "update_quality_factor", text="")
+            update = col.operator("cadlink.update_from_cad", icon="FILE_REFRESH")
+            update.quality = quality_dial(settings)
 
             # The input of a mechanism is a real choice about this model,
             # so it stays in front of the user when there is one to make.
@@ -851,11 +868,29 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
-            shown = False
+
+            row = layout.row()
+            try:
+                from .. import bridge
+                if bridge.is_running():
+                    row.label(text="Listening on port {}".format(bridge.port()),
+                              icon="PLUGIN")
+                else:
+                    row.label(text="Not listening", icon="UNLINKED")
+            except Exception:
+                pass
+
+            selected = [o for o in context.selected_objects
+                        if o.get("RIG_component_id")]
+            if selected:
+                tolerance = selected[0].get("SWMESH_tolerance_m")
+                text = "{} part(s) selected".format(len(selected))
+                if tolerance:
+                    text += ", {:.3g} m chord".format(tolerance)
+                layout.label(text=text, icon="MESH_DATA")
 
             m = _STATE["manifest"]
             if m is not None:
-                shown = True
                 box = layout.box()
                 box.label(text="Manifest v{}: {} joints, {} groups, {} loops".format(
                     m.manifest_version, len(m.joints), len(m.rigid_groups),
@@ -868,7 +903,6 @@ if bpy is not None:
 
             report = _STATE["match_report"]
             if report is not None:
-                shown = True
                 box = layout.box()
                 box.label(text="Matched {} / ambiguous {} / unmatched {}".format(
                     len(report.matched), len(report.ambiguous),
@@ -896,7 +930,6 @@ if bpy is not None:
             preport_pose = _STATE["pose_report"]
             if preport_pose is not None and (preport_pose.moved
                                              or preport_pose.skipped):
-                shown = True
                 box = layout.box()
                 box.label(text="Poses: {} moved, {} in place, {} skipped".format(
                     len(preport_pose.moved), preport_pose.already_ok,
@@ -908,7 +941,6 @@ if bpy is not None:
 
             build = _STATE["build"]
             if build is not None:
-                shown = True
                 box = layout.box()
                 box.label(text="Rig: {} bones, {} helpers".format(
                     len(build.bone_names), len(build.helper_names)),
@@ -918,7 +950,6 @@ if bpy is not None:
 
             jreport = _STATE.get("join_report")
             if jreport is not None and jreport.bones_added:
-                shown = True
                 box = layout.box()
                 box.label(text="Joined {} bone(s) onto {}".format(
                     jreport.bones_added, jreport.attached_to or "no bone"),
@@ -931,7 +962,6 @@ if bpy is not None:
 
             preport = _STATE["parent_report"]
             if preport is not None and preport.violations:
-                shown = True
                 box = layout.box()
                 box.alert = True
                 box.label(text="{} transform drift violations".format(
@@ -939,7 +969,6 @@ if bpy is not None:
                 for name, drift in preport.violations[:5]:
                     box.label(text="{}: {:.2e}".format(name, drift))
             if preport is not None and preport.posed_bones:
-                shown = True
                 box = layout.box()
                 box.alert = True
                 box.label(text="{} bone(s) off rest at re-link".format(
@@ -949,9 +978,6 @@ if bpy is not None:
                 for name, off in preport.posed_bones[:5]:
                     box.label(text="{}: {:.4f}".format(name, off))
 
-            if not shown:
-                layout.label(text="Nothing has come over the link yet.",
-                             icon="INFO")
 
     classes = (
         CADLINK_OT_pick_manifest,

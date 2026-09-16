@@ -19,7 +19,7 @@ SUPPORTED_MAJOR = 1
 
 JOINT_TYPES = ("fixed", "revolute", "prismatic", "cylindrical", "ball", "planar",
                "pin_slot", "screw", "path", "surface", "free")
-COUPLING_KINDS = ("gear", "rack_pinion", "screw", "linear_coupler", "mirror")
+COUPLING_KINDS = ("gear", "rack_pinion", "screw", "linear_coupler", "mirror", "table", "cam")
 
 Vec3 = Tuple[float, float, float]
 Mat4 = Tuple[Tuple[float, ...], ...]  # 4 rows of 4, row-major [R|t]
@@ -62,6 +62,28 @@ class Coupling:
     # assembly MIRROR FEATURE, where the instance is a full reflection of its
     # source and every channel follows.
     mirror_scope: str = "plane"
+    # table only: the driven joint's value as a sampled function of the
+    # driver's, [[x, y], ...] with x ascending, both in the joints' own
+    # units relative to the exported pose (SCHEMA.md, 2026-09-15). A cam
+    # profile or a universal joint's fluctuation, read off the SolidWorks
+    # solver; interpolated linearly, repeated every `period` when periodic.
+    samples: Optional[List[Tuple[float, float]]] = None
+    periodic: bool = False
+    period: float = 0.0
+    # cam only: the cam path's faces (global metres, rest pose), the cam's
+    # joint axis with a point on it, and the follower's contact entity. The
+    # rig holds the follower on the faces live (cam_contact.py), for a cam
+    # the exporter could not table: free in its plane, on a slide, or the
+    # probe off (SCHEMA.md, 2026-09-15).
+    cam_axis: Optional[Vec3] = None
+    cam_origin: Optional[Vec3] = None
+    cam_surface_points: Optional[List[Vec3]] = None
+    cam_surface_triangles: Optional[List[List[int]]] = None
+    follower_kind: Optional[str] = None          # vertex | roller | flat
+    follower_point: Optional[Vec3] = None
+    follower_axis: Optional[Vec3] = None         # roller
+    follower_radius: Optional[float] = None      # roller
+    follower_normal: Optional[Vec3] = None       # flat
 
 
 @dataclass
@@ -114,6 +136,15 @@ class Joint:
 
 
 @dataclass
+class DriverCandidate:
+    """One input the exporter weighed for a loop, with the cut and closure
+    that choice implies. Applied whole, never the joint alone (inputs.py)."""
+    joint: str
+    closure_joint: str
+    closure_kind: str = "ik"
+
+
+@dataclass
 class Loop:
     id: str
     member_joints: List[str]
@@ -121,6 +152,9 @@ class Loop:
     suggested_driver_joint: Optional[str] = None
     planar: bool = False
     plane_normal: Optional[Vec3] = None
+    # Every input the exporter weighed, the chosen one first. Empty for
+    # manifests written before the field.
+    driver_candidates: List[DriverCandidate] = field(default_factory=list)
     # How to re-close the cut. "ik" is a point coincidence solved by rotating
     # the driven chain. "aim_pair" is a slider-crank: the bodies either side
     # of the cut hang off their own pins and aim at each other, because no
@@ -129,6 +163,36 @@ class Loop:
     # would move a body the mates never let move. Absent means "ik", that is
     # what every manifest written before the field meant.
     closure_kind: str = "ik"
+
+
+@dataclass
+class InputOption:
+    """One input a mechanism can take, as a complete alternative: the
+    mechanism's loops under that input (same ids, same order) and the
+    joints whose parent and child swap because the new tree reaches them
+    from the other side. Applied whole (inputs.py)."""
+    joint: str
+    loops: List[Loop]
+    flipped_joints: List[str] = field(default_factory=list)
+    # Joints whose limits differ under this input: joint id -> (rotation,
+    # translation), each a Limit or None. A stroke limit derived onto a
+    # slider-crank's crank belongs to the crank-driven configuration.
+    joint_limits: Dict[str, Tuple[Optional["Limit"], Optional["Limit"]]] = field(
+        default_factory=dict)
+
+
+@dataclass
+class Mechanism:
+    """Loops that share joints: one degree of freedom, one input. The
+    exporter's choice is inputs[0]; `active` is the option applied now."""
+    id: str
+    loop_ids: List[str]
+    inputs: List[InputOption]
+    active: int = 0
+    # The manifest's own limits of every joint an option has changed, so
+    # leaving the option puts them back.
+    original_limits: Dict[str, Tuple[Optional["Limit"], Optional["Limit"]]] = field(
+        default_factory=dict)
 
 
 @dataclass
@@ -151,6 +215,9 @@ class Manifest:
     loops: List[Loop]
     warnings: List[Warning]
     source_path: Optional[str] = None
+    # Empty for manifests written before the field: the per-loop
+    # candidates then stand in, applied loop by loop.
+    mechanisms: List[Mechanism] = field(default_factory=list)
 
     def component_by_id(self) -> Dict[str, Component]:
         return {c.id: c for c in self.components}
@@ -296,6 +363,64 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
                     raise ManifestError(
                         f"joint {jid}: unknown mirror_scope "
                         f"{cdata['mirror_scope']!r}")
+            samples = None
+            if cdata["kind"] == "table":
+                if not cdata.get("driver_joint"):
+                    raise ManifestError(f"joint {jid}: table coupling without a driver_joint")
+                raw = cdata.get("samples") or []
+                if len(raw) < 2:
+                    raise ManifestError(f"joint {jid}: table coupling needs two samples or more")
+                samples = []
+                for s in raw:
+                    if not isinstance(s, (list, tuple)) or len(s) != 2:
+                        raise ManifestError(f"joint {jid}: table sample {s!r} is not [x, y]")
+                    samples.append((float(s[0]), float(s[1])))
+                for a, b in zip(samples, samples[1:]):
+                    if b[0] <= a[0]:
+                        raise ManifestError(
+                            f"joint {jid}: table samples must ascend in x, got {a[0]} then {b[0]}")
+                if cdata.get("periodic") and not (cdata.get("period") or 0) > 0:
+                    raise ManifestError(f"joint {jid}: periodic table without a period")
+            cam = {}
+            if cdata["kind"] == "cam":
+                if not cdata.get("driver_joint"):
+                    raise ManifestError(f"joint {jid}: cam coupling without a driver_joint")
+                block = cdata.get("cam")
+                if not isinstance(block, dict):
+                    raise ManifestError(f"joint {jid}: cam coupling without a cam block")
+                surf = block.get("surface") or {}
+                cpts = [_vec3(p, f"joint {jid} cam point") for p in (surf.get("points") or [])]
+                ctris = surf.get("triangles") or []
+                if len(cpts) < 3 or not ctris:
+                    raise ManifestError(f"joint {jid}: cam surface needs points and triangles")
+                for t in ctris:
+                    if (not isinstance(t, (list, tuple)) or len(t) != 3
+                            or any(not isinstance(i, int) or i < 0 or i >= len(cpts) for i in t)):
+                        raise ManifestError(
+                            f"joint {jid}: cam triangle {t!r} is not three point indices")
+                fol = block.get("follower") or {}
+                fkind = fol.get("kind")
+                if fkind not in ("vertex", "roller", "flat"):
+                    raise ManifestError(f"joint {jid}: unknown cam follower kind {fkind!r}")
+                if fol.get("point") is None:
+                    raise ManifestError(f"joint {jid}: cam follower without a point")
+                if fkind == "roller" and not (fol.get("radius") or 0) > 0:
+                    raise ManifestError(f"joint {jid}: roller follower without a radius")
+                if fkind == "flat" and fol.get("normal") is None:
+                    raise ManifestError(f"joint {jid}: flat follower without a normal")
+                cam = dict(
+                    cam_axis=_vec3(block.get("axis"), f"joint {jid} cam axis"),
+                    cam_origin=_vec3(block.get("origin"), f"joint {jid} cam origin"),
+                    cam_surface_points=cpts,
+                    cam_surface_triangles=[[int(i) for i in t] for t in ctris],
+                    follower_kind=fkind,
+                    follower_point=_vec3(fol["point"], f"joint {jid} follower point"),
+                    follower_axis=_vec3(fol["axis"], f"joint {jid} follower axis")
+                    if fol.get("axis") is not None else None,
+                    follower_radius=float(fol["radius"]) if fol.get("radius") is not None else None,
+                    follower_normal=_vec3(fol["normal"], f"joint {jid} follower normal")
+                    if fol.get("normal") is not None else None,
+                )
             coupling = Coupling(
                 kind=cdata["kind"],
                 driver_joint=cdata.get("driver_joint"),
@@ -307,6 +432,10 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
                 mirror_plane_normal=_vec3(mp["normal"], f"joint {jid} mirror normal")
                 if mp is not None else None,
                 mirror_scope=cdata.get("mirror_scope") or "plane",
+                samples=samples,
+                periodic=bool(cdata.get("periodic", False)),
+                period=float(cdata.get("period") or 0.0),
+                **cam,
             )
         path_points = None
         path_closed = False
@@ -366,15 +495,24 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
         if j.coupling and j.coupling.driver_joint and j.coupling.driver_joint not in joint_ids:
             raise ManifestError(f"joint {j.id}: coupling driver {j.coupling.driver_joint!r} is not a joint")
 
-    loops = []
-    for lp in data.get("loops", []):
+    def parse_loop(lp) -> Loop:
         members = list(lp["member_joints"])
         unknown = [m for m in members if m not in joint_ids]
         if unknown:
             raise ManifestError(f"loop {lp['id']} references unknown joints {unknown}")
         if lp["closure_joint"] not in members:
             raise ManifestError(f"loop {lp['id']}: closure joint {lp['closure_joint']!r} is not a member")
-        loops.append(Loop(
+        candidates = []
+        for c in lp.get("driver_candidates") or []:
+            if c.get("joint") not in members or c.get("closure_joint") not in members:
+                raise ManifestError(
+                    f"loop {lp['id']}: driver candidate {c!r} names a joint "
+                    f"that is not a member")
+            candidates.append(DriverCandidate(
+                joint=c["joint"], closure_joint=c["closure_joint"],
+                closure_kind=_closure_kind({"id": lp["id"],
+                                            "closure_kind": c.get("closure_kind", "ik")})))
+        return Loop(
             id=lp["id"],
             member_joints=members,
             closure_joint=lp["closure_joint"],
@@ -382,7 +520,46 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
             closure_kind=_closure_kind(lp),
             planar=bool(lp.get("planar", False)),
             plane_normal=_opt_vec3(lp.get("plane_normal"), f"loop {lp['id']} plane normal"),
-        ))
+            driver_candidates=candidates,
+        )
+
+    loops = [parse_loop(lp) for lp in data.get("loops", [])]
+    loop_ids = {lp.id for lp in loops}
+
+    mechanisms = []
+    for md in data.get("mechanisms") or []:
+        mid = md.get("id", "mech%03d" % (len(mechanisms) + 1))
+        ids = list(md.get("loops") or [])
+        missing = [x for x in ids if x not in loop_ids]
+        if missing:
+            raise ManifestError(f"mechanism {mid} names unknown loops {missing}")
+        options = []
+        for od in md.get("inputs") or []:
+            joint = od.get("joint")
+            if joint not in joint_ids:
+                raise ManifestError(f"mechanism {mid}: input {joint!r} is not a joint")
+            opt_loops = [parse_loop(lp) for lp in od.get("loops") or []]
+            if [lp.id for lp in opt_loops] != ids:
+                raise ManifestError(
+                    f"mechanism {mid}: input {joint} lists loops "
+                    f"{[lp.id for lp in opt_loops]}, the mechanism has {ids}")
+            flipped = list(od.get("flipped_joints") or [])
+            unknown = [x for x in flipped if x not in joint_ids]
+            if unknown:
+                raise ManifestError(f"mechanism {mid}: input {joint} flips unknown joints {unknown}")
+            joint_limits = {}
+            for ld in od.get("joint_limits") or []:
+                jid_l = ld.get("joint")
+                if jid_l not in joint_ids:
+                    raise ManifestError(
+                        f"mechanism {mid}: input {joint} limits unknown joint {jid_l!r}")
+                lim = ld.get("limits") or {}
+                joint_limits[jid_l] = (
+                    _limit(lim.get("rotation"), f"mechanism {mid} {jid_l} rotation limit"),
+                    _limit(lim.get("translation"), f"mechanism {mid} {jid_l} translation limit"))
+            options.append(InputOption(joint=joint, loops=opt_loops, flipped_joints=flipped,
+                                       joint_limits=joint_limits))
+        mechanisms.append(Mechanism(id=mid, loop_ids=ids, inputs=options))
 
     warnings = [Warning(code=w["code"], message=w["message"],
                         components=list(w.get("components", [])),
@@ -400,6 +577,7 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
         loops=loops,
         warnings=warnings,
         source_path=source_path,
+        mechanisms=mechanisms,
     )
 
 

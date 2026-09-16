@@ -187,12 +187,12 @@
 #     panel with no header registers in front of every panel that has one,
 #     whatever bl_order says, and that pulled the whole tab to the top
 
-#   - rig/ subpackage added (SW To Blender): builds a constrained armature
+#   - rig/ subpackage added (CAD Link): builds a constrained armature
 #     from the .rig.json manifest written by the Peak.SwToBlender SolidWorks
 #     add-in (github.com/Peak-Design/SW-To-Blender holds the exporter and
 #     the manifest schema) and parents imported STEP geometry to the bones.
 #     Registered from main.register(), guarded so a rig fault never costs
-#     STEP import. Panel in the 3D View sidebar under "SW To Blender".
+#     STEP import. Panel in the 3D View sidebar under "CAD Link".
 #     Tests in ci/rig/, headless smoke in ci/rig_smoke.py
 #   - rig/: scene-frame detection. A STEP imported with another up axis
 #     (e.g. Y-up) rotates the geometry away from the manifest's Z-up frame. Matching now estimates that transform from its own name/path matches

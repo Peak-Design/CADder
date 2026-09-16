@@ -656,3 +656,41 @@ class TestChainedClosure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CamContactPlanTests(unittest.TestCase):
+    """A cam-coupled slide plans its hidden bones: PRJ for a vertex or a
+    roller, REL and OFF for a flat face."""
+
+    def _plan(self, kind, **follower):
+        data = hinge_manifest()
+        data["components"].append(component("c003", "Follower"))
+        data["rigid_groups"].append(
+            {"id": "g002", "name": "follower", "components": ["c003"],
+             "grounded": False, "frame": None, "bbox_diag": 0.1})
+        data["joints"].append({
+            "id": "j002", "type": "prismatic", "parent_group": "g000", "child_group": "g002",
+            "origin": [0.03, 0.0, 0.0], "axis": [1.0, 0.0, 0.0],
+            "secondary_axis": [0.0, 0.0, 1.0], "limits": None})
+        fol = {"kind": kind, "point": [0.03, 0.0, 0.0], "axis": None, "radius": None, "normal": None}
+        fol.update(follower)
+        data["joints"][1]["coupling"] = {
+            "kind": "cam", "driver_joint": "j001",
+            "cam": {"axis": [0, 0, 1], "origin": [0, 0, 0],
+                    "surface": {"points": [[0.03, 0, -0.01], [0.03, 0, 0.01], [0, 0.03, 0]],
+                                "triangles": [[0, 1, 2]]},
+                    "follower": fol}}
+        return graph.build(manifest.parse(data))
+
+    def test_vertex_follower_plans_a_projection_bone(self):
+        plan = self._plan("vertex")
+        bp = plan.bone_by_group[plan.joint_group["j002"]]
+        self.assertTrue(bp.cam_prj_name.startswith("PRJ_"))
+        self.assertEqual(bp.cam_rel_name, "")
+
+    def test_flat_follower_plans_rel_and_off_bones(self):
+        plan = self._plan("flat", normal=[1, 0, 0])
+        bp = plan.bone_by_group[plan.joint_group["j002"]]
+        self.assertEqual(bp.cam_prj_name, "")
+        self.assertTrue(bp.cam_rel_name.startswith("REL_"))
+        self.assertTrue(bp.cam_off_name.startswith("OFF_"))

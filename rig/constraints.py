@@ -18,7 +18,7 @@ except ImportError:
 
 from .manifest import Joint
 
-_PREFIX = "SWTB "
+_PREFIX = "CADLink "
 
 # The channel a coupling drives is written by a driver, so its Limit
 # constraint must not clamp the transform values back (use_transform_limit
@@ -34,6 +34,13 @@ _DRIVEN_CHANNEL = {
 def driven_channel(joint: Joint):
     if joint.coupling is None:
         return None
+    if joint.coupling.kind == "table":
+        # A sampled relation writes whichever channel the driven joint
+        # has: a follower's slide, a shaft's turn.
+        return "location" if joint.type == "prismatic" else "rotation"
+    if joint.coupling.kind == "cam":
+        # A cam contact writes the follower's slide (cam_contact.py).
+        return "location"
     return _DRIVEN_CHANNEL.get(joint.coupling.kind)
 
 

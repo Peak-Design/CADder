@@ -34,7 +34,7 @@ try:
 except ImportError:
     bpy = None
 
-_TRACK_NAME = "SWTB Aim "
+_TRACK_NAME = "CADLink Aim "
 
 
 def _pinned(plan, gid):

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""SW ⇄ Blender bridge: a localhost HTTP endpoint the SolidWorks add-in
-drives directly: export in SW, geometry + rig appear in Blender with no
-file dialogs in between.
+"""CAD Link bridge: a localhost HTTP endpoint a CAD add-in (today: SW To
+Blender for SolidWorks) drives directly: export in the CAD application,
+geometry + rig appear in Blender with no file dialogs in between.
 
 Threading contract: the HTTP server lives on a daemon thread and NEVER
 touches bpy. It enqueues jobs. A bpy.app.timers pump executes them on the
@@ -10,16 +10,18 @@ response. Everything bpy happens on the main thread, always.
 
 Discovery: on start the server binds 127.0.0.1 on an ephemeral port and
 writes %LOCALAPPDATA%/PeakDesign/SwToBlender/bridge/<pid>.json with the
-port and a random token. The SolidWorks side lists that directory, pings
+port and a random token. The CAD side lists that directory, pings
 each entry, and prunes the corpses. Every request must carry the token in
-X-SWTB-Token: the file is user-readable only, so possession proves the
-caller is the same desktop user.
+X-CADLink-Token: the file is user-readable only, so possession proves the
+caller is the same desktop user. (The names from before the rename,
+X-SWTB-Token and /swtb/..., are still accepted so an older add-in build
+keeps working.)
 
 Endpoints:
-  GET  /swtb/ping    -> instance info (fast, main thread not involved)
-  POST /swtb/import  -> full pipeline job, synchronous (import STEP, load
-                        manifest, match, snap poses, build rig, parent,
-                        tidy leftovers: each stage optional)
+  GET  /cadlink/ping    -> instance info (fast, main thread not involved)
+  POST /cadlink/import  -> full pipeline job, synchronous (import STEP,
+                           load manifest, match, snap poses, build rig,
+                           parent, tidy leftovers: each stage optional)
 """
 
 import atexit
@@ -30,6 +32,7 @@ import secrets
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -41,15 +44,26 @@ except ImportError:
 _JOB_TIMEOUT_S = 30 * 60
 _PUMP_INTERVAL_S = 0.2
 
-# Importer options a job may forward verbatim to occ_import_step. Anything
-# else in the payload's import_options is reported back as ignored, not
-# silently dropped.
+# Importer options a job may forward verbatim to occ_import_step: every
+# property the operator has, less the file and UI ones the bridge fills in
+# itself. Anything else in the payload's import_options is reported back
+# as ignored, not silently dropped.
+#
+# ci/bridge_smoke.py holds this set to the operator in BOTH directions. An
+# option the operator lost stays here and is forwarded to nothing; an
+# option the operator gained and this set lacks is dropped in silence,
+# which is how the UV rework of 2026-09-14 left the bridge unable to pass
+# the smart-unwrap, packing and tris-to-quads settings for a while.
 _IMPORT_OPTION_KEYS = {
     "up_as", "fw_as", "hierarchy_types", "quality_preset", "detail_level",
-    "custom_scale", "user_scale", "apply_scale", "uv_mode", "uv_normalize",
-    "uv_split_closed", "box_uv_scale", "eng_materials", "import_curves",
-    "skip_construction", "material_database", "tessellation_relative",
-    "lin_deflection_rel", "group_in_collection", "separate_solids",
+    "custom_scale", "user_scale", "apply_scale",
+    "lin_deflection", "ang_deflection", "lin_deflection_len",
+    "ang_deflection_rot", "tessellation_relative", "lin_deflection_rel",
+    "uv_mode", "uv_normalize", "uv_closed_seams", "uv_smart_distortion",
+    "uv_smart_sharp", "uv_smart_split", "uv_pack", "uv_pack_tiles",
+    "uv_pack_margin", "box_uv_scale", "tris_to_quads",
+    "eng_materials", "material_database", "import_curves",
+    "skip_construction", "group_in_collection", "separate_solids",
 }
 
 _state = {
@@ -103,6 +117,10 @@ class _Job:
         self.result = None
 
 
+_PING_PATHS = ("/cadlink/ping", "/swtb/ping")
+_IMPORT_PATHS = ("/cadlink/import", "/swtb/import")
+
+
 class _Handler(BaseHTTPRequestHandler):
     # Default handler logs every request to stderr. One line per poll would
     # drown the console.
@@ -121,10 +139,12 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _authorized(self) -> bool:
-        return self.headers.get("X-SWTB-Token", "") == _state["token"]
+        sent = (self.headers.get("X-CADLink-Token")
+                or self.headers.get("X-SWTB-Token", ""))
+        return sent == _state["token"]
 
     def do_GET(self):
-        if self.path != "/swtb/ping":
+        if self.path not in _PING_PATHS:
             self._reply(404, {"ok": False, "error": "unknown endpoint"})
             return
         if not self._authorized():
@@ -133,7 +153,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(200, _instance_info())
 
     def do_POST(self):
-        if self.path != "/swtb/import":
+        if self.path not in _IMPORT_PATHS:
             self._reply(404, {"ok": False, "error": "unknown endpoint"})
             return
         if not self._authorized():
@@ -147,12 +167,123 @@ class _Handler(BaseHTTPRequestHandler):
             return
         job = _Job(payload)
         _state["queue"].put(job)
-        if not job.done.wait(_JOB_TIMEOUT_S):
+        if not _wait_with_watchdog(job):
             self._reply(504, {"ok": False,
                               "error": "job timed out after %ds. Blender may "
                                        "still be working" % _JOB_TIMEOUT_S})
             return
         self._reply(200 if job.result.get("ok") else 500, job.result)
+
+
+_STALL_S = 60
+_HEARTBEAT_S = 1.0
+_stall_log = None
+_last_beat = 0.0
+
+
+def stall_log_path() -> str:
+    return os.path.join(registry_dir(), "stall-%d.txt" % os.getpid())
+
+
+def _open_stall_log():
+    global _stall_log
+    if _stall_log is None:
+        os.makedirs(registry_dir(), exist_ok=True)
+        # Kept open for the session: faulthandler writes through the file
+        # descriptor, from outside the interpreter.
+        _stall_log = open(stall_log_path(), "w", encoding="utf-8")
+        _stall_log.write(
+            "Stacks below are written when Blender's main thread stayed away "
+            "from the bridge for %ds: a freeze, or one long operation.\n"
+            % _STALL_S)
+        # The GPU backend matters for a freeze that leaves no Python
+        # stack: a Vulkan render-graph hang looks exactly like one.
+        try:
+            _stall_log.write("blender %s, gpu backend %s\n" % (
+                bpy.app.version_string,
+                bpy.context.preferences.system.gpu_backend))
+        except Exception:
+            pass
+        _stall_log.flush()
+    return _stall_log
+
+
+def _heartbeat():
+    """Re-arms the stall dump from the pump, which the main thread runs
+    every _PUMP_INTERVAL_S while the bridge is up. If the main thread stops
+    running the pump for _STALL_S seconds, for any reason (a bpy call that
+    never returns, a redraw that loops, a modal dialog nobody sees), the C
+    timer fires and every thread's Python stack goes to the stall file.
+    Re-armed once a second, not every pump: each arm restarts
+    faulthandler's own thread."""
+    global _last_beat
+    now = time.monotonic()
+    if now - _last_beat < _HEARTBEAT_S:
+        return
+    _last_beat = now
+    try:
+        import faulthandler
+        faulthandler.dump_traceback_later(_STALL_S, repeat=False,
+                                          file=_open_stall_log())
+    except Exception:
+        pass
+
+
+def _arm_stall_dump(payload: dict):
+    """Starts faulthandler's C-level timer for the job about to run. It
+    writes every thread's Python stack to the stall file after _STALL_S
+    seconds, and again every _STALL_S seconds until the job disarms it.
+
+    Why a C timer and not a Python thread: a Blender that "froze on send"
+    is a main thread stuck INSIDE a bpy call, which holds the interpreter
+    lock, so no Python thread can run to take the dump. The first watchdog
+    (2026-09-14) was such a thread and never fired for the live freeze it
+    was written for. faulthandler's timer needs no lock: it names the bpy
+    call that never returned."""
+    try:
+        import faulthandler
+        log = _open_stall_log()
+        log.write("job started: manifest=%s step=%s mesh=%s\n" % (
+            payload.get("manifest"), payload.get("step"), payload.get("mesh")))
+        log.flush()
+        faulthandler.dump_traceback_later(_STALL_S, repeat=True, file=log)
+    except Exception as exc:                # never let the watchdog fail the job
+        print("[CADLink bridge] stall watchdog not armed:", exc)
+
+
+def _disarm_stall_dump(result: dict):
+    """Ends the repeating job timer and leaves a one-shot armed, so a
+    freeze that starts in the redraw right after the job (live 2026-09-15:
+    the job returned ok, then Blender's Vulkan submission thread spun
+    forever) is still dumped, not silently lost between the job and the
+    next heartbeat."""
+    try:
+        import faulthandler
+        faulthandler.cancel_dump_traceback_later()
+        if _stall_log is not None:
+            _stall_log.write("job finished: %s\n" % (
+                "ok" if result.get("ok") else result.get("error", "failed")))
+            _stall_log.flush()
+            faulthandler.dump_traceback_later(_STALL_S, repeat=False,
+                                              file=_stall_log)
+    except Exception:
+        pass
+
+
+def _wait_with_watchdog(job) -> bool:
+    """Waits for the main thread to finish the job. A job still running
+    after _STALL_S seconds is announced on the console with the path of
+    the stall file the C timer writes to (see _arm_stall_dump). Returns
+    False on the full timeout."""
+    waited = 0
+    while waited < _JOB_TIMEOUT_S:
+        slice_s = min(_STALL_S, _JOB_TIMEOUT_S - waited)
+        if job.done.wait(slice_s):
+            return True
+        waited += slice_s
+        print("[CADLink bridge] job still running after %ds; if Blender is "
+              "frozen, the stack is in %s" % (waited, stall_log_path()))
+    return False
 
 
 # ── Main-thread job execution ───────────────────────────────────────────
@@ -167,22 +298,30 @@ def _ops_context():
     return bpy.context.temp_override(window=win, scene=win.scene)
 
 
-def _remove_previous_import(step_path: str, stages: dict):
+def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False):
     """Re-sending the same assembly must REPLACE the last send, not stack a
     copy next to it: leftover objects carry stale RIG_* tags that hijack
     matching and the frame vote (found live 2026-08-23: six re-sends of one
     hinge left the rig built against a previous send's rotated leaf).
     Removes every object imported from this STEP file, the import
-    collections it left behind, and the importer's cache entry for it."""
+    collections it left behind, and the importer's cache entry for it.
+
+    by_stem: match on the file name without its extension, for the direct
+    link, whose .swmesh replaces a STEP import of the same assembly. Both
+    standing at once left every part in the scene twice, both copies
+    parented to one rig (live 2026-09-14)."""
     want_full = os.path.normcase(os.path.abspath(step_path))
     want_base = os.path.basename(step_path).casefold()
+    want_stem = os.path.splitext(want_base)[0]
 
     def is_same_file(value):
         if not value:
             return False
         s = str(value)
+        base = os.path.basename(s).casefold()
         return (os.path.normcase(os.path.abspath(s)) == want_full
-                or os.path.basename(s).casefold() == want_base)
+                or base == want_base
+                or (by_stem and os.path.splitext(base)[0] == want_stem))
 
     removed = 0
     for obj in list(bpy.data.objects):
@@ -218,9 +357,9 @@ def _remove_previous_import(step_path: str, stages: dict):
                 del main_mod.global_file_cache[key]
                 main_mod.global_file_cache_meta.pop(key, None)
     except Exception as exc:
-        print("[SWTB bridge] cache purge failed:", exc)
+        print("[CADLink bridge] cache purge failed:", exc)
     if removed:
-        print("[SWTB bridge] replaced previous import: removed %d object(s)"
+        print("[CADLink bridge] replaced previous import: removed %d object(s)"
               % removed)
     stages["replace"] = {"removed_objects": removed}
 
@@ -308,8 +447,8 @@ def _run_job(payload: dict) -> dict:
             log.append("left non-object mode on: %s" % ", ".join(left))
 
         if have_manifest:
-            scene.sw_to_blender.manifest_path = manifest_path
-            if "FINISHED" not in bpy.ops.swtb.load_manifest():
+            scene.cad_link.manifest_path = manifest_path
+            if "FINISHED" not in bpy.ops.cadlink.load_manifest():
                 return {"ok": False,
                         "error": rig_ui._STATE["error"] or "manifest load failed",
                         "stages": stages}
@@ -334,10 +473,19 @@ def _run_job(payload: dict) -> dict:
                 return {"ok": False, "error": "mesh not found: %s" % mesh_path,
                         "stages": stages}
             from .rig import native_import
+            if want("replace"):
+                # A STEP import of the same assembly goes too, or the scene
+                # holds every part twice.
+                _remove_previous_import(mesh_path, stages, by_stem=True)
             try:
+                opts = payload.get("import_options") or {}
+                rig_ui._STATE["import_options"] = dict(opts)
                 objects, report = native_import.build(
                     bpy.context, mesh_path,
-                    manifest=rig_ui._STATE.get("manifest"))
+                    manifest=rig_ui._STATE.get("manifest"),
+                    up_as=opts.get("up_as") or "ZPOS",
+                    hierarchy=opts.get("hierarchy_types") or "FLAT",
+                    group_in_collection=bool(opts.get("group_in_collection")))
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
@@ -377,7 +525,7 @@ def _run_job(payload: dict) -> dict:
             bpy.context.view_layer.update()
 
         if have_manifest and not mesh_path and want("match"):
-            if "FINISHED" not in bpy.ops.swtb.match_geometry():
+            if "FINISHED" not in bpy.ops.cadlink.match_geometry():
                 return {"ok": False, "error": "matching failed", "stages": stages}
             rep = rig_ui._STATE["match_report"]
             stages["match"] = {
@@ -392,7 +540,7 @@ def _run_job(payload: dict) -> dict:
         # stage below runs only when its precondition actually holds.
         if have_manifest and want("sync_poses") \
                 and rig_ui._STATE.get("match_report") is not None:
-            if "FINISHED" in bpy.ops.swtb.sync_poses():
+            if "FINISHED" in bpy.ops.cadlink.sync_poses():
                 rep = rig_ui._STATE["pose_report"]
                 if rep is not None:
                     stages["poses"] = {
@@ -404,7 +552,7 @@ def _run_job(payload: dict) -> dict:
                     }
 
         if have_manifest and want("build_rig"):
-            if "FINISHED" not in bpy.ops.swtb.build_rig():
+            if "FINISHED" not in bpy.ops.cadlink.build_rig():
                 return {"ok": False,
                         "error": rig_ui._STATE["error"] or "rig build failed",
                         "stages": stages}
@@ -416,8 +564,8 @@ def _run_job(payload: dict) -> dict:
             }
 
         if have_manifest and want("relink") \
-                and bpy.ops.swtb.relink_geometry.poll():
-            if "FINISHED" in bpy.ops.swtb.relink_geometry():
+                and bpy.ops.cadlink.relink_geometry.poll():
+            if "FINISHED" in bpy.ops.cadlink.relink_geometry():
                 rep = rig_ui._STATE["parent_report"]
                 if rep is not None:
                     stages["relink"] = {
@@ -435,7 +583,7 @@ def _run_job(payload: dict) -> dict:
     ok = True
     match = stages.get("match")
     if match and (match["unmatched"] or match["ambiguous"]):
-        log.append("some components did not match: see the SW To Blender "
+        log.append("some components did not match: see the CAD Link "
                    "panel in Blender")
     return {"ok": ok, "stages": stages, "log": log}
 
@@ -445,6 +593,7 @@ def _pump():
     if q is None:
         _state["timer_running"] = False
         return None
+    _heartbeat()
     try:
         job = q.get_nowait()
     except queue.Empty:
@@ -453,6 +602,7 @@ def _pump():
     # exception would unregister the timer while the HTTP server keeps
     # listening, leaving a bridge that looks alive but stalls every send for the
     # full 30-minute timeout, surviving until Blender restarts.
+    _arm_stall_dump(job.payload)
     try:
         job.result = _run_job(job.payload)
     except BaseException:
@@ -460,9 +610,10 @@ def _pump():
     finally:
         if job.result is None:
             job.result = {"ok": False, "error": "job produced no result"}
+        _disarm_stall_dump(job.result)
         _state["last_job"] = job.result
         job.done.set()
-    print("[SWTB bridge] job finished: %s"
+    print("[CADLink bridge] job finished: %s"
           % ("ok" if job.result.get("ok") else job.result.get("error", "failed")))
     return _PUMP_INTERVAL_S
 
@@ -515,7 +666,7 @@ def start():
     _state["server"] = server
     _state["port"] = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever,
-                              name="swtb-bridge", daemon=True)
+                              name="cadlink-bridge", daemon=True)
     thread.start()
     _state["thread"] = thread
     # The pump comes up before anything that can fail: a bridge that
@@ -527,9 +678,9 @@ def start():
     try:
         _write_registry()
     except OSError as exc:
-        print("[SWTB bridge] registry write failed:", exc)
+        print("[CADLink bridge] registry write failed:", exc)
     atexit.register(_remove_registry)
-    print("[SWTB bridge] listening on 127.0.0.1:%d (registry %s)"
+    print("[CADLink bridge] listening on 127.0.0.1:%d (registry %s)"
           % (_state["port"], _state["registry_path"]))
 
 
@@ -546,6 +697,15 @@ def stop():
     _state["port"] = None
     _state["queue"] = None
     _remove_registry()
+    global _stall_log
+    if _stall_log is not None:
+        try:
+            import faulthandler
+            faulthandler.cancel_dump_traceback_later()
+            _stall_log.close()
+        except Exception:
+            pass
+        _stall_log = None
     if bpy is not None and _state["timer_running"]:
         try:
             if bpy.app.timers.is_registered(_pump):

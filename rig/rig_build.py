@@ -22,7 +22,7 @@ except ImportError:
     Matrix = None
     Vector = None
 
-from . import constraints
+from . import cam_contact, constraints
 from . import shapes as shapes_mod, drivers, loops, sliders
 from .graph import RigPlan, swing_cone
 
@@ -82,6 +82,7 @@ class BuildResult:
     effector_names: Dict[str, str] = field(default_factory=dict)  # loop id -> bone name
     tangent_helper_names: Dict[str, str] = field(default_factory=dict)  # group id -> bone name
     limit_names: Dict[str, str] = field(default_factory=dict)   # group id -> limit bone name
+    slide_names: Dict[str, str] = field(default_factory=dict)   # group id -> stretch bone name
     contact_mesh_names: Dict[str, str] = field(default_factory=dict)  # joint id -> rail or patch object name
     # Swing-cone balls AND cone_spin collapses: bone_names[gid] is the
     # hidden DEF bone (geometry and child bones ride the clamped result).
@@ -90,6 +91,14 @@ class BuildResult:
     ball_pole_names: Dict[str, str] = field(default_factory=dict)
     ball_goal_names: Dict[str, str] = field(default_factory=dict)
     cone_frame_names: Dict[str, str] = field(default_factory=dict)  # cone_spin plane frame
+    # Cam contacts (cam_contact.py), by the follower's group id: the
+    # projection bone with its (side, margin) pair, the relative and offset
+    # bones of a flat face, and by joint id the cam surface object.
+    cam_prj_names: Dict[str, str] = field(default_factory=dict)
+    cam_prj_params: Dict[str, tuple] = field(default_factory=dict)
+    cam_rel_names: Dict[str, str] = field(default_factory=dict)
+    cam_off_names: Dict[str, str] = field(default_factory=dict)
+    cam_surface_names: Dict[str, str] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -619,7 +628,7 @@ def _driven_objects(manifest):
     gids = {g.id for g in manifest.rigid_groups}
     out = []
     for obj in bpy.data.objects:
-        if obj.get("RIG_rig") or obj.get("RIG_helper") or obj.get("SWTB_widget"):
+        if obj.get("RIG_rig") or obj.get("RIG_helper") or obj.get("CADLINK_widget"):
             continue
         if (obj.get("RIG_component_id") in ids
                 or obj.get("RIG_component_of") in ids
@@ -647,6 +656,46 @@ def _collection_paths(scene):
     return paths
 
 
+def _prototype_collections():
+    """Collections some object instances: the hidden templates of the
+    collection-instance import mode, one part each. Not a place for a rig."""
+    out = set()
+    for obj in bpy.data.objects:
+        col = getattr(obj, "instance_collection", None)
+        if col is not None:
+            out.add(col.name)
+            for child in col.children_recursive:
+                out.add(child.name)
+    return out
+
+
+def _usable_home(context, col, prototypes):
+    """Whether a rig can live in this collection: the view layer must reach
+    it, with no excluded collection above it, and it must not be a template.
+
+    The collection-instance import parks every prototype in a
+    "<file>.components" collection and EXCLUDES it from the view layer; with
+    the import dropped at the scene root that collection is the import's
+    only top-level one, so it was chosen as the rig's home, and the build
+    then failed to make the armature active because the view layer did not
+    contain it (live TongRig in "Collection instances" mode, 2026-09-14).
+    """
+    if col.name in prototypes:
+        return False
+
+    def walk(lc, excluded):
+        excluded = excluded or lc.exclude
+        if lc.collection == col:
+            return not excluded
+        for child in lc.children:
+            found = walk(child, excluded)
+            if found is not None:
+                return found
+        return None
+
+    return bool(walk(context.view_layer.layer_collection, False))
+
+
 def _rig_home(context, manifest):
     """The collection the rig belongs in: the one that holds the geometry it
     drives.
@@ -658,12 +707,14 @@ def _rig_home(context, manifest):
 
     Preference order: the single top collection the import made (what the
     user calls "the collection I imported into"), then the nearest collection
-    that contains every driven object, then the scene root.
+    that contains every driven object, then the scene root. Only a
+    collection the view layer reaches is ever chosen (see _usable_home).
     """
     scene = context.scene
     driven = _driven_objects(manifest)
     if not driven:
         return scene.collection
+    prototypes = _prototype_collections()
 
     files = {obj.get("STEP_file") for obj in driven}
     files.discard(None)
@@ -674,7 +725,8 @@ def _rig_home(context, manifest):
         except Exception:                       # not importable, or no bpy
             roots = []
         paths = _collection_paths(scene)
-        roots = [c for c in roots if c.name in paths]
+        roots = [c for c in roots
+                 if c.name in paths and _usable_home(context, c, prototypes)]
         if len(roots) == 1:
             return roots[0]
 
@@ -699,7 +751,13 @@ def _rig_home(context, manifest):
             break                               # already down to the root
     if not common or len(common) <= 1:
         return scene.collection
-    return bpy.data.collections.get(common[-1]) or scene.collection
+    # The deepest usable collection on that path: an excluded or template
+    # collection is skipped in favour of the one above it.
+    for name in reversed(common[1:]):
+        col = bpy.data.collections.get(name)
+        if col is not None and _usable_home(context, col, prototypes):
+            return col
+    return scene.collection
 
 
 def _place_rig_collection(context, manifest, rig_name):
@@ -735,8 +793,31 @@ def _place_rig_collection(context, manifest, rig_name):
 def _remove_previous_rig(collection):
     """Re-runs replace the rig instead of stacking name.001s. Geometry
     parented into the old rig is released with its world transform kept, so
-    a rebuild never scatters the scene."""
+    a rebuild never scatters the scene.
+
+    The old rig is put back to its rest pose first. Its rest pose is the
+    CAD pose the manifest describes, and the new rig takes the geometry
+    where it finds it as ITS rest: released mid-pose, a cam turned to 90
+    degrees became the new rig's zero and every follower was out of time
+    with it (live cam-follower, 2026-09-15, switching the input)."""
     doomed = [o for o in list(collection.objects) if o.get("RIG_rig")]
+    posed = False
+    for obj in doomed:
+        if obj.type != "ARMATURE":
+            continue
+        for pb in obj.pose.bones:
+            if pb.matrix_basis != Matrix.Identity(4):
+                pb.matrix_basis = Matrix.Identity(4)
+                posed = True
+    if posed:
+        try:
+            bpy.context.view_layer.update()
+        except (AttributeError, RuntimeError):
+            pass
+    _remove_rig_objects(doomed)
+
+
+def _remove_rig_objects(doomed):
     doomed_set = set(doomed)
     if not doomed:
         return
@@ -753,6 +834,46 @@ def _remove_previous_rig(collection):
                 bpy.data.armatures.remove(data)
             elif isinstance(data, bpy.types.Curve):
                 bpy.data.curves.remove(data)
+
+
+def remove_rig(arm_obj):
+    """Removes one rig outright: the armature, the helpers and path curves
+    that share its collection, and that collection once it is empty. Bone
+    widgets stay: they live in one collection shared by every rig.
+    Geometry still hanging from a bone is released where it stands.
+
+    For a rig whose every driven part has gone. The direct link replaces
+    the whole native import, so a different assembly sent into the same
+    session left the previous assembly's rig standing over nothing (live
+    2026-09-14)."""
+    scene_root_names = {s.collection.name for s in bpy.data.scenes}
+    cols = [c for c in arm_obj.users_collection
+            if c.name not in scene_root_names and not c.get("CADLINK_widgets")]
+    doomed = {arm_obj.name: arm_obj}
+    for col in cols:
+        for obj in col.objects:
+            if obj.get("RIG_rig") and not obj.get("CADLINK_widget"):
+                doomed[obj.name] = obj
+    # A rig parked loose at the scene root: its helpers are the RIG_rig
+    # objects that hang from the armature itself.
+    for obj in bpy.data.objects:
+        if obj.get("RIG_rig") and obj.parent is arm_obj:
+            doomed[obj.name] = obj
+    _remove_rig_objects(list(doomed.values()))
+    home = bpy.context.scene.collection
+    for col in cols:
+        try:
+            if col.objects:
+                continue
+            # The widget collection sits under the rig collection: it is
+            # shared, so it moves up rather than going with the rig.
+            for child in list(col.children):
+                col.children.unlink(child)
+                if child.name not in {c.name for c in home.children}:
+                    home.children.link(child)
+            bpy.data.collections.remove(col)
+        except (ReferenceError, RuntimeError):
+            pass
 
 
 def _thread_through(pts, rest, tolerance):
@@ -834,7 +955,7 @@ def _make_path_rail(collection, joint, frame, unit_scale):
     if joint.path_closed:
         faces.append((2 * len(pts) - 2, 2 * len(pts) - 1, 1, 0))
 
-    data = bpy.data.meshes.new("SWTB_path_" + joint.id)
+    data = bpy.data.meshes.new("CADLINK_path_" + joint.id)
     data.from_pydata(verts, [], faces)
     data.update()
     obj = bpy.data.objects.new(data.name, data)
@@ -902,7 +1023,7 @@ def _make_surface_patch(collection, joint, frame, unit_scale):
                                      joint.origin[2] * unit_scale)),
                      _RAIL_SNAP * unit_scale)
 
-    data = bpy.data.meshes.new("SWTB_surface_" + joint.id)
+    data = bpy.data.meshes.new("CADLINK_surface_" + joint.id)
     data.from_pydata([tuple(v) for v in verts], [], faces)
     data.update()
     obj = bpy.data.objects.new(data.name, data)
@@ -979,18 +1100,45 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             eb.matrix = frame @ _bone_rest_matrix(manifest, bp, unit_scale)
             eb.length = _bone_length(bp.group, unit_scale)
             # Connected bones ignore Limit Location entirely: a prismatic
-            # joint dies silently, so no bone is ever connected.
+            # joint dies silently, so no bone is ever connected, except a
+            # slide the loop solver owns (below).
             eb.use_connect = False
-            if bp.parent_group_id is not None:
+            if bp.slide_name and bp.parent_group_id is not None:
+                # A slide inside a solved chain (graph.py BonePlan.slide_name):
+                # a hidden stretch bone lies along this bone's own +Y, its
+                # tail on this bone's head. IK scales the stretch bone, and
+                # this bone, connected and inheriting no scale, rides the
+                # tail along the slide by the exact difference. Its own
+                # location is then no longer anyone's to pose.
+                sb = edit_bones.new(bp.slide_name)
+                sb.head = (0.0, 0.0, 0.0)
+                sb.tail = (0.0, 1.0, 0.0)
+                rest_len = bp.slide_rest_length * unit_scale
+                m = eb.matrix.copy()
+                m.translation = m.translation - (m.to_3x3() @ Vector((0.0, 1.0, 0.0))) * rest_len
+                sb.matrix = m
+                sb.length = rest_len
+                sb.use_connect = False
+                sb.parent = edit_bones[result.bone_names[bp.parent_group_id]]
+                helpers_coll.assign(sb)
+                result.slide_names[bp.group.id] = sb.name
+                eb.parent = sb
+                eb.use_connect = True
+                eb.inherit_scale = "NONE"
+            elif bp.parent_group_id is not None:
                 eb.parent = edit_bones[result.bone_names[bp.parent_group_id]]
             result.bone_names[bp.group.id] = eb.name
+            if (bp.cam_prj_name or bp.cam_rel_name) and cam_contact.wanted(bp):
+                cam_contact.add_helper_bones(
+                    edit_bones, eb, bp, plan, manifest, frame, unit_scale,
+                    result, helpers_coll)
 
             # A limit gets a bone of its own, at the same place and the same
             # rest orientation, parented to the control's PARENT and never to
             # the control: the dial has to stay still while the pointer moves
             # over it, and a rail has to stay put while the slide runs along
-            # it.
-            if _limit_widget_wanted(bp):
+            # it. A solver-owned slide has no travel to dial.
+            if _limit_widget_wanted(bp) and not bp.slide_name:
                 lb = edit_bones.new("LIM_" + eb.name)
                 lb.head = (0.0, 0.0, 0.0)
                 lb.tail = (0.0, 1.0, 0.0)
@@ -1231,6 +1379,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
         if obj is not None:
             contact_meshes[bp.joint.id] = obj
             result.contact_mesh_names[bp.joint.id] = obj.name
+    cam_surfaces = cam_contact.make_surfaces(
+        collection, arm_obj, manifest, plan, result, frame, unit_scale)
 
     # ---- Phase 3: Pose mode, with channels, constraints, drivers and IK --------
     bpy.ops.object.mode_set(mode="POSE")
@@ -1242,11 +1392,15 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
         for name in (list(result.bone_names.values())
                      + list(result.helper_names.values())
                      + list(result.effector_names.values())
+                     + list(result.slide_names.values())
                      + list(result.tangent_helper_names.values())
                      + list(result.ball_ctrl_names.values())
                      + list(result.ball_pole_names.values())
                      + list(result.ball_goal_names.values())
-                     + list(result.cone_frame_names.values())):
+                     + list(result.cone_frame_names.values())
+                     + list(result.cam_prj_names.values())
+                     + list(result.cam_rel_names.values())
+                     + list(result.cam_off_names.values())):
             pose.bones[name].rotation_mode = "YXZ"
 
         source = manifest.source_path or ""
@@ -1255,7 +1409,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
             pb["RIG_group"] = bp.group.id
             # WHICH manifest this bone came from. Group ids restart at g000
             # for every assembly, so once two rigs are joined into one
-            # armature the id alone no longer names a bone — half the
+            # armature the id alone no longer names a bone: half the
             # geometry would re-parent to the other assembly's bones.
             pb["RIG_source"] = source
             if bp.ball_def_name:
@@ -1349,17 +1503,32 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
                 pb.lock_rotation = [True, True, True]
                 pb.lock_scale = [True, True, True]
 
+        for gid, name in result.slide_names.items():
+            # The stretch bone belongs to the solver (loops.py sets its IK
+            # stretch); the body on it is connected, so its own location is
+            # not posable either, and the locks say so to the styling pass.
+            pb = pose.bones[name]
+            pb["RIG_helper"] = gid
+            pb.lock_location = [True, True, True]
+            pb.lock_rotation = [True, True, True]
+            pb.lock_scale = [True, True, True]
+            body = pose.bones.get(result.bone_names.get(gid, ""))
+            if body is not None:
+                body.lock_location = [True, True, True]
+
         n_drivers, drv_warnings = drivers.build(
             arm_obj, manifest, plan, result.bone_names,
             unit_scale=unit_scale, context=context)
         result.warnings.extend(drv_warnings)
+        result.warnings.extend(cam_contact.apply(
+            arm_obj, manifest, plan, result, cam_surfaces, unit_scale))
 
         n_sliders, slider_warnings = sliders.close_sliders(
             arm_obj, plan, result.bone_names, result.aim_names)
         result.warnings.extend(slider_warnings)
         n_loops, loop_warnings = loops.close_loops(
             arm_obj, plan, result.bone_names, result.helper_names,
-            result.effector_names)
+            result.effector_names, result.slide_names)
         result.warnings.extend(loop_warnings)
 
         # Last, because it reads the channel locks the constraint pass has
@@ -1368,7 +1537,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
         styled = _style_bones(
             context, arm_obj, plan, result, unit_scale,
             controls_coll, limits_coll, mechanism_coll, helpers_coll)
-        print("[SWTB rig] %d control(s), %d limit dial(s), %d mechanism bone(s)"
+        print("[CADLink rig] %d control(s), %d limit dial(s), %d mechanism bone(s)"
               % (styled["control"], styled["limit"], styled["mechanism"]))
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")

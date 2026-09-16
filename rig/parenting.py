@@ -95,7 +95,7 @@ def _rig_maps(arm_obj):
     identifies a body.
 
     An untagged object or bone predates the tag, or came from a foreign
-    importer. Those keep the old behaviour — matched on the group id alone —
+    importer. Those keep the old behaviour (matched on the group id alone)
     because there is nothing better to go on, and one rig in one armature is
     still the common case.
     """
@@ -123,7 +123,7 @@ def _rig_maps(arm_obj):
 def _bone_for(bone_by_key, key):
     """The bone an object belongs on, allowing for either side being
     untagged: an exact (source, group) match first, then the same group id
-    when only ONE bone claims it — which is every rig that has not been
+    when only ONE bone claims it, which is every rig that has not been
     joined to another."""
     if key in bone_by_key:
         return bone_by_key[key]
@@ -185,7 +185,7 @@ def _leftovers(arm_obj, plan_objects, files):
         if obj.name in driven or obj.parent is not None:
             continue
         if (obj.get("RIG_rig") or obj.get("RIG_helper")
-                or obj.get("SWTB_widget") or obj.get("RIG_group_empty")):
+                or obj.get("CADLINK_widget") or obj.get("RIG_group_empty")):
             continue
         if obj.get("STEP_file") not in files:
             continue
@@ -231,7 +231,7 @@ def relink(context, arm_obj) -> ParentReport:
                   abs(delta.to_quaternion().angle))
         if off >= 1e-5:
             report.posed_bones.append((bone_name, off))
-            print("[SWTB relink] bone %s sits off its rest pose while "
+            print("[CADLink relink] bone %s sits off its rest pose while "
                   "relinking (%.4f rad/m): a constraint rejects the rest "
                   "pose (check that joint's limits against value_at_rest). "
                   "Geometry keeps its place regardless" % (bone_name, off))

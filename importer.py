@@ -1061,16 +1061,25 @@ class ReadSTEP:
                 "mil": 0.0254 * 0.001,
             }
 
-            if scaleval in scales:
-                scale = scales[scaleval]
-            else:
-                print("ERROR: Undefined scale:", scaleval)
+            if scaleval not in scales:
+                print("WARNING: unknown length unit in file:", scaleval)
+            print("Length unit declared by the file:", scaleval,
+                  "(%s m per unit)" % scales.get(scaleval, "?"))
 
-            print("Scale from file (meters per unit):", scaleval, scale)
-
-        else:
-            print("Using default scale (millimeters)")
-
+        # The geometry OCCT hands over is ALWAYS in millimetres: the STEP
+        # reader converts every representation context to xstep.cascade.unit
+        # at transfer, whatever the file declares, and that unit is MM. So
+        # the scale to Blender metres is 0.001 for every file, and the unit
+        # read above is information only. Applying the file's own unit on
+        # top of OCCT's conversion scaled an inch file by 25.4 and a metre
+        # file by 1000 (2026-09-14: the SolidWorks 2022 sample
+        # landing_gear.step, inch parts under a metre assembly, landed 25.4
+        # times too far from the origin and its rig manifest could not be
+        # matched to it). A file that mixes units, as SolidWorks writes when
+        # parts and assembly differ, has no single "file unit" at all, which
+        # is one more reason to let OCCT do the converting.
+        Interface_Static.SetCVal_s("xstep.cascade.unit", "MM")
+        scale = 0.001
         self.scale = scale
 
         print("DataExchange: Transferring")

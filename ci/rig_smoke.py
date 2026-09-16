@@ -208,7 +208,7 @@ def run():
     import bpy
     from STEPper_NEXT import rig
     rig.register()
-    _check(hasattr(bpy.types, "SWTB_PT_panel"), "panel did not register")
+    _check(hasattr(bpy.types, "CADLINK_PT_panel"), "panel did not register")
 
     from STEPper_NEXT.rig import graph, manifest as manifest_mod, rig_build
 
@@ -277,7 +277,7 @@ def run():
         cons = {c.name: c for c in pb.constraints}
         if joint.rotation_limit is not None and joint.type in (
                 "revolute", "cylindrical", "planar", "pin_slot"):
-            con = cons.get("SWTB Limit Rotation")
+            con = cons.get("CADLink Limit Rotation")
             _check(con is not None,
                    "joint {}: Limit Rotation missing".format(joint.id))
             _check(con.use_limit_y, "joint {}: use_limit_y off".format(joint.id))
@@ -297,7 +297,7 @@ def run():
             # be SYMMETRIC about the rest pose on both swing axes (a raw
             # 0..45 deg range applied one-sided pinned the swing into one
             # quadrant, live 2026-08-22), twist about Y free.
-            con = cons.get("SWTB Limit Rotation")
+            con = cons.get("CADLink Limit Rotation")
             _check(con is not None,
                    "joint {}: ball Limit Rotation missing".format(joint.id))
             amp = max(abs(joint.rotation_limit.delta_min),
@@ -311,7 +311,7 @@ def run():
                                  con.min_z, con.max_z, amp))
         if joint.translation_limit is not None and joint.type in (
                 "prismatic", "cylindrical", "screw"):
-            con = cons.get("SWTB Limit Location")
+            con = cons.get("CADLink Limit Location")
             _check(con is not None,
                    "joint {}: Limit Location missing".format(joint.id))
             _check(con.use_min_y and con.use_max_y,
@@ -331,7 +331,7 @@ def run():
                    "joint {}: pin_slot locks are {}/{}".format(
                        joint.id, list(pb.lock_location), list(pb.lock_rotation)))
             if joint.translation_limit is not None:
-                con = cons.get("SWTB Limit Location")
+                con = cons.get("CADLink Limit Location")
                 _check(con is not None,
                        "joint {}: pin_slot Limit Location missing".format(joint.id))
                 _check(con.use_min_z and con.use_max_z

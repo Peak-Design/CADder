@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Talking back to SolidWorks.
+"""Talking back to the CAD application.
 
-The bridge in bridge.py listens so SolidWorks can push a model in. This is
-the other direction: a client that finds a running SolidWorks with the
-SW To Blender add-in loaded and asks it for something: today, for a part
-to be tessellated again at a finer tolerance.
+The bridge in bridge.py listens so a CAD add-in can push a model in. This
+is the other direction: a client that finds a running CAD application
+with a CAD Link add-in loaded (today: SW To Blender for SolidWorks) and
+asks it for something: today, for a part to be tessellated again at a
+finer tolerance.
 
 Discovery mirrors the one on the add-in's side exactly: each process drops
 a small JSON file naming its port and a per-session token, and a stale file
@@ -28,8 +29,8 @@ _TIMEOUT_PING = 1.5
 _TIMEOUT_JOB = 600.0     # tessellating a big assembly finely is not quick
 
 
-class SwLinkError(Exception):
-    """SolidWorks could not be reached, or refused the request."""
+class CadLinkError(Exception):
+    """The CAD application could not be reached, or refused the request."""
 
 
 class Instance:
@@ -45,7 +46,7 @@ class Instance:
         return "http://127.0.0.1:%d" % self.port
 
     def __repr__(self):
-        return "<SolidWorks pid=%s port=%s>" % (self.pid, self.port)
+        return "<CAD pid=%s port=%s>" % (self.pid, self.port)
 
 
 def _post(inst, path, payload, timeout):
@@ -53,14 +54,16 @@ def _post(inst, path, payload, timeout):
     req = urllib.request.Request(
         inst.url + path, data=data,
         headers={"Content-Type": "application/json",
+                 "X-CADLink-Token": inst.token or "",
+                 # An add-in built before the rename checks this one.
                  "X-SWTB-Token": inst.token or ""})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def discover():
-    """Every reachable SolidWorks, newest first. Never raises: an empty list
-    is the normal answer when SolidWorks simply is not running."""
+    """Every reachable CAD application, newest first. Never raises: an empty
+    list is the normal answer when none is running."""
     found = []
     if not os.path.isdir(_REGISTRY):
         return found
@@ -80,7 +83,7 @@ def discover():
         try:
             reply = _post(inst, "/ping", None, _TIMEOUT_PING)
         except (urllib.error.URLError, OSError, ValueError):
-            # The SolidWorks behind this entry is gone. Clearing it keeps the
+            # The application behind this entry is gone. Clearing it keeps the
             # next discovery from paying the timeout again.
             try:
                 os.unlink(path)
@@ -93,14 +96,14 @@ def discover():
 
 
 def first():
-    """The one SolidWorks to talk to, or an error explaining that there is
+    """The one CAD application to talk to, or an error explaining that there is
     none: the message a user actually needs at that moment."""
     instances = discover()
     if not instances:
-        raise SwLinkError(
-            "No running SolidWorks with the SW To Blender add-in was found. "
-            "Start SolidWorks, open the assembly, and make sure the add-in "
-            "is enabled.")
+        raise CadLinkError(
+            "No CAD application with a CAD Link add-in was found. Start the "
+            "CAD application (SolidWorks with SW To Blender), open the "
+            "assembly, and make sure the add-in is enabled.")
     return instances[0]
 
 
@@ -113,13 +116,13 @@ def request(op, timeout=_TIMEOUT_JOB, instance=None, **fields):
     try:
         reply = _post(inst, "/job", payload, timeout)
     except urllib.error.HTTPError as exc:
-        raise SwLinkError("SolidWorks rejected the request (%s)" % exc.code)
+        raise CadLinkError("The CAD application rejected the request (%s)" % exc.code)
     except (urllib.error.URLError, OSError) as exc:
-        raise SwLinkError("could not reach SolidWorks: %s" % exc)
+        raise CadLinkError("could not reach the CAD application: %s" % exc)
     except ValueError as exc:
-        raise SwLinkError("SolidWorks sent something unreadable: %s" % exc)
+        raise CadLinkError("The CAD application sent something unreadable: %s" % exc)
     if not reply.get("ok"):
-        raise SwLinkError(reply.get("error") or "SolidWorks refused the request")
+        raise CadLinkError(reply.get("error") or "The CAD application refused the request")
     return reply
 
 
@@ -127,8 +130,22 @@ def status(instance=None):
     return request("status", timeout=_TIMEOUT_PING, instance=instance)
 
 
-def retessellate(component_ids, quality, instance=None):
+def poses(component_ids=None, persistent_ids=None, instance=None):
+    """Asks where those components sit now. The reply lists the component
+    id, its CAD path and its world transform, in metres.
+
+    Persistent ids are SolidWorks' own references: they still name the same
+    occurrences after the assembly has been edited, which the manifest's
+    c001, c002 numbering does not."""
+    return request("poses", instance=instance,
+                   components=list(component_ids or []),
+                   persistent_ids=list(persistent_ids or []))
+
+
+def retessellate(component_ids, quality, persistent_ids=None, instance=None):
     """Asks for those components again at `quality` (0..1). The reply names
-    a .swmesh on disk."""
+    a .swmesh on disk. Persistent ids name the same occurrences after an
+    edit; see `poses`."""
     return request("retessellate", instance=instance,
-                   components=list(component_ids), quality=float(quality))
+                   components=list(component_ids), quality=float(quality),
+                   persistent_ids=list(persistent_ids or []))

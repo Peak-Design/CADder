@@ -40,7 +40,7 @@ def write_scene(path):
     tri_t = [0, 1, 2]
     tri_m = [1]
 
-    body = struct.pack("<III", swmesh.MAGIC, swmesh.VERSION,
+    body = struct.pack("<III", swmesh.MAGIC, 1,
                        swmesh.FLAG_NORMALS | swmesh.FLAG_UVS)
     body += struct.pack("<d", 0.0005)
     body += struct.pack("<III", 2, 2, 3)          # materials, defs, instances

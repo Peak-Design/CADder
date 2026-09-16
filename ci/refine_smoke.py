@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Headless smoke for the return leg: Blender asking SolidWorks for finer
+"""Headless smoke for the return leg: Blender asking the CAD side for finer
 geometry and swapping it in.
 
 SolidWorks is stood in for by a small HTTP server that speaks the same
@@ -28,11 +28,28 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import native_import, sw_link, swmesh  # noqa: E402
+from STEPper_NEXT.rig import native_import, cad_link, swmesh  # noqa: E402
 
 TOKEN = "smoke-token"
 COARSE_TRIS = 1
 FINE_TRIS = 4
+
+
+RESEND_MANIFEST = {
+    "manifest_version": "1.0.0",
+    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "units": {"length": "meter", "angle": "radian"},
+    "frame": {"handedness": "right", "up_axis": "Z",
+              "transform_convention": "row_major_4x4_global"},
+    "step_export": {"file": "refine.step", "ap": "AP214",
+                    "sha1": None, "occurrence_matching": None},
+    "components": [{"id": "c009", "sw_path": "bracket-1", "step_name": "bracket",
+                    "step_occurrence_path": None,
+                    "transform": [[1, 0, 0, 0.12], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]}],
+    "rigid_groups": [{"id": "g000", "name": "bracket", "components": ["c009"],
+                      "grounded": True, "frame": None, "bbox_diag": 0.1}],
+    "joints": [], "loops": [], "warnings": [],
+}
 
 
 def _text(s):
@@ -51,7 +68,7 @@ def write_mesh(path, triangles, tolerance):
     for i in range(triangles):
         tris.extend([0, i + 1, i + 2])
 
-    body = struct.pack("<III", swmesh.MAGIC, swmesh.VERSION, 0)
+    body = struct.pack("<III", swmesh.MAGIC, 1, 0)
     body += struct.pack("<d", tolerance)
     body += struct.pack("<III", 1, 1, 1)
     body += _text("grey") + struct.pack("<6f", 0.8, 0.8, 0.8, 1.0, 0.5, 0.0) + _text("")
@@ -86,11 +103,27 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.rstrip("/") == "/ping":
             self._send(200, {"ok": True, "app": "Peak.SwToBlender"})
             return
-        if self.headers.get("X-SWTB-Token") != TOKEN:
+        if self.headers.get("X-CADLink-Token") != TOKEN:
             self._send(403, {"ok": False, "error": "bad token"})
             return
         request = json.loads(body.decode("utf-8"))
         self.server.seen.append(request)
+        if request.get("op") == "export":
+            # The whole assembly again: the part is now 120 mm along X and
+            # the manifest says so.
+            mesh = os.path.join(tempfile.gettempdir(), "refine_resend.swmesh")
+            write_mesh(mesh, FINE_TRIS, 0.00002)
+            manifest = os.path.join(tempfile.gettempdir(), "refine_resend.rig.json")
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump(RESEND_MANIFEST, fh)
+            self._send(200, {"ok": True, "mesh": mesh, "manifest": manifest})
+            return
+        if request.get("op") == "poses":
+            # The part has been moved 50 mm along X in the CAD assembly.
+            self._send(200, {"ok": True, "components": [
+                {"id": "c009", "sw_path": "bracket-1", "sw_persistent_id": "abc",
+                 "transform": [1, 0, 0, 0.05, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]}]})
+            return
         if request.get("op") != "retessellate":
             self._send(200, {"ok": False, "error": "unknown op"})
             return
@@ -116,16 +149,16 @@ def main():
     # one would let discovery find a SolidWorks that is genuinely running
     # on this machine, and the test would then quietly measure that
     # instead, which is exactly what happened the first time.
-    real_registry = sw_link._REGISTRY
-    sw_link._REGISTRY = os.path.join(tempfile.gettempdir(), "swtb-smoke-registry")
-    os.makedirs(sw_link._REGISTRY, exist_ok=True)
-    registry = os.path.join(sw_link._REGISTRY, "smoke.json")
+    real_registry = cad_link._REGISTRY
+    cad_link._REGISTRY = os.path.join(tempfile.gettempdir(), "cadlink-smoke-registry")
+    os.makedirs(cad_link._REGISTRY, exist_ok=True)
+    registry = os.path.join(cad_link._REGISTRY, "smoke.json")
     with open(registry, "w", encoding="utf-8") as fh:
         json.dump({"pid": os.getpid(), "port": port, "token": TOKEN,
                    "addin_version": "smoke"}, fh)
     try:
         # 1. Discovery finds the stand-in and pings it.
-        found = [i for i in sw_link.discover() if i.port == port]
+        found = [i for i in cad_link.discover() if i.port == port]
         assert found, "discovery did not find the running server"
 
         # 2. A coarse import, then something that must survive refinement:
@@ -133,7 +166,7 @@ def main():
         coarse = write_mesh(
             os.path.join(tempfile.gettempdir(), "refine_coarse.swmesh"),
             COARSE_TRIS, 0.002)
-        objects, _ = native_import.build(bpy.context, coarse)
+        objects, import_report = native_import.build(bpy.context, coarse)
         obj = objects[0]
         assert len(obj.data.polygons) == COARSE_TRIS
 
@@ -161,8 +194,8 @@ def main():
             o.select_set(False)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
-        assert bpy.ops.swtb.refine_selected.poll(), "operator refused the selection"
-        result = bpy.ops.swtb.refine_selected(quality=0.9)
+        assert bpy.ops.cadlink.update_from_cad.poll(), "operator refused the selection"
+        result = bpy.ops.cadlink.update_from_cad(quality=0.9, scope="SELECTED")
         assert "FINISHED" in result, result
 
         # 4. The request said what it should have.
@@ -184,11 +217,79 @@ def main():
             "the coarse mesh was left behind"
         assert len(bpy.data.meshes) == meshes_before
 
+        # 7. A wider scope asks for more than the selection: with nothing
+        # selected, the whole send is every object of this file.
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        result = bpy.ops.cadlink.update_from_cad(quality=0.5, scope="WHOLE")
+        assert "FINISHED" in result, result
+        assert server.seen[-1]["components"] == ["c009"], server.seen[-1]
+
+        # 8. Poses: the CAD side says the part has moved, and the object
+        #    follows. The manifest keeps the new transform, so a rig built
+        #    from it afterwards rests where the part now is.
+        from STEPper_NEXT.rig import manifest as man_mod, ui as rig_ui
+        data = {
+            "manifest_version": "1.0.0",
+            "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+            "units": {"length": "meter", "angle": "radian"},
+            "frame": {"handedness": "right", "up_axis": "Z",
+                      "transform_convention": "row_major_4x4_global"},
+            "step_export": {"file": "refine.step", "ap": "AP214",
+                            "sha1": None, "occurrence_matching": None},
+            "components": [{"id": "c009", "sw_path": "bracket-1", "step_name": "bracket",
+                            "step_occurrence_path": None,
+                            "transform": [[1, 0, 0, 0], [0, 1, 0, 0],
+                                          [0, 0, 1, 0], [0, 0, 0, 1]]}],
+            "rigid_groups": [{"id": "g000", "name": "bracket", "components": ["c009"],
+                              "grounded": True, "frame": None, "bbox_diag": 0.1}],
+            "joints": [], "loops": [], "warnings": [],
+        }
+        rig_ui._STATE["manifest"] = man_mod.parse(data)
+        rig_ui._STATE["match_report"] = import_report
+        # Pose sync moves objects, so the part is off its bone for this
+        # part of the test. With a rig in the scene the operator rebuilds
+        # it first, which releases the geometry the same way.
+        obj.parent = None
+        bpy.context.view_layer.update()
+        before = obj.matrix_world.translation.copy()
+        result = bpy.ops.cadlink.update_from_cad(scope="WHOLE", what="POSES")
+        assert "FINISHED" in result, result
+        assert server.seen[-1]["op"] == "poses", server.seen[-1]
+        bpy.context.view_layer.update()
+        now = obj.matrix_world.translation
+        assert (now - before).length > 1e-6, "the part did not move at all"
+        assert abs(now.x - 0.05) < 1e-6 and abs(now.y) < 1e-6 and abs(now.z) < 1e-6, \
+            "the part is not on the CAD pose: %s" % list(now)
+        rows = rig_ui._STATE["manifest"].components[0].transform
+        assert abs(rows[0][3] - 0.05) < 1e-9, "the manifest kept the old pose: %s" % rows
+
+        # 9. Everything: the CAD side exports the assembly again, and the
+        #    scene is rebuilt from it. This is what catches parts added or
+        #    removed and mates changed, which no geometry update can see.
+        objects_before = len([o for o in bpy.data.objects if o.get("RIG_component_id")])
+        result = bpy.ops.cadlink.update_from_cad(scope="WHOLE", what="EVERYTHING")
+        assert "FINISHED" in result, result
+        assert server.seen[-1]["op"] == "export", server.seen[-1]
+        bpy.context.view_layer.update()
+        rebuilt = [o for o in bpy.data.objects if o.get("RIG_component_id")]
+        assert len(rebuilt) == objects_before, \
+            "the re-send left %d objects, not %d" % (len(rebuilt), objects_before)
+        assert abs(rebuilt[0].matrix_world.translation.x - 0.12) < 1e-6, \
+            "the re-sent part is not where the new manifest says: %s" % list(
+                rebuilt[0].matrix_world.translation)
+        rows = rig_ui._STATE["manifest"].components[0].transform
+        assert abs(rows[0][3] - 0.12) < 1e-9, "the new manifest was not loaded: %s" % rows
+        arms = [o for o in bpy.data.objects if o.type == "ARMATURE" and o.get("RIG_rig")]
+        assert len(arms) == 1, "the re-send did not rebuild exactly one rig: %s" % arms
+
         print("refine_smoke: OK: %d -> %d triangles, object kept its bone "
-              "parent and world pose" % (COARSE_TRIS, FINE_TRIS))
+              "parent and world pose, a pose update moved it onto the new CAD "
+              "transform, and a whole-assembly re-send rebuilt the scene from a "
+              "fresh export" % (COARSE_TRIS, FINE_TRIS))
     finally:
         server.shutdown()
-        sw_link._REGISTRY = real_registry
+        cad_link._REGISTRY = real_registry
         try:
             os.unlink(registry)
         except OSError:

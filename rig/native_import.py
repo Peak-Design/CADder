@@ -22,10 +22,12 @@ tolerance the add-in was asked for, so a part that needs to be smoother
 has to be asked for again, which is what the quality round trip is for.
 """
 
+import os
+
 import bpy
 from mathutils import Matrix
 
-from . import matching, swmesh
+from . import appearance, matdb, matching, swmesh
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -34,30 +36,47 @@ from . import matching, swmesh
 _TAG_COMPONENT = "RIG_component_id"
 _TAG_GROUP = "RIG_group"
 _TAG_DEFINITION = "SWMESH_definition"
+# The CAD system's own id for the occurrence, from the manifest. The
+# component ids (c001, c002) are per export and shift when a part is added
+# in front of another; this one does not, so a later update can find the
+# same occurrence after the assembly has been edited.
+_TAG_PERSISTENT = "SWMESH_persistent_id"
 _TAG_TOLERANCE = "SWMESH_tolerance_m"
 
 
-def _material(spec, name_prefix):
-    """A Principled BSDF carrying the SolidWorks appearance. Reused by name
-    so a re-import does not pile up duplicates."""
-    name = "%s%s" % (name_prefix, spec.name or "material")
-    mat = bpy.data.materials.get(name)
+def _material(spec, name_prefix, unit_scale=1.0):
+    """A material carrying the SolidWorks appearance (appearance.py builds
+    the node tree). Reused only when the appearance is the same one: two
+    appearances can share a name (a library appearance with different
+    mappings or decals, or the generic "color" in different colours,
+    live cam-follower, 2026-09-15), and the second then becomes a
+    material of its own.
+
+    The appearance travels on the material as SWMESH_appearance (the
+    add-in's JSON, untouched) and SWMESH_appearance_name (the name without
+    Blender's .001 suffix), for a material database to key on."""
+    base = "%s%s" % (name_prefix, spec.name or "material")
+    parsed = appearance.parse(spec.appearance_json)
+    if parsed is None:
+        parsed = {"blender": {"roughness": spec.roughness, "metallic": spec.metallic},
+                  "texture": spec.texture}
+    identity = appearance.digest(spec.appearance_json or "%r|%r|%r|%r" % (
+        tuple(round(c, 4) for c in spec.rgba), round(spec.roughness, 4),
+        round(spec.metallic, 4), spec.texture))
+    mat = None
+    for cand in bpy.data.materials:
+        if (cand.name == base or cand.name.startswith(base + ".")) \
+                and cand.get("SWMESH_appearance_hash") == identity:
+            mat = cand
+            break
     if mat is None:
-        mat = bpy.data.materials.new(name)
-        mat.use_nodes = True
-    mat.diffuse_color = spec.rgba
-    bsdf = mat.node_tree.nodes.get("Principled BSDF") if mat.use_nodes else None
-    if bsdf is not None:
-        bsdf.inputs["Base Color"].default_value = spec.rgba
-        if "Roughness" in bsdf.inputs:
-            bsdf.inputs["Roughness"].default_value = spec.roughness
-        if "Metallic" in bsdf.inputs:
-            bsdf.inputs["Metallic"].default_value = spec.metallic
-        alpha = bsdf.inputs.get("Alpha")
-        if alpha is not None:
-            alpha.default_value = spec.rgba[3]
-    if spec.rgba[3] < 0.999:
-        mat.blend_method = "BLEND"
+        mat = bpy.data.materials.new(base)
+        appearance.build(mat, parsed, tuple(spec.rgba), unit_scale)
+    mat["SWMESH_rgba"] = list(spec.rgba)
+    mat["SWMESH_appearance_hash"] = identity
+    mat["SWMESH_appearance_name"] = base
+    if spec.appearance_json:
+        mat["SWMESH_appearance"] = spec.appearance_json
     return mat
 
 
@@ -93,13 +112,18 @@ def _build_mesh(definition, materials, unit_scale):
     me.update()
     me.validate(verbose=False)
 
-    for spec in materials:
-        me.materials.append(spec)
     if definition.triangle_materials is not None and materials:
+        # Only the materials this definition uses, so a part does not
+        # carry every appearance in the assembly as an empty slot.
         top = len(materials) - 1
+        used = sorted({min(max(int(i), 0), top) for i in definition.triangle_materials})
+        slot = {}
+        for scene_index in used:
+            slot[scene_index] = len(me.materials)
+            me.materials.append(materials[scene_index])
         me.polygons.foreach_set(
             "material_index",
-            [min(max(int(i), 0), top) for i in definition.triangle_materials])
+            [slot[min(max(int(i), 0), top)] for i in definition.triangle_materials])
 
     if definition.normals is not None:
         # Custom split normals last: they are invalidated by geometry edits,
@@ -126,23 +150,117 @@ def _matrix(transform, unit_scale):
     return Matrix(rows)
 
 
-def remove_previous(collection_name):
-    """Clears a previous native import so a re-send replaces rather than
-    accumulates. Meshes go too: an orphaned datablock of a million
-    triangles is invisible in the outliner and very much present in the
-    file."""
+def _rehome_children(coll, home):
+    """Moves every child collection of `coll` under `home`, so removing
+    `coll` never takes a subtree out of the scene with it."""
+    for child in list(coll.children):
+        try:
+            coll.children.unlink(child)
+            if child.name not in {c.name for c in home.children}:
+                home.children.link(child)
+        except RuntimeError:
+            continue
+
+
+_TAG_FILE = "SWMESH_file"      # on every collection and object of an import
+
+
+def _own_collections(stem):
+    """Every collection a previous import of this file made (of any file,
+    with stem None), leaves first, so each is empty of children by the
+    time it is removed."""
+    mine = [c for c in bpy.data.collections
+            if c.get(_TAG_FILE) is not None and (stem is None or c.get(_TAG_FILE) == stem)]
+    depth = {}
+
+    def d(c):
+        if c.name in depth:
+            return depth[c.name]
+        parents = [p for p in bpy.data.collections if c.name in p.children]
+        depth[c.name] = 1 + max([d(p) for p in parents if p in mine], default=0)
+        return depth[c.name]
+
+    return sorted(mine, key=lambda c: -d(c))
+
+
+def remove_previous(stem=None, scene_collection=None):
+    """Clears the previous native import so a send replaces rather than
+    accumulates: one direct send stands in a scene at a time, whatever
+    assembly it was (a different one otherwise stacks a dead rig beside
+    the live one on every send, live 2026-09-14). Meshes go too: an
+    orphaned datablock of a million triangles is invisible in the outliner
+    and very much present in the file. `stem` narrows the removal to one
+    file's import; None takes every native import. The fixed collection
+    name of scenes from before is taken as well."""
     removed = 0
-    coll = bpy.data.collections.get(collection_name)
-    if coll is None:
+    colls = _own_collections(stem)
+    legacy = bpy.data.collections.get("SW_Native")
+    if legacy is not None and legacy not in colls:
+        colls.append(legacy)
+    objects = [o for o in bpy.data.objects
+               if o.get(_TAG_FILE) is not None and (stem is None or o.get(_TAG_FILE) == stem)]
+    for coll in colls:
+        for o in coll.objects:
+            if o not in objects:
+                objects.append(o)
+    if not colls and not objects:
         return 0
-    for obj in list(coll.objects):
-        data = obj.data
-        bpy.data.objects.remove(obj, do_unlink=True)
+    # The rigs these parts hang from. One whose every part goes with this
+    # replace is left driving nothing, so it goes too: a DIFFERENT assembly
+    # sent into the session otherwise stacks a dead rig beside the live
+    # one on every send (live 2026-09-14).
+    rigs = {}
+    for obj in objects:
+        arm = obj.parent
+        if arm is not None and arm.type == "ARMATURE" and arm.get("RIG_rig"):
+            rigs[arm.name] = arm
+    for obj in objects:
+        try:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+        except ReferenceError:
+            continue
         removed += 1
         if isinstance(data, bpy.types.Mesh) and data.users == 0:
             bpy.data.meshes.remove(data)
-    bpy.data.collections.remove(coll)
+    # The rig build parks its collection inside the one holding the parts
+    # it drives, which is this one. Removing it with the rig still inside
+    # cut the rig (and the bone widgets under it) out of the scene while
+    # keeping it in the file, so the next build found no rig collection
+    # in the scene and made a numbered copy. Children move up first.
+    for coll in colls:
+        try:
+            _rehome_children(coll, scene_collection or bpy.context.scene.collection)
+            bpy.data.collections.remove(coll)
+        except ReferenceError:
+            pass
+    orphaned = []
+    for arm in rigs.values():
+        try:
+            still_driven = any(
+                o.parent is arm and not o.get("RIG_rig") and not o.get("RIG_helper")
+                for o in bpy.data.objects)
+        except ReferenceError:
+            continue
+        if not still_driven:
+            orphaned.append(arm)
+    if orphaned:
+        from . import rig_build
+        names = [a.name for a in orphaned]
+        for arm in orphaned:
+            rig_build.remove_rig(arm)
+        print("[CADLink native] removed %d rig(s) whose every part was "
+              "replaced: %s" % (len(names), ", ".join(names)))
     return removed
+
+
+def _persistent_of(manifest):
+    """Component id -> the CAD system's persistent id, where there is one."""
+    out = {}
+    for c in (manifest.components if manifest is not None else []):
+        if c.sw_persistent_id:
+            out[c.id] = c.sw_persistent_id
+    return out
 
 
 def _group_of(manifest):
@@ -158,44 +276,217 @@ def _group_of(manifest):
     return out
 
 
-def build(context, path, manifest=None, collection_name="SW_Native",
-          unit_scale=1.0, material_prefix="SW "):
+# The CAD axis that becomes Blender's Z, as the STEP importer's up_as
+# option spells it. "ZPOS" is no rotation: the manifest frame is kept.
+_UP_ROTATIONS = {
+    "XPOS": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+    "YPOS": ((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+    "ZPOS": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+}
+
+
+def up_frame(up_as):
+    """The 4x4 that turns CAD coordinates so the chosen axis points up,
+    as row lists. The same map main.transform_to_up applies to a STEP
+    import (swap the up row with Z, negate it), so a direct send and a STEP
+    import of one assembly land the same way."""
+    r = _UP_ROTATIONS.get(up_as or "ZPOS", _UP_ROTATIONS["ZPOS"])
+    return [[r[0][0], r[0][1], r[0][2], 0.0],
+            [r[1][0], r[1][1], r[1][2], 0.0],
+            [r[2][0], r[2][1], r[2][2], 0.0],
+            [0.0, 0.0, 0.0, 1.0]]
+
+
+# The STEP importer's modes, with the same collection names and roles, so
+# a direct send and a STEP import of one assembly look alike in the
+# outliner. FLAT: one collection per part name. TREE: nested collections
+# mirroring the assembly. EMPTIES: parts parented under empties mirroring
+# the assembly. COLLECTION_INSTANCES: one prototype per part in a hidden
+# ".components" collection, every occurrence an instancing empty.
+HIERARCHIES = ("FLAT", "TREE", "EMPTIES", "COLLECTION_INSTANCES")
+
+
+def _collection(name, stem, role, parent):
+    """A collection that says which import made it and what for, so a
+    re-send can take its own away and leave the user's alone."""
+    if len(name) > 50:
+        name = name[:25] + "_" + name[-25:]
+    col = bpy.data.collections.new(name)
+    col[_TAG_FILE] = stem
+    col["SWMESH_role"] = role
+    parent.children.link(col)
+    return col
+
+
+def _paths(manifest):
+    """component id -> sw_path, and sw_path -> component, from the
+    manifest. The path is the assembly tree: "sub-1/part-2" hangs under
+    "sub-1"."""
+    by_id, by_path = {}, {}
+    if manifest is None:
+        return by_id, by_path
+    for c in manifest.components:
+        by_id[c.id] = c.sw_path or c.id
+        by_path[c.sw_path or c.id] = c
+    return by_id, by_path
+
+
+def _object_colour(obj):
+    """The viewport colour, so a Solid view set to Object colour matches
+    the CAD, as the STEP importer does."""
+    data = obj.data if obj.type == "MESH" else (
+        obj.instance_collection.objects[0].data
+        if obj.instance_collection is not None and obj.instance_collection.objects else None)
+    if data is None or not data.materials:
+        return
+    mat = data.materials[0]
+    if mat is not None and mat.get("SWMESH_rgba") is not None:
+        # The material's viewport colour, which the appearance builder has
+        # already made linear; the record's own rgba is display sRGB.
+        obj.color = tuple(mat.diffuse_color)
+
+
+def build(context, path, manifest=None, collection_name=None,
+          unit_scale=1.0, material_prefix="SW ", up_as="ZPOS",
+          hierarchy="FLAT", group_in_collection=False):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
     The report is what ties this into the existing pipeline: every entry is
     exact, so pose sync, the rig build and relink behave as though matching
-    had run and got everything right, which, here, it has. The manifest is
-    needed for one thing only: the component-to-group map that re-linking
-    attaches by."""
+    had run and got everything right, which, here, it has. The manifest
+    gives the component-to-group map that re-linking attaches by, and the
+    assembly paths the tree modes are built from.
+
+    up_as is the CAD axis that becomes Blender's up (the STEP importer's
+    option, same spelling): the geometry is turned and the report's frame
+    says so, so the rig lands on it. hierarchy is the STEP importer's
+    hierarchy_types; group_in_collection wraps the import in one
+    collection named after the file, as the importer does."""
     scene = swmesh.load(path)
     group_of = _group_of(manifest)
+    persistent_of = _persistent_of(manifest)
+    by_id, by_path = _paths(manifest)
+    frame_rows = up_frame(up_as)
+    frame = Matrix([tuple(r) for r in frame_rows])
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if hierarchy not in HIERARCHIES:
+        hierarchy = "FLAT"
 
-    remove_previous(collection_name)
-    coll = bpy.data.collections.new(collection_name)
-    context.scene.collection.children.link(coll)
+    remove_previous(None, context.scene.collection)
+    destination = context.scene.collection
+    if group_in_collection:
+        destination = _collection(stem, stem, "file", destination)
+    suffix = {"FLAT": ".flat", "TREE": ".hierarchy", "EMPTIES": ".hierarchy",
+              "COLLECTION_INSTANCES": ".hierarchy"}[hierarchy]
+    root = _collection(stem + suffix, stem, suffix[1:], destination)
 
-    materials = [_material(spec, material_prefix) for spec in scene.materials]
+    materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
     meshes = {}
     for definition in scene.definitions:
         meshes[definition.id] = _build_mesh(definition, materials, unit_scale)
 
+    # Prototypes for the instancing mode: one object per definition at the
+    # origin, in a hidden ".components" collection, tagged like the parts
+    # so a refine finds the mesh to swap.
+    prototypes = {}
+    if hierarchy == "COLLECTION_INSTANCES":
+        components = _collection(stem + ".components", stem, "components", destination)
+        for definition in scene.definitions:
+            me = meshes.get(definition.id)
+            if me is None:
+                continue
+            part_col = _collection(definition.name or ("definition %d" % definition.id),
+                                   stem, "part", components)
+            proto = bpy.data.objects.new(definition.name or "part", me)
+            proto[_TAG_FILE] = stem
+            proto[_TAG_DEFINITION] = definition.id
+            proto[_TAG_TOLERANCE] = scene.tolerance
+            proto["SWMESH_prototype"] = True
+            _material_names(proto)
+            part_col.objects.link(proto)
+            prototypes[definition.id] = part_col
+        _exclude(context, components)
+
+    # Subassembly nodes for the tree modes: every path prefix above a part.
+    tree_cols = {"": root}
+    empties = {}
+
+    def node_col(sw_path):
+        if sw_path in tree_cols:
+            return tree_cols[sw_path]
+        parent_path = sw_path.rpartition("/")[0]
+        col = _collection(sw_path.rpartition("/")[2], stem, "node", node_col(parent_path))
+        tree_cols[sw_path] = col
+        return col
+
+    def node_empty(sw_path):
+        if not sw_path:
+            return None
+        if sw_path in empties:
+            return empties[sw_path]
+        parent = node_empty(sw_path.rpartition("/")[0])
+        emp = bpy.data.objects.new(sw_path.rpartition("/")[2], None)
+        emp.empty_display_size = 2
+        emp.empty_display_type = "PLAIN_AXES"
+        emp[_TAG_FILE] = stem
+        comp = by_path.get(sw_path)
+        if comp is not None:
+            emp[_TAG_COMPONENT] = comp.id
+            emp.matrix_world = frame @ _matrix([v for row in comp.transform for v in row], unit_scale)
+        root.objects.link(emp)
+        if parent is not None:
+            emp.parent = parent
+            emp.matrix_parent_inverse = parent.matrix_world.inverted()
+        empties[sw_path] = emp
+        return emp
+
     objects = []
+    flat_groups = {}
     report = matching.MatchReport()
-    report.frame_rows = matching.identity_frame()
+    report.frame_rows = frame_rows
     for inst in scene.instances:
         me = meshes.get(inst.definition_id)
         if me is None:
             report.unmatched.append(inst.component_id)
             continue
-        obj = bpy.data.objects.new(inst.name or inst.component_id, me)
-        obj.matrix_world = _matrix(inst.transform, unit_scale)
+        name = inst.name or inst.component_id
+        if hierarchy == "COLLECTION_INSTANCES":
+            obj = bpy.data.objects.new(name, None)
+            obj.instance_type = "COLLECTION"
+            obj.instance_collection = prototypes.get(inst.definition_id)
+            obj.empty_display_size = 0.01
+        else:
+            obj = bpy.data.objects.new(name, me)
+        obj.matrix_world = frame @ _matrix(inst.transform, unit_scale)
+        obj[_TAG_FILE] = stem
         obj[_TAG_COMPONENT] = inst.component_id
         gid = group_of.get(inst.component_id)
         if gid is not None:
             obj[_TAG_GROUP] = gid
         obj[_TAG_DEFINITION] = inst.definition_id
         obj[_TAG_TOLERANCE] = scene.tolerance
-        coll.objects.link(obj)
+        persistent = persistent_of.get(inst.component_id)
+        if persistent:
+            obj[_TAG_PERSISTENT] = persistent
+
+        sw_path = by_id.get(inst.component_id, name)
+        parent_path = sw_path.rpartition("/")[0]
+        if hierarchy == "FLAT":
+            key = me.name
+            col = flat_groups.get(key)
+            if col is None:
+                col = flat_groups[key] = _collection(key, stem, "group", root)
+            col.objects.link(obj)
+        elif hierarchy == "TREE":
+            node_col(parent_path).objects.link(obj)
+        else:
+            root.objects.link(obj)
+            parent = node_empty(parent_path)
+            if parent is not None:
+                obj.parent = parent
+                obj.matrix_parent_inverse = parent.matrix_world.inverted()
+        _object_colour(obj)
+        _material_names(obj)
         objects.append(obj)
         report.matched.append(
             matching.MatchEntry(component_id=inst.component_id,
@@ -203,8 +494,60 @@ def build(context, path, manifest=None, collection_name="SW_Native",
                                 step=0,          # no search happened
                                 confidence="exact"))
 
+    # Every instance was placed through the frame, so every one anchors
+    # it. The Build Rig operator trusts a frame only when something agreed
+    # with it (an unanchored match frame is identity by default, and the
+    # rig would land at the origin instead of the cursor). Without this
+    # count a Y-up send turned the geometry and left the rig in the
+    # manifest frame, its bones across the parts.
+    # The material database, as a STEP import applies it: the materials
+    # are named after the SolidWorks appearance and every object carries
+    # STEP_materials, so an entry for "SW polished gold" replaces it here.
+    matdb.apply(objects + prototypes_objects(prototypes), "direct send")
+    report.frame_agree = len(report.matched)
     context.view_layer.update()
     return objects, report
+
+
+def prototypes_objects(prototypes):
+    """The prototype objects of the instancing mode, which hold the meshes
+    and so the material slots."""
+    out = []
+    for collection in (prototypes or {}).values():
+        out.extend(collection.objects)
+    return out
+
+
+def _material_names(obj):
+    """STEP_materials, the property the STEPper NEXT material database
+    matches on: the original name of the material in each slot, so a
+    database entry for "polished gold" replaces it on a direct send
+    exactly as on a STEP import."""
+    data = obj.data if obj.type == "MESH" else None
+    if data is None and obj.instance_collection is not None:
+        return
+    if data is None:
+        return
+    import json
+    names = [(m.get("SWMESH_appearance_name") or m.name) if m is not None else ""
+             for m in data.materials]
+    obj["STEP_materials"] = json.dumps(names)
+
+
+def _exclude(context, collection):
+    """Hides a collection from the view layer, as the STEP importer hides
+    its prototypes."""
+    def find(layer_col):
+        if layer_col.collection == collection:
+            return layer_col
+        for child in layer_col.children:
+            found = find(child)
+            if found is not None:
+                return found
+        return None
+    lc = find(context.view_layer.layer_collection)
+    if lc is not None:
+        lc.exclude = True
 
 
 def refine(context, path, unit_scale=1.0, material_prefix="SW "):
@@ -218,7 +561,7 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
 
     Returns the objects whose geometry changed."""
     scene = swmesh.load(path)
-    materials = [_material(spec, material_prefix) for spec in scene.materials]
+    materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
 
     by_component = {}
     for obj in bpy.data.objects:
@@ -249,6 +592,10 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
             obj[_TAG_DEFINITION] = inst.definition_id
             obj[_TAG_TOLERANCE] = scene.tolerance
             replaced.append(obj)
+
+    for obj in replaced:
+        _material_names(obj)
+    matdb.apply(replaced, "refine")
 
     # Only now: a datablock may still have been in use while the loop ran.
     for name in retired:

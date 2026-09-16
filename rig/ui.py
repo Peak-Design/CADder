@@ -10,9 +10,10 @@ manifest. The panel itself only ever draws already-validated state, so a
 broken file can never take the UI down with it.
 """
 
+import json
 import os
 
-from . import (graph, joining, manifest as manifest_mod, matching,
+from . import (graph, inputs, joining, manifest as manifest_mod, matching,
                parenting, pose_sync, rig_build)
 from .manifest import ManifestError
 
@@ -29,6 +30,10 @@ _STATE = {
     "build": None,
     "parent_report": None,
     "join_report": None,
+    # The import options of the last send (hierarchy, up axis, quality), so
+    # an Update from CAD that asks for the whole assembly again lands it the
+    # same way round and in the same shape.
+    "import_options": None,
     "error": "",
 }
 
@@ -41,6 +46,114 @@ def _reset_state():
     _STATE["build"] = None
     _STATE["parent_report"] = None
     _STATE["error"] = ""
+
+
+# ── The driver choice (inputs.py) ───────────────────────────────────────
+#
+# One dropdown per mechanism that offers more than one input. Picking one
+# applies the candidate to the loaded manifest and, when a rig is standing,
+# rebuilds it on the spot: the build is fast enough to try every input
+# until the rig suits the job. The choice is remembered on the armature by
+# a key that survives re-export (part paths, not ids), so a manifest sent
+# again keeps it.
+
+_ENUM_CACHE = {}       # mechanism index -> items (Blender needs them kept alive)
+_SYNCING = [False]     # set while the panel state is being filled, not chosen
+_CHOICE_TAG = "RIG_driver_choice"
+
+
+def _driver_items(self, context):
+    m = _STATE["manifest"]
+    fallback = [("NONE", "(no choice)", "")]
+    if m is None:
+        return fallback
+    mechs = inputs.mechanisms(m)
+    if self.index >= len(mechs):
+        return fallback
+    cands = inputs.candidates(m, mechs[self.index])
+    labels = [inputs.label(m, jid) for jid in cands]
+    # Two pins of one link on one arm read the same; the joint id tells
+    # them apart (live plunger.sldasm, 2026-09-15).
+    items = [(jid, lab if labels.count(lab) == 1 else "{} ({})".format(lab, jid),
+              "joint " + jid)
+             for jid, lab in zip(cands, labels)]
+    if not items:
+        return fallback
+    _ENUM_CACHE[self.index] = items
+    return items
+
+
+def _driver_changed(self, context):
+    if _SYNCING[0] or bpy is None:
+        return
+    m = _STATE["manifest"]
+    if m is None or self.driver == "NONE":
+        return
+    mechs = inputs.mechanisms(m)
+    if self.index >= len(mechs):
+        return
+    if not inputs.apply(m, mechs[self.index], self.driver):
+        return
+    _STATE["plan"] = None
+    if _find_rig(context) is None:
+        return          # applied at the next Build Rig
+    try:
+        bpy.ops.cadlink.build_rig()
+        if bpy.ops.cadlink.relink_geometry.poll():
+            bpy.ops.cadlink.relink_geometry()
+    except RuntimeError as exc:
+        _STATE["error"] = str(exc)
+
+
+def _stored_choices(context):
+    arm = _find_rig(context)
+    if arm is None:
+        return set()
+    try:
+        return set(json.loads(arm.get(_CHOICE_TAG) or "[]"))
+    except (TypeError, ValueError):
+        return set()
+
+
+def _store_choices(context, arm_obj):
+    """Writes the current choices onto the rig, keyed by part paths."""
+    m = _STATE["manifest"]
+    if m is None or arm_obj is None:
+        return
+    keys = []
+    for entry in context.scene.cad_link.mechanisms:
+        if entry.driver and entry.driver != "NONE":
+            k = inputs.key(m, entry.driver)
+            if k:
+                keys.append(k)
+    arm_obj[_CHOICE_TAG] = json.dumps(keys)
+
+
+def _sync_mechanisms(context, m):
+    """Fills the panel's dropdowns for a freshly loaded manifest, applying
+    any choice the standing rig remembers."""
+    settings = context.scene.cad_link
+    stored = _stored_choices(context)
+    _SYNCING[0] = True
+    try:
+        settings.mechanisms.clear()
+        _ENUM_CACHE.clear()
+        for index, mech in enumerate(inputs.mechanisms(m)):
+            cands = inputs.candidates(m, mech)
+            if len(cands) < 2:
+                continue
+            for jid in cands:
+                if inputs.key(m, jid) in stored:
+                    inputs.apply(m, mech, jid)
+                    break
+            entry = settings.mechanisms.add()
+            entry.index = index
+            entry.name = "Mechanism {}".format(len(settings.mechanisms))
+            cur = inputs.current(m, mech)
+            if cur in cands:
+                entry.driver = cur
+    finally:
+        _SYNCING[0] = False
 
 
 def _stepper_available():
@@ -56,12 +169,12 @@ def _stepper_available():
         return False
 
 
-def _sw_integration_enabled(context):
-    """True when the user has switched on the experimental SolidWorks
-    integration in the addon preferences.
+def _cad_link_enabled(context):
+    """True when the user has switched on the experimental CAD Link
+    in the addon preferences.
 
     Gates the whole tab: without it the panel never polls true, so the
-    "SW To Blender" category does not appear in the sidebar at all. Fails
+    "CAD Link" category does not appear in the sidebar at all. Fails
     closed, because a user who has not opted in should never see it.
     """
     if bpy is None:
@@ -91,8 +204,19 @@ def _find_rig(context):
 
 if bpy is not None:
 
-    class SWTB_OT_pick_manifest(bpy.types.Operator):
-        bl_idname = "swtb.pick_manifest"
+    class CADLINK_MechanismChoice(bpy.types.PropertyGroup):
+        """One mechanism's input, as a dropdown of its candidate joints."""
+        index: bpy.props.IntProperty(default=0)
+        driver: bpy.props.EnumProperty(
+            name="Input",
+            description="The joint this mechanism is driven from. Changing "
+                        "it rebuilds the rig",
+            items=_driver_items,
+            update=_driver_changed,
+        )
+
+    class CADLINK_OT_pick_manifest(bpy.types.Operator):
+        bl_idname = "cadlink.pick_manifest"
         bl_label = "Browse for Manifest"
         bl_description = "Pick a .rig.json manifest and load it"
 
@@ -108,18 +232,18 @@ if bpy is not None:
             return {"RUNNING_MODAL"}
 
         def execute(self, context):
-            context.scene.sw_to_blender.manifest_path = self.filepath
+            context.scene.cad_link.manifest_path = self.filepath
             # Picking a file means "use it": load immediately, the Load
             # button stays for re-reading a re-exported manifest.
-            return bpy.ops.swtb.load_manifest()
+            return bpy.ops.cadlink.load_manifest()
 
-    class SWTB_OT_load_manifest(bpy.types.Operator):
-        bl_idname = "swtb.load_manifest"
+    class CADLINK_OT_load_manifest(bpy.types.Operator):
+        bl_idname = "cadlink.load_manifest"
         bl_label = "Load Manifest"
         bl_description = "Parse and validate the rig manifest, plan the rig"
 
         def execute(self, context):
-            path = bpy.path.abspath(context.scene.sw_to_blender.manifest_path)
+            path = bpy.path.abspath(context.scene.cad_link.manifest_path)
             _reset_state()
             if not path or not os.path.isfile(path):
                 _STATE["error"] = "Manifest file not found: {}".format(path)
@@ -134,14 +258,15 @@ if bpy is not None:
                 return {"CANCELLED"}
             _STATE["manifest"] = m
             _STATE["plan"] = plan
+            _sync_mechanisms(context, m)
             self.report({"INFO"}, "Loaded {}: {} joints, {} groups, {} loops, "
                         "{} warnings".format(
                             os.path.basename(path), len(m.joints),
                             len(m.rigid_groups), len(m.loops), len(m.warnings)))
             return {"FINISHED"}
 
-    class SWTB_OT_import_step(bpy.types.Operator):
-        bl_idname = "swtb.import_step"
+    class CADLINK_OT_import_step(bpy.types.Operator):
+        bl_idname = "cadlink.import_step"
         bl_label = "Import STEP"
         bl_description = "Import the manifest's STEP file with STEPper NEXT"
 
@@ -164,16 +289,19 @@ if bpy is not None:
                             "manually with any STEP importer, then run Match "
                             "Geometry".format(step_path))
                 return {"CANCELLED"}
-            # The manifest frame is Z-up. STEPper's default up axis is Y
-            # (generic CAD), which would rotate the geometry out of the
-            # manifest frame.
-            bpy.ops.import_scene.occ_import_step(
-                filepath=step_path, up_as="ZPOS", fw_as="YPOS")
-            self.report({"INFO"}, "Imported {}".format(os.path.basename(step_path)))
+            # The normal STEPper import dialog, with the file filled in:
+            # every option the user has (up axis, hierarchy, quality), seeded
+            # from their preferences, instead of a fixed Z-up empties import
+            # nobody asked for. The matcher reads the scene frame from the
+            # geometry, so any up axis rigs correctly.
+            result = bpy.ops.import_scene.occ_import_step(
+                "INVOKE_DEFAULT", filepath=step_path)
+            if "FINISHED" in result:
+                self.report({"INFO"}, "Imported {}".format(os.path.basename(step_path)))
             return {"FINISHED"}
 
-    class SWTB_OT_match_geometry(bpy.types.Operator):
-        bl_idname = "swtb.match_geometry"
+    class CADLINK_OT_match_geometry(bpy.types.Operator):
+        bl_idname = "cadlink.match_geometry"
         bl_label = "Match Geometry"
         bl_description = "Match manifest components to scene objects"
 
@@ -200,11 +328,11 @@ if bpy is not None:
             self.report({level}, message)
             return {"FINISHED"}
 
-    class SWTB_OT_sync_poses(bpy.types.Operator):
-        bl_idname = "swtb.sync_poses"
-        bl_label = "Snap to SW Poses"
+    class CADLINK_OT_sync_poses(bpy.types.Operator):
+        bl_idname = "cadlink.sync_poses"
+        bl_label = "Snap to CAD Poses"
         bl_description = ((
-            "Move matched geometry onto the SolidWorks transforms in the "
+            "Move matched geometry onto the CAD transforms in the "
             "manifest. This fixes instances that the STEP file could only store"
             " at one shared pose. An example is a flexed subassembly beside its"
             " rigid twin"
@@ -235,8 +363,8 @@ if bpy is not None:
                             "their SW poses".format(report.already_ok))
             return {"FINISHED"}
 
-    class SWTB_OT_build_rig(bpy.types.Operator):
-        bl_idname = "swtb.build_rig"
+    class CADLINK_OT_build_rig(bpy.types.Operator):
+        bl_idname = "cadlink.build_rig"
         bl_label = "Build Rig"
         bl_description = "Build the constrained armature from the manifest"
 
@@ -266,14 +394,15 @@ if bpy is not None:
                 return {"CANCELLED"}
             _STATE["plan"] = plan
             _STATE["build"] = result
+            _store_choices(context, result.armature_object)
             level = "INFO" if not result.warnings else "WARNING"
             self.report({level}, "Built {} bones, {} helpers, {} warnings".format(
                 len(result.bone_names), len(result.helper_names),
                 len(result.warnings)))
             return {"FINISHED"}
 
-    class SWTB_OT_relink_geometry(bpy.types.Operator):
-        bl_idname = "swtb.relink_geometry"
+    class CADLINK_OT_relink_geometry(bpy.types.Operator):
+        bl_idname = "cadlink.relink_geometry"
         bl_label = "Re-link Geometry"
         bl_description = "Parent matched geometry to the rig, preserving world transforms"
 
@@ -307,8 +436,8 @@ if bpy is not None:
                     report.bone_parented))
             return {"FINISHED"}
 
-    class SWTB_OT_join_rigs(bpy.types.Operator):
-        bl_idname = "swtb.join_rigs"
+    class CADLINK_OT_join_rigs(bpy.types.Operator):
+        bl_idname = "cadlink.join_rigs"
         bl_label = "Join Rigs"
         bl_description = ("Fold the other selected rigs into the active one, "
                           "hang each of their roots off one of its bones, and "
@@ -364,7 +493,7 @@ if bpy is not None:
             _STATE["join_report"] = report
 
             for w in report.warnings:
-                print("[SWTB join]", w)
+                print("[CADLink join]", w)
             if report.drift:
                 worst = max(d for _, d in report.drift)
                 self.report({"WARNING"},
@@ -373,7 +502,7 @@ if bpy is not None:
                                 report.bones_added, len(report.drift),
                                 worst * 1000.0))
                 for name, d in report.drift[:10]:
-                    print("[SWTB join] moved {:.6f} m: {}".format(d, name))
+                    print("[CADLink join] moved {:.6f} m: {}".format(d, name))
             elif report.warnings:
                 self.report({"WARNING"}, report.warnings[0])
             else:
@@ -385,16 +514,140 @@ if bpy is not None:
                                 report.reparented))
             return {"FINISHED"}
 
-    class SWTB_OT_refine_selected(bpy.types.Operator):
-        bl_idname = "swtb.refine_selected"
-        bl_label = "Refine in SolidWorks"
+    def _linked_objects():
+        """Every object that came in over CAD Link."""
+        return [o for o in bpy.data.objects if o.get("RIG_component_id")]
+
+    def _scope_objects(context, scope):
+        """The objects an update covers. Selected parts is what is selected.
+        Collection widens that to everything in the same collections, which
+        is a subassembly in the tree modes. Whole assembly is every object
+        of the same send."""
+        selected = [o for o in context.selected_objects if o.get("RIG_component_id")]
+        if scope == "SELECTED":
+            return selected
+        if scope == "COLLECTION":
+            collections = set()
+            for o in selected:
+                collections.update(c.name for c in o.users_collection)
+            if not collections and context.collection is not None:
+                collections.add(context.collection.name)
+            return [o for o in _linked_objects()
+                    if any(c.name in collections for c in o.users_collection)]
+        files = {o.get("SWMESH_file") for o in selected}
+        files.discard(None)
+        if not files:
+            return _linked_objects()
+        return [o for o in _linked_objects() if o.get("SWMESH_file") in files]
+
+    def _apply_poses(context, reply):
+        """Puts the CAD poses the reply carries into the manifest, then onto
+        the scene: the rig is rebuilt first, which releases the geometry
+        from its bones, the objects are moved onto the new poses, and the
+        geometry goes back on the bones. Without a rig the objects simply
+        move. Returns how many moved."""
+        manifest = _STATE.get("manifest")
+        entries = (reply or {}).get("components") or []
+        by_id = {}
+        for entry in entries:
+            rows = entry.get("transform")
+            if entry.get("id") and rows and len(rows) == 16:
+                by_id[entry["id"]] = [list(rows[i * 4:i * 4 + 4]) for i in range(4)]
+        if manifest is None or not by_id:
+            return 0
+        for component in manifest.components:
+            rows = by_id.get(component.id)
+            if rows is not None:
+                component.transform = rows
+
+        had_rig = any(o.get("RIG_rig") and o.type == "ARMATURE" for o in bpy.data.objects)
+        if had_rig and bpy.ops.cadlink.build_rig.poll():
+            bpy.ops.cadlink.build_rig()
+        moved = 0
+        if bpy.ops.cadlink.sync_poses.poll():
+            bpy.ops.cadlink.sync_poses()
+            report = _STATE.get("pose_report")
+            moved = len(report.moved) if report is not None else 0
+        if had_rig and bpy.ops.cadlink.relink_geometry.poll():
+            bpy.ops.cadlink.relink_geometry()
+        context.view_layer.update()
+        return moved
+
+    def _resend_everything(context):
+        """Asks the CAD application to export the whole assembly again and
+        runs it through the same stages a send does: the old import is
+        replaced, the poses are synced, the rig is rebuilt from the new
+        manifest and the geometry goes back on its bones. This is what
+        catches parts added or removed and mates changed, which no update of
+        the geometry alone can see.
+
+        The import options of the last send are reused, so the assembly
+        lands the same way round and in the same shape."""
+        from . import cad_link, manifest as man_mod
+        from .. import bridge
+        out = {}
+        try:
+            reply = cad_link.request("export", mesh=True)
+        except cad_link.CadLinkError as exc:
+            return {"error": str(exc)}
+        mesh = reply.get("mesh")
+        manifest_path = reply.get("manifest")
+        if not mesh:
+            return {"error": "the CAD application sent no mesh"}
+        if manifest_path:
+            try:
+                _STATE["manifest"] = man_mod.load(manifest_path)
+            except (OSError, ManifestError) as exc:
+                return {"error": "the new manifest could not be read: %s" % exc}
+        options = _STATE.get("import_options") or {"hierarchy_types": "FLAT", "up_as": "ZPOS"}
+        payload = {
+            "step": None, "mesh": mesh, "manifest": manifest_path,
+            "steps": {"import": False, "replace": True, "match": True,
+                      "sync_poses": True, "build_rig": True, "relink": True,
+                      "cleanup": True},
+            "import_options": options,
+        }
+        result = bridge._run_job(payload)
+        if not result.get("ok"):
+            return {"error": result.get("error") or "the import failed"}
+        stages = result.get("stages") or {}
+        out["objects"] = (stages.get("mesh") or {}).get("objects", 0)
+        rig = stages.get("rig")
+        out["rig"] = ("%d bone(s)" % rig["bones"]) if rig else "no rig"
+        return out
+
+    class CADLINK_OT_update_from_cad(bpy.types.Operator):
+        bl_idname = "cadlink.update_from_cad"
+        bl_label = "Update from CAD"
         bl_description = ((
-            "Ask SolidWorks to tessellate the selected parts again at a finer "
-            "tolerance. The addon swaps the new geometry in and keeps the pose "
-            "and the rig"
+            "Ask the CAD application for the geometry of these parts again, at the "
+            "quality set here. The addon swaps the new geometry in and keeps the "
+            "pose, the materials and the rig"
         ))
         bl_options = {"REGISTER", "UNDO"}
 
+        scope: bpy.props.EnumProperty(
+            name="Scope",
+            items=[
+                ("SELECTED", "Selected parts", "The parts that are selected"),
+                ("COLLECTION", "Collection", "Every part in the same collections as the selection"),
+                ("WHOLE", "Whole assembly", "Every part of this send"),
+            ],
+            default="SELECTED")
+        what: bpy.props.EnumProperty(
+            name="What",
+            items=[
+                ("GEOMETRY", "Geometry", "The shape of the parts, at the quality below"),
+                ("GEOMETRY_POSES", "Geometry and poses",
+                 "The shape of the parts, and where they now sit in the CAD assembly. "
+                 "The rig is rebuilt so its rest pose follows"),
+                ("POSES", "Poses", "Only where the parts now sit in the CAD assembly"),
+                ("EVERYTHING", "Everything",
+                 "Ask the CAD application for the whole assembly again: parts added or "
+                 "removed, mates changed, the rig rebuilt. Only the whole assembly, "
+                 "whatever the scope says"),
+            ],
+            default="GEOMETRY")
         quality: bpy.props.FloatProperty(
             name="Quality", default=0.9, min=0.0, max=1.0, subtype="FACTOR",
             description=("Chord tolerance, relative to each part's own size: "
@@ -402,59 +655,93 @@ if bpy is not None:
 
         @classmethod
         def poll(cls, context):
-            return any(o.get("RIG_component_id") for o in context.selected_objects)
+            return bool(_linked_objects())
 
         def execute(self, context):
-            from . import native_import, sw_link
+            from . import native_import, cad_link
             ids = []
-            for obj in context.selected_objects:
+            for obj in _scope_objects(context, self.scope):
                 cid = obj.get("RIG_component_id")
                 if cid and cid not in ids:
                     ids.append(cid)
             if not ids:
-                self.report({"WARNING"}, "Select parts that came from SolidWorks")
+                self.report({"WARNING"}, "Select parts that came in over CAD Link")
                 return {"CANCELLED"}
+            persistent = []
+            for obj in _scope_objects(context, self.scope):
+                pid = obj.get("SWMESH_persistent_id")
+                if pid and pid not in persistent:
+                    persistent.append(pid)
+            changed, moved = [], 0
             try:
-                reply = sw_link.retessellate(ids, self.quality)
-                changed = native_import.refine(context, reply["mesh"])
-            except sw_link.SwLinkError as exc:
+                if self.what == "EVERYTHING":
+                    stages = _resend_everything(context)
+                    if stages.get("error"):
+                        self.report({"ERROR"}, stages["error"])
+                        return {"CANCELLED"}
+                    self.report({"INFO"},
+                                "Brought the whole assembly over again: {} object(s), {}"
+                                .format(stages.get("objects", 0), stages.get("rig", "no rig")))
+                    return {"FINISHED"}
+                if self.what != "POSES":
+                    reply = cad_link.retessellate(ids, self.quality, persistent_ids=persistent)
+                    changed = native_import.refine(context, reply["mesh"])
+                    if not changed:
+                        self.report({"WARNING"},
+                                    "The CAD application sent geometry for parts that "
+                                    "are not in this scene")
+                        return {"CANCELLED"}
+                if self.what != "GEOMETRY":
+                    moved = _apply_poses(
+                        context, cad_link.poses(ids, persistent_ids=persistent))
+            except cad_link.CadLinkError as exc:
                 _STATE["error"] = str(exc)
                 self.report({"ERROR"}, str(exc))
                 return {"CANCELLED"}
             except (OSError, ValueError) as exc:
-                self.report({"ERROR"}, "Could not read the refined mesh: %s" % exc)
+                self.report({"ERROR"}, "Could not read what the CAD application sent: %s" % exc)
                 return {"CANCELLED"}
-            if not changed:
-                self.report({"WARNING"},
-                            "SolidWorks sent geometry for parts that are not "
-                            "in this scene")
-                return {"CANCELLED"}
-            self.report({"INFO"},
-                        "Refined {} part(s) to {} triangles ({:.3g} m chord)"
-                        .format(len(changed), reply.get("triangles", 0),
-                                reply.get("tolerance_m", 0.0)))
+            if self.what == "POSES":
+                self.report({"INFO"}, "Moved {} part(s) onto the CAD poses".format(moved))
+            elif self.what == "GEOMETRY":
+                self.report({"INFO"},
+                            "Updated {} part(s) to {} triangles ({:.3g} m chord)"
+                            .format(len(changed), reply.get("triangles", 0),
+                                    reply.get("tolerance_m", 0.0)))
+            else:
+                self.report({"INFO"},
+                            "Updated {} part(s) to {} triangles, moved {} onto the CAD poses"
+                            .format(len(changed), reply.get("triangles", 0), moved))
             return {"FINISHED"}
 
-    class SWTB_PT_panel(bpy.types.Panel):
-        bl_label = "SW To Blender"
-        bl_idname = "SWTB_PT_panel"
+    class CADLINK_PT_panel(bpy.types.Panel):
+        bl_label = "CAD Link"
+        bl_idname = "CADLINK_PT_panel"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
-        bl_category = "SW To Blender"
+        bl_category = "CAD Link"
 
         @classmethod
         def poll(cls, context):
-            return _sw_integration_enabled(context)
+            return _cad_link_enabled(context)
 
         def draw(self, context):
             layout = self.layout
-            settings = context.scene.sw_to_blender
+            settings = context.scene.cad_link
 
+            # ── Link ────────────────────────────────────────────────────
+            # The live connection and what came over it. Everything in
+            # this box is about the CAD side, nothing here reads the
+            # manifest.
+            link = layout.box()
+            head = link.row()
+            head.label(text="Link", icon="PLUGIN")
             try:
                 from .. import bridge
                 if bridge.is_running():
-                    layout.label(text="SW bridge: listening on port {}".format(
-                        bridge.port()), icon="PLUGIN")
+                    head.label(text="port {}".format(bridge.port()))
+                else:
+                    head.label(text="not listening")
             except Exception:
                 pass
 
@@ -463,44 +750,53 @@ if bpy is not None:
             selected = [o for o in context.selected_objects
                         if o.get("RIG_component_id")]
             if selected:
-                box = layout.box()
-                box.label(text="{} part(s) selected".format(len(selected)),
-                          icon="MESH_DATA")
                 tolerance = selected[0].get("SWMESH_tolerance_m")
+                text = "{} part(s) selected".format(len(selected))
                 if tolerance:
-                    box.label(text="tessellated at {:.3g} m".format(tolerance))
-                box.operator("swtb.refine_selected", icon="MOD_SMOOTH")
+                    text += ", {:.3g} m chord".format(tolerance)
+                link.label(text=text, icon="MESH_DATA")
+                row = link.row(align=True)
+                row.operator("cadlink.update_from_cad", icon="FILE_REFRESH")
 
-            row = layout.row(align=True)
-            row.prop(settings, "manifest_path")
-            row.operator("swtb.pick_manifest", text="", icon="FILEBROWSER")
-            layout.operator("swtb.load_manifest", icon="FILE_REFRESH")
+            # ── Manifest ────────────────────────────────────────────────
+            mbox = layout.box()
+            mbox.label(text="Manifest", icon="FILE_TEXT")
+            row = mbox.row(align=True)
+            row.prop(settings, "manifest_path", text="")
+            row.operator("cadlink.pick_manifest", text="", icon="FILEBROWSER")
+            mbox.operator("cadlink.load_manifest", icon="FILE_REFRESH")
 
             if _STATE["error"]:
-                box = layout.box()
-                box.alert = True
-                box.label(text=_STATE["error"], icon="ERROR")
+                err = mbox.box()
+                err.alert = True
+                err.label(text=_STATE["error"], icon="ERROR")
 
             m = _STATE["manifest"]
             if m is not None:
-                box = layout.box()
-                box.label(text="Manifest v{}".format(m.manifest_version),
-                          icon="CHECKMARK")
-                box.label(text="{} joints, {} groups, {} loops".format(
-                    len(m.joints), len(m.rigid_groups), len(m.loops)))
+                mbox.label(text="v{}: {} joints, {} groups, {} loops".format(
+                    m.manifest_version, len(m.joints), len(m.rigid_groups),
+                    len(m.loops)), icon="CHECKMARK")
                 for w in m.warnings[:5]:
-                    box.label(text="{}: {}".format(w.code, w.message),
-                              icon="ERROR")
+                    mbox.label(text="{}: {}".format(w.code, w.message),
+                               icon="ERROR")
                 if len(m.warnings) > 5:
-                    box.label(text="... {} more warnings".format(
+                    mbox.label(text="... {} more warnings".format(
                         len(m.warnings) - 5))
 
-            col = layout.column(align=True)
-            col.operator("swtb.import_step", icon="IMPORT")
-            col.operator("swtb.match_geometry", icon="VIEWZOOM")
-            col.operator("swtb.sync_poses", icon="SNAP_ON")
-            col.operator("swtb.build_rig", icon="ARMATURE_DATA")
-            col.operator("swtb.relink_geometry", icon="LINKED")
+            # ── Rig ─────────────────────────────────────────────────────
+            # The pipeline in the order it runs, then the input choice the
+            # rig is built for.
+            rbox = layout.box()
+            rbox.label(text="Rig", icon="ARMATURE_DATA")
+            if m is not None and settings.mechanisms:
+                for entry in settings.mechanisms:
+                    rbox.prop(entry, "driver", text=entry.name)
+            col = rbox.column(align=True)
+            col.operator("cadlink.import_step", icon="IMPORT")
+            col.operator("cadlink.match_geometry", icon="VIEWZOOM")
+            col.operator("cadlink.sync_poses", icon="SNAP_ON")
+            col.operator("cadlink.build_rig", icon="ARMATURE_DATA")
+            col.operator("cadlink.relink_geometry", icon="LINKED")
 
             host, others = joining.joinable(context)
             if others:
@@ -508,7 +804,7 @@ if bpy is not None:
                 box.label(text="{} + {}".format(
                     host.name, ", ".join(o.name for o in others)),
                     icon="ARMATURE_DATA")
-                box.operator("swtb.join_rigs", icon="GROUP_BONE")
+                box.operator("cadlink.join_rigs", icon="GROUP_BONE")
             jreport = _STATE.get("join_report")
             if jreport is not None and jreport.bones_added:
                 box = layout.box()
@@ -587,16 +883,16 @@ if bpy is not None:
                     box.label(text="{}: {:.4f}".format(name, off))
 
     classes = (
-        SWTB_OT_pick_manifest,
-        SWTB_OT_load_manifest,
-        SWTB_OT_import_step,
-        SWTB_OT_match_geometry,
-        SWTB_OT_sync_poses,
-        SWTB_OT_build_rig,
-        SWTB_OT_relink_geometry,
-        SWTB_OT_join_rigs,
-        SWTB_OT_refine_selected,
-        SWTB_PT_panel,
+        CADLINK_OT_pick_manifest,
+        CADLINK_OT_load_manifest,
+        CADLINK_OT_import_step,
+        CADLINK_OT_match_geometry,
+        CADLINK_OT_sync_poses,
+        CADLINK_OT_build_rig,
+        CADLINK_OT_relink_geometry,
+        CADLINK_OT_join_rigs,
+        CADLINK_OT_update_from_cad,
+        CADLINK_PT_panel,
     )
 else:
     classes = ()

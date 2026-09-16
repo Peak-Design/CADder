@@ -75,10 +75,12 @@ jobs:
           ADDON_DIR="STEPper_NEXT"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
+          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi
+          cp -r rig "$ADDON_DIR/rig"
+          rm -rf "$ADDON_DIR/rig/__pycache__"
 
           WHEEL="cadquery_ocp_novtk-${OCP_VERSION}-cp313-cp313-win_amd64.whl"
           cp "wheels/$WHEEL" "$ADDON_DIR/wheels/"
@@ -172,10 +174,12 @@ jobs:
             local dir="STEPper_NEXT-$plat"
             mkdir -p "$dir/wheels" "$dir/native_libs"
 
-            for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
+            for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
               cp "$f" "$dir/"
             done
             if [ -d "docs" ]; then cp -r docs "$dir/docs"; fi
+            cp -r rig "$dir/rig"
+            rm -rf "$dir/rig/__pycache__"
 
             local wheel="cadquery_ocp_novtk-${OCP_VERSION}-cp313-cp313-${wheel_tag}.whl"
             cp "wheels/$wheel" "$dir/wheels/"
@@ -303,10 +307,12 @@ jobs:
           ADDON_DIR="STEPper_NEXT"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py LICENSE README.md; do
+          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi
+          cp -r rig "$ADDON_DIR/rig"
+          rm -rf "$ADDON_DIR/rig/__pycache__"
 
           WHEEL="cadquery_ocp_novtk-${OCP_VERSION}-cp313-cp313-manylinux_2_31_x86_64.whl"
           cp "wheels/$WHEEL" "$ADDON_DIR/wheels/"

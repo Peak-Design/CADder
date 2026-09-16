@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""SW To Blender rig subpackage: builds a constrained armature from the
-.rig.json manifest written by the Peak.SwToBlender SolidWorks add-in
+"""CAD Link rig subpackage: builds a constrained armature from the
+.rig.json manifest written by a CAD add-in (today: Peak.SwToBlender for
+SolidWorks)
 (schema and semantics live in the SW-To-Blender repo, schema/SCHEMA.md).
 
 Registered from STEPper NEXT's main.register(), guarded there so a rig
@@ -19,35 +20,38 @@ except ImportError:
 
 if bpy is not None:
 
-    class SwToBlenderSettings(bpy.types.PropertyGroup):
+    class CadLinkSettings(bpy.types.PropertyGroup):
         manifest_path: bpy.props.StringProperty(
             name="Manifest",
             description="Path to the .rig.json written by Peak.SwToBlender",
             # Not FILE_PATH: that subtype draws its own UNFILTERED browse
-            # button beside the panel's filtered one (swtb.pick_manifest),
+            # button beside the panel's filtered one (cadlink.pick_manifest),
             # and two file buttons with different behavior reads as a bug.
             default="",
         )
+        # One entry per mechanism that offers a choice of input
+        # (inputs.py); filled on manifest load, drawn as dropdowns.
+        mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)
 
-    _classes = (SwToBlenderSettings,) + ui.classes
+    _classes = (ui.CADLINK_MechanismChoice, CadLinkSettings) + ui.classes
 
     def register():
         for cls in _classes:
             bpy.utils.register_class(cls)
-        bpy.types.Scene.sw_to_blender = bpy.props.PointerProperty(
-            type=SwToBlenderSettings)
+        bpy.types.Scene.cad_link = bpy.props.PointerProperty(
+            type=CadLinkSettings)
 
     def unregister():
         # The pointer references the PropertyGroup class, so it must be
         # gone before the class it points at.
-        del bpy.types.Scene.sw_to_blender
+        del bpy.types.Scene.cad_link
         for cls in reversed(_classes):
             bpy.utils.unregister_class(cls)
 
 else:
 
     def register():
-        raise RuntimeError("sw_to_blender.register() requires Blender (bpy)")
+        raise RuntimeError("rig.register() requires Blender (bpy)")
 
     def unregister():
-        raise RuntimeError("sw_to_blender.unregister() requires Blender (bpy)")
+        raise RuntimeError("rig.unregister() requires Blender (bpy)")

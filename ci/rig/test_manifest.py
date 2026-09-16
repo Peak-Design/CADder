@@ -305,6 +305,76 @@ class TestParse(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "mirror_scope"):
             manifest.parse(self._mirror_manifest("halfway"))
 
+    def _table_manifest(self, samples, periodic=True, period=6.283185307179586):
+        data = hinge_manifest()
+        data["joints"].insert(0, dict(data["joints"][0], id="j001", coupling=None))
+        data["joints"][1]["id"] = "j002"
+        data["joints"][1]["coupling"] = {
+            "kind": "table", "driver_joint": "j001",
+            "samples": samples, "periodic": periodic, "period": period}
+        return data
+
+    def test_table_coupling_is_read_with_its_samples(self):
+        samples = [[0.0, 0.0], [1.0, 0.004], [3.0, 0.01], [6.283185307179586, 0.0]]
+        m = manifest.parse(self._table_manifest(samples))
+        c = m.joints[1].coupling
+        self.assertEqual(c.kind, "table")
+        self.assertEqual(c.driver_joint, "j001")
+        self.assertEqual(c.samples, [(0.0, 0.0), (1.0, 0.004), (3.0, 0.01),
+                                     (6.283185307179586, 0.0)])
+        self.assertTrue(c.periodic)
+        self.assertAlmostEqual(c.period, 6.283185307179586)
+
+    def _cam_manifest(self, kind="vertex", **follower):
+        data = hinge_manifest()
+        data["joints"].insert(0, dict(data["joints"][0], id="j001", coupling=None))
+        data["joints"][1]["id"] = "j002"
+        data["joints"][1]["type"] = "prismatic"
+        fol = {"kind": kind, "point": [0.03, 0.0, 0.0], "axis": None, "radius": None, "normal": None}
+        fol.update(follower)
+        data["joints"][1]["coupling"] = {
+            "kind": "cam", "driver_joint": "j001",
+            "cam": {"axis": [0, 0, 1], "origin": [0, 0, 0],
+                    "surface": {"points": [[0.03, 0, -0.01], [0.03, 0, 0.01], [0, 0.03, 0]],
+                                "triangles": [[0, 1, 2]]},
+                    "follower": fol}}
+        return data
+
+    def test_cam_coupling_is_read_with_its_faces(self):
+        m = manifest.parse(self._cam_manifest("roller", radius=0.005, axis=[0, 0, 1]))
+        c = m.joints[1].coupling
+        self.assertEqual(c.kind, "cam")
+        self.assertEqual(c.driver_joint, "j001")
+        self.assertEqual(c.follower_kind, "roller")
+        self.assertAlmostEqual(c.follower_radius, 0.005)
+        self.assertEqual(c.cam_surface_triangles, [[0, 1, 2]])
+        self.assertEqual(len(c.cam_surface_points), 3)
+        self.assertEqual(tuple(c.cam_axis), (0.0, 0.0, 1.0))
+
+    def test_cam_follower_kind_is_checked(self):
+        with self.assertRaisesRegex(ManifestError, "follower kind"):
+            manifest.parse(self._cam_manifest("wheel"))
+        with self.assertRaisesRegex(ManifestError, "radius"):
+            manifest.parse(self._cam_manifest("roller"))
+        with self.assertRaisesRegex(ManifestError, "normal"):
+            manifest.parse(self._cam_manifest("flat"))
+
+    def test_cam_triangles_index_the_points(self):
+        data = self._cam_manifest()
+        data["joints"][1]["coupling"]["cam"]["surface"]["triangles"] = [[0, 1, 7]]
+        with self.assertRaisesRegex(ManifestError, "triangle"):
+            manifest.parse(data)
+
+    def test_table_samples_must_ascend(self):
+        with self.assertRaisesRegex(ManifestError, "ascend"):
+            manifest.parse(self._table_manifest([[0.0, 0.0], [2.0, 1.0], [1.0, 0.5]]))
+
+    def test_table_needs_two_samples_and_a_period_when_periodic(self):
+        with self.assertRaisesRegex(ManifestError, "two samples"):
+            manifest.parse(self._table_manifest([[0.0, 0.0]]))
+        with self.assertRaisesRegex(ManifestError, "period"):
+            manifest.parse(self._table_manifest([[0.0, 0.0], [1.0, 1.0]], period=0.0))
+
     def test_load_rejects_bad_json(self):
         fd, path = tempfile.mkstemp(suffix=".rig.json")
         try:

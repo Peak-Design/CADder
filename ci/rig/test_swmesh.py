@@ -44,7 +44,12 @@ def test_reads_the_scene_the_addin_wrote():
     assert red.rgba == pytest.approx((1.0, 0.25, 0.125, 0.5))
     assert red.roughness == pytest.approx(0.75)
     assert red.metallic == pytest.approx(0.0)
-    assert red.texture is None
+    assert red.texture == "red.png"
+    # Version 2: the SolidWorks appearance rides on the record as JSON.
+    assert grey.appearance_json is None
+    import json
+    assert json.loads(red.appearance_json) == {
+        "name": "red", "file": "red.p2m", "blender": {"metallic": 0.0}}
 
     d = scene.definitions[0]
     assert d.id == 3
@@ -103,3 +108,16 @@ def test_rejects_triangles_that_index_missing_vertices():
     with pytest.raises(swmesh.SwMeshError) as excinfo:
         swmesh.parse(body)
     assert "indexes a vertex" in str(excinfo.value)
+
+
+def test_still_reads_version_1():
+    """The Blender add-in may meet a file from an add-in built before the
+    appearance JSON: a version-1 material record ends at its texture."""
+    body = struct.pack("<IIIdIII", swmesh.MAGIC, 1, 0, 0.001, 1, 0, 0)
+    name = b"grey"
+    body += struct.pack("<H", len(name)) + name
+    body += struct.pack("<6f", 0.5, 0.5, 0.5, 1.0, 0.4, 0.0)
+    body += struct.pack("<H", 0)
+    scene = swmesh.parse(body)
+    assert scene.materials[0].name == "grey"
+    assert scene.materials[0].appearance_json is None

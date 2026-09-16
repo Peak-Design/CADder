@@ -192,10 +192,10 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
         out.moved.append((obj.name, dist))
 
     for name, dist in out.moved:
-        print("[SWTB pose] moved %s onto its SolidWorks pose (%.4f m off)"
+        print("[CADLink pose] moved %s onto its SolidWorks pose (%.4f m off)"
               % (name, dist))
     for name, reason in out.skipped:
-        print("[SWTB pose] skipped %s: %s" % (name, reason))
+        print("[CADLink pose] skipped %s: %s" % (name, reason))
     for name, reason in out.collections:
-        print("[SWTB pose] %s: %s" % (name, reason))
+        print("[CADLink pose] %s: %s" % (name, reason))
     return out

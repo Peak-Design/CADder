@@ -25,7 +25,7 @@ try:
 except ImportError:
     bpy = None
 
-_IK_NAME = "SWTB IK "
+_IK_NAME = "CADLink IK "
 
 
 def _set_ik_y_limit(pb, limit):
@@ -52,9 +52,13 @@ def _configure_chain_bone(pb, joint, planar_loop):
         if joint.rotation_limit is not None:
             _set_ik_y_limit(pb, joint.rotation_limit)
     elif jtype in ("prismatic", "screw"):
-        # Blender IK only rotates. A sliding joint inside a chain cannot be
-        # solved, so the bone is held rigid rather than allowed to rotate in
-        # a way the joint never could.
+        # Blender IK only rotates bones, so the body's own bone is held
+        # rigid rather than allowed to rotate in a way the joint never
+        # could. A prismatic's (or cylindrical's) slide is solved all the
+        # same: rig_build hangs the body off a stretch bone along the slide
+        # axis, and close_loops gives THAT bone the one translational
+        # freedom IK has, its length. A screw stays rigid: its slide is a
+        # driven function of a rotation the solver would also have to own.
         pb.lock_ik_x = True
         pb.lock_ik_y = True
         pb.lock_ik_z = True
@@ -84,13 +88,16 @@ def _configure_chain_bone(pb, joint, planar_loop):
         pb.lock_ik_z = True
 
 
-def close_loops(arm_obj, plan, bone_names, helper_names, effector_names):
+def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
+                slide_names=None):
     """Adds one IK constraint per manifest loop. bone_names / helper_names /
-    effector_names map plan ids to the names Blender actually kept. Returns
-    (count, warnings)."""
+    effector_names map plan ids to the names Blender actually kept;
+    slide_names maps a group id to the stretch bone its slide rides on.
+    Returns (count, warnings)."""
     warnings = []
     count = 0
     pose = arm_obj.pose
+    slide_names = slide_names or {}
 
     for lplan in plan.loops:
         helper = helper_names.get(lplan.loop.id)
@@ -122,7 +129,23 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names):
         # The effector plus exactly the driven chain: one bone more would
         # recruit the common ancestor and bend the driver side too.
         con.chain_count = lplan.chain_count + 1
-        con.use_stretch = False
+        # Stretch is the solver's only translation, and it is switched on
+        # for the whole chain: every bone but a slide's stretch bone keeps
+        # ik_stretch at zero, so nothing else can change length.
+        stretched = [slide_names[gid] for gid in lplan.driven_chain
+                     if gid in slide_names]
+        con.use_stretch = bool(stretched)
+        for name in stretched:
+            spb = pose.bones.get(name)
+            if spb is None:
+                warnings.append("loop {}: stretch bone {} missing".format(
+                    lplan.loop.id, name))
+                continue
+            spb.lock_ik_x = True
+            spb.lock_ik_y = True
+            spb.lock_ik_z = True
+            spb.use_ik_limit_x = spb.use_ik_limit_y = spb.use_ik_limit_z = False
+            spb.ik_stretch = 1.0
 
         # All axes locked: the effector is a rigid extension of the tip, a
         # chain segment with zero DOF, never a joint of its own.

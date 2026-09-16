@@ -11,7 +11,8 @@ memcpy when the byte order already matches: the point of a binary format
 in the first place.
 
   header      magic 'SWMH', version, flags, tolerance, three counts
-  materials   name, rgba, roughness, metallic, texture path
+  materials   name, rgba, roughness, metallic, texture path, and (version
+              2) the SolidWorks appearance as JSON, uint32-length-prefixed
   definitions id, name, counts, positions, normals?, uvs?, triangles,
               one material index per triangle
   instances   definition id, component id, name, 4x4 row-major transform
@@ -29,7 +30,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 MAGIC = 0x484D5753          # 'SWMH'
-VERSION = 1
+VERSION = 2
+READABLE_VERSIONS = (1, 2)
 FLAG_NORMALS = 1
 FLAG_UVS = 2
 
@@ -47,6 +49,9 @@ class Material:
     roughness: float = 0.5
     metallic: float = 0.0
     texture: Optional[str] = None
+    # Version 2: the whole SolidWorks appearance (colours, finish, library
+    # values, mapping, decals) as the add-in wrote it. None in version 1.
+    appearance_json: Optional[str] = None
 
 
 @dataclass
@@ -138,9 +143,9 @@ def parse(data) -> Scene:
     if r.u32() != MAGIC:
         raise SwMeshError("not a .swmesh file")
     version = r.u32()
-    if version != VERSION:
-        raise SwMeshError("unsupported .swmesh version %d (this build reads %d)"
-                          % (version, VERSION))
+    if version not in READABLE_VERSIONS:
+        raise SwMeshError("unsupported .swmesh version %d (this build reads %s)"
+                          % (version, ", ".join(str(v) for v in READABLE_VERSIONS)))
     flags = r.u32()
     scene = Scene(tolerance=r.f64())
     material_count = r.u32()
@@ -152,9 +157,13 @@ def parse(data) -> Scene:
     for _ in range(material_count):
         name = r.text()
         rgba = (r.f32(), r.f32(), r.f32(), r.f32())
-        scene.materials.append(Material(
+        material = Material(
             name=name, rgba=rgba, roughness=r.f32(), metallic=r.f32(),
-            texture=r.text() or None))
+            texture=r.text() or None)
+        if version >= 2:
+            n = r.u32()
+            material.appearance_json = r._take(n).decode("utf-8", errors="replace") if n else None
+        scene.materials.append(material)
 
     for _ in range(definition_count):
         did = r.i32()

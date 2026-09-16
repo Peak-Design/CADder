@@ -90,6 +90,27 @@ class BonePlan:
     # a named local axis, so the two halves of a ram can only track each
     # other if their rest +Y already lies along the ram.
     aim_at: Optional[List[float]] = None
+    # A slide (prismatic or cylindrical tree edge) INSIDE an IK-solved
+    # chain. Blender's IK rotates bones and stretches them, never translates
+    # them, so the one translational freedom it has is the bone's length.
+    # This body's bone therefore hangs, connected and without inheriting
+    # scale, off a hidden stretch bone that lies along its own slide axis:
+    # the solver scales that bone and the body moves along the slide by
+    # exactly the difference (live actuator.sldasm, 2026-09-14: the
+    # plunger the crank drives through two links never moved, its links
+    # only aimed at the crank pin). slide_rest_length is the stretch bone's
+    # rest length in metres, the head sitting that far back along the
+    # slide so the solver can also shorten it.
+    slide_name: str = ""
+    slide_rest_length: float = 0.0
+    # A cam contact (coupling kind "cam" on this body's slide). PRJ is the
+    # hidden bone a vertex or roller follower projects onto the cam faces
+    # with; REL and OFF serve a flat face: REL copies the cam's pose under
+    # this body's base, OFF carries the translation term between the base
+    # and this bone. cam_contact.py builds and drives them.
+    cam_prj_name: str = ""
+    cam_rel_name: str = ""
+    cam_off_name: str = ""
 
 
 @dataclass
@@ -108,6 +129,8 @@ class LoopPlan:
     ik_tip_group: str
     driven_chain: List[str] = field(default_factory=list)   # tip first, ancestor excluded
     driver_chain: List[str] = field(default_factory=list)   # driver end first, ancestor excluded
+    # Bones the IK chain spans below the effector: the driven bodies plus
+    # one stretch bone per slide among them (BonePlan.slide_name).
     chain_count: int = 0
 
 
@@ -150,6 +173,9 @@ class RigPlan:
     joint_group: Dict[str, str] = field(default_factory=dict)  # tree joint id -> articulating group id
     loops: List[LoopPlan] = field(default_factory=list)
     sliders: List[SliderPlan] = field(default_factory=list)
+    # group id -> rest length (metres) of the stretch bone its slide needs
+    # (BonePlan.slide_name): every slide that sits inside a solved chain.
+    slide_rest: Dict[str, float] = field(default_factory=dict)
     # Loops the exporter cut so the tree already carries them: verified like
     # any other, then deliberately left unsolved.
     open_loops: List[Loop] = field(default_factory=list)
@@ -504,6 +530,7 @@ def build(manifest: Manifest) -> RigPlan:
     # Loop verification: a closure joint must be a genuine non-tree edge,
     # its endpoints already connected through the tree, and the tree path
     # between them plus the closure must be exactly the declared members.
+    solved_by = {}       # group id -> the loop whose IK chain solves it
     for lp in manifest.loops:
         cj = joints[lp.closure_joint]
         if forest.find(cj.parent_group) != forest.find(cj.child_group):
@@ -576,6 +603,55 @@ def build(manifest: Manifest) -> RigPlan:
             driver_groups = groups_c
             helper_parent = cj.child_group
             ik_tip = cj.parent_group
+
+        # A slide among the driven bodies gets a stretch bone (see
+        # BonePlan.slide_name): its rest length has to cover every position
+        # the solver can ask for, and no pin of the loop can travel further
+        # from the slide's origin than the loop's links laid end to end.
+        #
+        # Each body is solved by ONE loop. Blender's solver joins IK chains
+        # that share bones into one tree, and a tree with two targets
+        # neither stretches (live actuator.sldasm, 2026-09-14: the two
+        # links either side of the plunger each closed a loop through the
+        # same slide, and the plunger sat still while both links merely
+        # aimed) nor, driven from the slider instead, turns the crank both
+        # rods hang from. A later loop is cut short at the first body an
+        # earlier loop already solves: its chain keeps its own bodies,
+        # which move to meet their helper, and the shared body comes from
+        # the loop that owns it. That is how a one-degree mechanism is
+        # solved by hand as well, one loop after another.
+        driven_groups = list(driven_groups)
+        for i, gid in enumerate(driven_groups):
+            owner = solved_by.get(gid)
+            if owner is None:
+                continue
+            if i == 0:
+                plan.warnings.append(
+                    "loop {}: its tip {} is already solved by loop {}. "
+                    "This loop can only turn it".format(lp.id, gid, owner))
+                i = 1
+            driven_groups = driven_groups[:i]
+            break
+        for gid in driven_groups:
+            solved_by[gid] = lp.id
+        slides = []
+        for gid in driven_groups:
+            pj = parent_of[gid][1]
+            if pj.type in ("prismatic", "cylindrical"):
+                slides.append((gid, pj))
+        if slides:
+            origins = [joints[jid].origin for jid in lp.member_joints
+                       if joints[jid].origin is not None]
+            for gid, pj in slides:
+                reach = 0.0
+                if pj.origin is not None:
+                    reach = sum(_v_norm(_v_sub(o, pj.origin)) for o in origins)
+                rest_len = max(2.0 * reach, 0.05)
+                plan.slide_rest[gid] = max(plan.slide_rest.get(gid, 0.0), rest_len)
+                if pj.translation_limit is not None:
+                    plan.warnings.append(
+                        "loop {}: slide {} is solved by the loop. Its travel "
+                        "limit does not apply".format(lp.id, pj.id))
         plan.loops.append(LoopPlan(
             loop=lp,
             closure_joint=cj,
@@ -585,7 +661,7 @@ def build(manifest: Manifest) -> RigPlan:
             ik_tip_group=ik_tip,
             driven_chain=list(driven_groups),
             driver_chain=list(driver_groups),
-            chain_count=len(driven_groups),
+            chain_count=len(driven_groups) + len(slides),
         ))
 
     # Contact carrier chains fold into single posable bones AFTER loop
@@ -611,6 +687,13 @@ def build(manifest: Manifest) -> RigPlan:
         labels[bone_node(g.id)] = "bone {} ({})".format(g.id, g.name)
     for child, (parent, j) in parent_of.items():
         edges[bone_node(child)].add(bone_node(parent))
+    for gid in plan.slide_rest:
+        # The stretch bone sits between the slide's body and its parent.
+        snode = "slide:" + gid
+        labels[snode] = "stretch bone for the slide of " + gid
+        edges.setdefault(snode, set())
+        edges[snode].add(bone_node(parent_of[gid][0]))
+        edges[bone_node(gid)].add(snode)
     for lplan in plan.loops:
         hnode = "helper:" + lplan.loop.id
         labels[hnode] = "helper for loop " + lplan.loop.id
@@ -623,6 +706,8 @@ def build(manifest: Manifest) -> RigPlan:
         edges[enode].add(hnode)                           # its IK target
         for gid in lplan.driven_chain:
             edges[bone_node(gid)].add(hnode)
+            if gid in plan.slide_rest:
+                edges["slide:" + gid].add(hnode)
     for splan in plan.sliders:
         for tag, group, aim_parent in (
                 ("a", splan.a_group, splan.a_aim_parent),
@@ -709,6 +794,17 @@ def build(manifest: Manifest) -> RigPlan:
             bp.ball_def_name = _unique_name("DEF_" + bp.bone_name, taken_names, gid)
             bp.ball_pole_name = _unique_name("POLE_" + bp.bone_name, taken_names, gid)
             bp.ball_goal_name = _unique_name("GOAL_" + bp.bone_name, taken_names, gid)
+        if gid in plan.slide_rest and parent_id is not None:
+            bp.slide_name = _unique_name("SLD_" + bp.bone_name, taken_names, gid)
+            bp.slide_rest_length = plan.slide_rest[gid]
+        if (joint is not None and joint.coupling is not None
+                and joint.coupling.kind == "cam" and joint.type == "prismatic"
+                and parent_id is not None):
+            if joint.coupling.follower_kind == "flat":
+                bp.cam_rel_name = _unique_name("REL_" + bp.bone_name, taken_names, gid)
+                bp.cam_off_name = _unique_name("OFF_" + bp.bone_name, taken_names, gid)
+            else:
+                bp.cam_prj_name = _unique_name("PRJ_" + bp.bone_name, taken_names, gid)
         plan.bones.append(bp)
         plan.bone_by_group[gid] = bp
         for child in reversed(children.get(gid, [])):

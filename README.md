@@ -84,7 +84,7 @@ replaces the older version.
 
 ## Material Database
 
-The material database lets you define mappings from generic STEP material names (e.g., "GRAY", "BLACK") to authored Blender materials. Once configured, materials are automatically replaced every time you import a STEP file.
+The material database lets you define mappings from the material names a CAD import gives (the STEP colour names such as "GRAY", an engineering material such as `AISI 304 Steel`, or a SolidWorks appearance such as `SW polished gold` over CAD Link) to authored Blender materials. Once configured, materials are replaced every time you import a STEP file or receive a direct send.
 
 ![Material Mappings Panel](docs/material_mappings.png)
 
@@ -99,6 +99,45 @@ The material database lets you define mappings from generic STEP material names 
 ### Importing with a database
 
 Select a database from the dropdown in the STEP import dialog under **Material DB**. The selected database persists between sessions. When importing, all matching STEP materials are automatically replaced.
+
+## CAD Link
+
+CAD Link is the sidebar tab that receives a model straight from a CAD
+add-in and builds a rig from it. Today one add-in speaks it:
+[SW To Blender](https://github.com/Peak-Design/SW-To-Blender) for
+SolidWorks. The tab is off by default.
+
+1. Open **Edit > Preferences > Add-ons > STEPper NEXT**.
+2. Tick **CAD Link (experimental)**. The addon starts a listener on
+   127.0.0.1 and shows the port.
+3. In the 3D View sidebar (N), open the **CAD Link** tab.
+
+With the listener on, **Send to Blender** in the CAD add-in imports the
+geometry, matches it to the rig manifest, snaps every part onto its CAD
+pose, builds the armature and parents the geometry, all without a file
+dialog. The listener accepts connections only from this machine, and only
+with the token the add-in reads from the user's own app data.
+
+The tab has three boxes:
+
+- **Link**: the listener's port, and for selected parts that came in over
+  the link, **Update from CAD**, which asks the CAD application for the
+  geometry again and swaps it in without losing the pose, the materials or
+  the rig. Its scope is the selected parts, the collections they are in, or
+  the whole send, and its purpose is Geometry, Geometry and poses, Poses,
+  or Everything. Everything asks for the assembly again and rebuilds the
+  scene from it, which is what catches parts added or removed and mates
+  changed.
+- **Manifest**: the `.rig.json` to build from, with the joint, group and
+  loop counts and the exporter's warnings after a load.
+- **Rig**: the pipeline buttons in the order they run (Import STEP, Match
+  Geometry, Snap to CAD Poses, Build Rig, Re-link Geometry), and above
+  them one dropdown per mechanism that offers a choice of input. Changing
+  the input rebuilds the rig for that choice.
+
+The manual route still works: export from the add-in to disk, then point
+**Manifest** at the `.rig.json` and press the buttons in order. The STEP
+file must sit beside the manifest, exactly as the exporter wrote the pair.
 
 ### Reading a generated rig
 
@@ -157,6 +196,8 @@ bone for (the import's own empties, a part that did not match) is hung off
 the ground bone rather than left behind, so moving the rig moves the whole
 assembly. Nothing is moved between collections: everything stays exactly
 where you put it.
+
+## STEP import details
 
 ### Imported files, and refreshing them
 

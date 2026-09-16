@@ -48,6 +48,40 @@ def _add_driver(arm_obj, pose_bone, path, source_bone, transform_type, constant,
     return fcurve
 
 
+def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
+                 samples, periodic, period, unit_scale):
+    """A sampled relation as a driver F-curve: the driver's channel is the
+    curve's input and the samples are its keyframes. Blender evaluates a
+    driver F-curve that has keyframes AT the driver's value, so the mapping
+    is the table itself, interpolated linearly, and a Cycles modifier
+    repeats a periodic one every turn. Channels read in Blender units; the
+    table is in metres and radians."""
+    expr = "a" if driver_turns else "a / {}".format(repr(float(unit_scale)))
+    fcurve = _add_driver(arm_obj, own_pb,
+                         "rotation_euler" if driven_turns else "location",
+                         source_bone, "ROT_Y" if driver_turns else "LOC_Y", 1.0)
+    fcurve.driver.expression = expr
+    scale = 1.0 if driven_turns else unit_scale
+    points = fcurve.keyframe_points
+    while len(points):
+        points.remove(points[0])
+    points.add(len(samples))
+    for kp, (x, y) in zip(points, samples):
+        kp.co = (x, y * scale)
+        kp.interpolation = "LINEAR"
+        kp.handle_left_type = "AUTO"
+        kp.handle_right_type = "AUTO"
+    for mod in list(fcurve.modifiers):
+        fcurve.modifiers.remove(mod)
+    if periodic:
+        mod = fcurve.modifiers.new("CYCLES")
+        mod.mode_before = "REPEAT"
+        mod.mode_after = "REPEAT"
+    fcurve.extrapolation = "CONSTANT"
+    fcurve.update()
+    return fcurve
+
+
 def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context=None):
     """Creates every coupling driver. bone_names maps group id -> actual
     bone name (Blender may have renamed on collision, so plan names are not
@@ -71,6 +105,11 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
             warnings.append(
                 "joint {}: coupling skipped, bone for group {} missing".format(
                     joint.id, own_group))
+            continue
+
+        if c.kind == "cam":
+            # A cam contact is bones, a constraint and drivers of its own
+            # (cam_contact.py, called by rig_build after this pass).
             continue
 
         if c.kind == "screw":
@@ -132,6 +171,19 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
             for path, idx, ttype, sign in specs:
                 _add_driver(arm_obj, own_pb, path, source_bone, ttype, sign,
                             index=idx)
+            count += 1
+            continue
+
+        if c.kind == "table":
+            # A sampled relation (a cam profile, a universal joint with its
+            # yokes' phase in it), keyed on the driver's channel.
+            driver_joint = manifest.joint_by_id().get(c.driver_joint)
+            if driver_joint is None or not c.samples:
+                warnings.append("joint {}: table coupling without a driver or samples".format(joint.id))
+                continue
+            table_driver(arm_obj, own_pb, source_bone,
+                         driver_joint.type != "prismatic", joint.type != "prismatic",
+                         c.samples, c.periodic, c.period, unit_scale)
             count += 1
             continue
 

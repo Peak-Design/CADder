@@ -23,7 +23,7 @@ join cannot know:
      anything. Bones carry the manifest they came from (rig_build tags them)
      and the armature accumulates the list, so `parenting` can key on the
      pair. Without this, half the geometry re-parents to the other
-     assembly's bones — silently, and looking almost right.
+     assembly's bones, silently, and looking almost right.
 
   2. WHERE IT ATTACHES. The joined rig's root is parented to a bone of the
      host, which is what makes the subassembly ride the machine rather than
@@ -32,7 +32,7 @@ join cannot know:
   3. THAT NOTHING MOVED. Every bone and every object is measured before and
      after, and the report says so in millimetres.
 
-  4. RE-PARENTING the geometry, which is `parenting.relink` — it works from
+  4. RE-PARENTING the geometry, which is `parenting.relink`. It works from
      the tags, so it does not care that bones were renamed.
 
 REST POSE. Parenting a bone under a POSED bone moves it: a bone's rest
@@ -103,7 +103,7 @@ def bone_off_rest(arm_obj, bone_name):
 
 
 def _roots_of(arm_obj, source):
-    """The bones of one manifest that hang from nothing — its ground."""
+    """The bones of one manifest that hang from nothing: its ground."""
     out = []
     for pb in arm_obj.pose.bones:
         if (pb.get("RIG_source") or None) != source:
@@ -131,7 +131,7 @@ def join(context, host, others, attach_bone=None, relink=True):
     """Folds `others` into `host`, hanging each one's root off `attach_bone`.
 
     `attach_bone` defaults to the host's own root, which puts the
-    subassembly on the machine's ground — the right answer when the part it
+    subassembly on the machine's ground: the right answer when the part it
     bolts to does not move, and one re-parent away from the right answer
     when it does.
     """
@@ -181,7 +181,7 @@ def join(context, host, others, attach_bone=None, relink=True):
     # Geometry riding a bone that HAS A PARENT BONE does not survive the
     # join in place. Blender re-points such an object at the surviving
     # armature and keeps its parent_inverse, but the join re-expresses every
-    # bone in the host's space, so the inverse no longer inverts anything —
+    # bone in the host's space, so the inverse no longer inverts anything,
     # measured 2026-08-25: parts on a root bone stayed put, parts one bone
     # deeper jumped 1.38 m. Their world transforms are held here and put
     # back afterwards, which is also what makes `relink=False` safe.

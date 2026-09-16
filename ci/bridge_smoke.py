@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Headless smoke for the SolidWorks bridge: server up, registry file
+"""Headless smoke for the CAD Link bridge: server up, registry file
 written with a token, ping answers, a job posted over real HTTP runs the
 rig pipeline on the main thread and returns its stage report, bad tokens
 are refused, and stop() removes the registry entry.
@@ -63,11 +63,11 @@ def pump_while(thread, seconds=60.0):
     assert not thread.is_alive(), "bridge job never finished"
 
 
-def request(url, token, payload=None):
+def request(url, token, payload=None, header="X-CADLink-Token"):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
         url, data=data, method="POST" if data else "GET",
-        headers={"X-SWTB-Token": token, "Content-Type": "application/json"})
+        headers={header: token, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -86,11 +86,15 @@ def main():
     token = reg["token"]
     base = "http://127.0.0.1:%d" % port
 
-    info = request(base + "/swtb/ping", token)
+    info = request(base + "/cadlink/ping", token)
     assert info["ok"] and info["app"] == "blender", info
 
+    # An add-in built before the CAD Link rename still gets through.
+    legacy = request(base + "/swtb/ping", token, header="X-SWTB-Token")
+    assert legacy["ok"], legacy
+
     try:
-        request(base + "/swtb/ping", "wrong-token")
+        request(base + "/cadlink/ping", "wrong-token")
         raise AssertionError("bad token was accepted")
     except urllib.error.HTTPError as exc:
         assert exc.code == 403
@@ -103,7 +107,7 @@ def main():
         result = {}
 
         def client():
-            result["resp"] = request(base + "/swtb/import", token, {
+            result["resp"] = request(base + "/cadlink/import", token, {
                 "manifest": manifest_path,
                 "steps": {"import": False, "sync_poses": False,
                           "cleanup": True},
@@ -141,7 +145,7 @@ def main():
         result = {}
 
         def client2():
-            result["resp"] = request(base + "/swtb/import", token, {
+            result["resp"] = request(base + "/cadlink/import", token, {
                 "manifest": manifest_path,
                 "steps": {"import": False, "sync_poses": False,
                           "cleanup": True},
@@ -169,7 +173,7 @@ def main():
 
         def client3():
             try:
-                request(base + "/swtb/import", token, {"steps": {}})
+                request(base + "/cadlink/import", token, {"steps": {}})
                 result["resp"] = "accepted"
             except urllib.error.HTTPError as exc:
                 result["resp"] = exc.code
@@ -181,6 +185,24 @@ def main():
         bridge._run_job = orig_run_job
     assert result["resp"] == 500, result["resp"]
     assert not bridge._state["last_job"]["ok"]
+
+    # The stall watchdog is faulthandler's C-level timer, re-armed by the
+    # pump: it fires when the main thread stays away from the pump, with
+    # or without the interpreter lock. A Python-thread watchdog cannot
+    # fire while the main thread sits inside a bpy call, which is exactly
+    # the freeze it was for (live 2026-09-14). Here the main thread simply
+    # sleeps past a 1 s stall window.
+    stall_path = bridge.stall_log_path()
+    bridge._STALL_S = 1
+    bridge._last_beat = 0.0
+    bridge._pump()
+    time.sleep(2.5)
+    with open(stall_path, "r", encoding="utf-8", errors="replace") as f:
+        stall = f.read()
+    assert "job started" in stall and "job finished" in stall, stall[:400]
+    assert "most recent call first" in stall and "bridge_smoke.py" in stall, \
+        "no stack dump after a %ds stall:\n%s" % (bridge._STALL_S, stall[:800])
+    bridge._STALL_S = 60
 
     bridge.stop()
     assert not os.path.exists(reg_path), "registry entry not cleaned up"
@@ -215,6 +237,18 @@ def check_option_parity():
     assert not unreal, (
         "the bridge accepts import options the operator does not have: %s"
         % unreal)
+
+    # The direction that used to go unchecked: an option the OPERATOR gained
+    # that the bridge does not know is dropped in silence, and a SolidWorks
+    # user sending it never learns why it had no effect. Only the file and
+    # UI properties the bridge fills in itself are exempt (2026-09-14: the
+    # UV rework added eight options and the bridge forwarded none of them).
+    not_forwarded = {"filter_glob", "filepath", "files", "directory",
+                     "override_file"}
+    unforwarded = sorted(real - allowed - not_forwarded)
+    assert not unforwarded, (
+        "the operator has import options the bridge never forwards: %s"
+        % unforwarded)
 
     # What Peak.SwToBlender.SendToBlenderCommand puts in import_options.
     sent_by_addin = {

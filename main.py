@@ -47,7 +47,7 @@ from . import background as background_mod
 from . import updater as updater_mod
 from .formats import classes as formats_classes
 
-# The rig subpackage (SW To Blender: armature from a .rig.json manifest) is
+# The rig subpackage (CAD Link: armature from a .rig.json manifest) is
 # developed in-tree but must never take the importer down with it. A broken
 # rig module costs the rig panel, not STEP import.
 try:
@@ -56,7 +56,7 @@ except Exception as _rig_exc:
     rig_mod = None
     print("STEPper NEXT: rig subpackage failed to load:", _rig_exc)
 
-# Same isolation for the SolidWorks bridge: a bridge fault must never cost
+# Same isolation for the CAD Link bridge: a bridge fault must never cost
 # STEP import.
 try:
     from . import bridge as bridge_mod
@@ -2850,6 +2850,11 @@ def load_step(
                 if len(node.children) > 0:
                     collection_node = _own_collection(
                         node.name, filepath, "node")
+                    # The CAD name, exactly. The collection's own name is a
+                    # display label Blender rewrites on collision, and a
+                    # product named "42S TC100.2" cannot be told from a
+                    # duplicate of "42S TC100" by the label alone.
+                    collection_node["STEP_name"] = node.name
                     assert node.index not in hierarchy_collections
                     hierarchy_collections[node.index] = collection_node
                     parent_collection.children.link(collection_node)
@@ -4093,10 +4098,11 @@ class STEP_OT_MatDBApply(bpy.types.Operator):
             objects = list(context.selected_objects)
         else:
             objects = [obj for obj in bpy.data.objects
-                       if obj.get("STEP_file") is not None]
+                       if obj.get("STEP_file") is not None
+                       or obj.get("SWMESH_file") is not None]
 
         if not objects:
-            self.report({'WARNING'}, "No STEP objects found")
+            self.report({'WARNING'}, "No CAD objects found")
             return {'CANCELLED'}
 
         replaced = _apply_matdb_to_objects(objects, mappings)
@@ -4536,12 +4542,13 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             print("STEPper NEXT: bridge toggle failed:", exc)
 
     enable_bridge: bpy.props.BoolProperty(
-        name="SolidWorks integration (experimental)",
-        description="Show the SW To Blender sidebar tab. The addon also listens"
-                    " on localhost so the SolidWorks add-in can send exports "
-                    "into this Blender instance. This is off by default because"
-                    " the feature is experimental. The listener accepts "
-                    "connections only from this machine",
+        name="CAD Link (experimental)",
+        description="Show the CAD Link sidebar tab. The addon also listens on"
+                    " localhost so a CAD add-in (today: SW To Blender for "
+                    "SolidWorks) can send exports into this Blender instance."
+                    " This is off by default because the feature is "
+                    "experimental. The listener accepts connections only "
+                    "from this machine",
         default=False,
         update=_enable_bridge_changed,
     )

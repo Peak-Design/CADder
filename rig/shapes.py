@@ -444,7 +444,7 @@ def widget_collection(scene_collection):
     col = bpy.data.collections.get(WIDGET_COLLECTION)
     if col is None:
         col = bpy.data.collections.new(WIDGET_COLLECTION)
-        col["SWTB_widgets"] = True
+        col["CADLINK_widgets"] = True
     if col.name not in [c.name for c in scene_collection.children]:
         scene_collection.children.link(col)
     return col
@@ -475,6 +475,15 @@ def widget(collection, name, geometry, cache):
     existing = cache.get(name)
     if existing is not None:
         return existing
+    # A rebuild reuses the widget the last build left in the collection:
+    # the name carries every measurement that shaped it, so an object of
+    # that name IS the shape. Without this every rebuild added a fresh
+    # SWW_dial.001, .002, ... to the scene (live plunger.sldasm, 2026-09-15,
+    # switching the input in the panel).
+    existing = collection.objects.get(name)
+    if existing is not None and existing.get("CADLINK_widget"):
+        cache[name] = existing
+        return existing
 
     verts, edges, faces = geometry
     mesh = bpy.data.meshes.new(name)
@@ -483,7 +492,7 @@ def widget(collection, name, geometry, cache):
                      [tuple(f) for f in faces])
     mesh.update()
     obj = bpy.data.objects.new(name, mesh)
-    obj["SWTB_widget"] = True
+    obj["CADLINK_widget"] = True
     collection.objects.link(obj)
     cache[name] = obj
     return obj

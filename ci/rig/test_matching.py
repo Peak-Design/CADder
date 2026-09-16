@@ -70,10 +70,14 @@ class FakeCollection:
     the objects linked directly into it. bpy gives no parent, which is why
     matching inverts the children map to get one."""
 
-    def __init__(self, name, objects=(), children=()):
+    def __init__(self, name, objects=(), children=(), props=None):
         self.name = name
         self.objects = list(objects)
         self.children = list(children)
+        self._props = dict(props or {})
+
+    def get(self, key, default=None):
+        return self._props.get(key, default)
 
 
 def make_manifest(comps, step_file="asm.step"):
@@ -178,6 +182,124 @@ class StalePreseedTest(unittest.TestCase):
         self.assertIn("base.stale", report.unclaimed_objects)
         self.assertIsNone(stale.get("RIG_component_id"))
         self.assertIsNone(stale.get("RIG_group"))
+
+    def test_renumbered_ids_do_not_block_matching(self):
+        """Component ids are positional. A re-export that walks the
+        assembly in another order renumbers every one of them, so EVERY
+        tag left by the previous match names a component its object never
+        was. Live TongRig (2026-09-14): the manifest re-sent against the
+        standing import matched nothing. The wrong pre-seeds emptied the
+        pool before the path steps ran, then voted a frame from wrong
+        pairs, and the transform steps had nothing to agree with.
+
+        Five parts, two of them twins of one product, every tag shifted by
+        one. Everything must match, by path, and every group tag must be
+        this manifest's."""
+        rows = {
+            "base": identity4(),
+            "arm": translated(0.1, 0.0, 0.0),
+            "lid": translated(0.0, 0.1, 0.0),
+            "pin": translated(0.2, 0.0, 0.0),
+            "pin.001": translated(0.3, 0.0, 0.0),
+        }
+        m = make_manifest([
+            ("c001", "base", "asm/base", rows["base"]),
+            ("c002", "arm", "asm/arm", rows["arm"]),
+            ("c003", "lid", "asm/lid", rows["lid"]),
+            ("c004", "pin", "asm/pin", rows["pin"]),
+            ("c005", "pin", "asm/pin", rows["pin.001"]),
+        ])
+        root = FakeObj("asm", {"STEP_name": "asm", "STEP_uuid": 10,
+                               "STEP_file": "asm.step"}, identity4())
+        # The previous manifest numbered them arm, lid, pin, pin, base.
+        was = {"base": "c005", "arm": "c001", "lid": "c002",
+               "pin": "c003", "pin.001": "c004"}
+        objs = [root]
+        for i, name in enumerate(rows):
+            objs.append(FakeObj(name, {
+                "STEP_name": name.split(".")[0], "STEP_uuid": i + 1,
+                "STEP_parent": 10, "STEP_file": "asm.step",
+                "RIG_component_id": was[name], "RIG_group": "gXXX",
+            }, rows[name]))
+        report = matching.match(m, objects=objs)
+        got = {e.component_id: e.object_name for e in report.matched}
+        self.assertEqual({"c001": "base", "c002": "arm", "c003": "lid",
+                          "c004": "pin", "c005": "pin.001"}, got)
+        self.assertEqual([], report.unmatched)
+        self.assertEqual([], report.ambiguous)
+        for obj in objs[1:]:
+            self.assertEqual(got_id := obj.get("RIG_component_id"),
+                             {v: k for k, v in got.items()}[obj.name])
+            self.assertEqual("g%03d" % (int(got_id[1:]) - 1),
+                             obj.get("RIG_group"))
+
+
+class DottedProductNamesTest(unittest.TestCase):
+    """Product numbers with dotted suffixes, in a tree-collection import.
+    Live TongRig (2026-09-14): the hydraulic cylinder is "42S TC100.2",
+    its body "42S TC100.1.02", and each holds a nested subassembly named
+    one dot deeper. Stripping every dotted number as a Blender duplicate
+    suffix folded all of them into one label, the manifest's single
+    occurrence met four collections, and the cylinder rode the ground.
+
+    Blender's suffix is always at least three digits, and the importer now
+    stamps the CAD name on each node collection; both are covered, with
+    and without the stamp."""
+
+    def _scene(self, stamped):
+        m = make_manifest([
+            ("c001", "base", "asm/base", identity4()),
+            ("c002", "42S TC100.2", "asm/42S TC100.2",
+             translated(0.1, 0.0, 0.0), "rigid"),
+            ("c003", "42S TC100.1.02", "asm/42S TC100.1.02",
+             translated(0.5, 0.0, 0.0), "rigid"),
+        ])
+        base = FakeObj("base", {"STEP_name": "base", "STEP_uuid": 1,
+                                "STEP_parent": 10, "STEP_file": "asm.step"},
+                       identity4())
+        rod = FakeObj("rod", {"STEP_name": "rod", "STEP_uuid": 3,
+                              "STEP_parent": 2, "STEP_file": "asm.step"},
+                      translated(0.15, 0.0, 0.0))
+        piston = FakeObj("piston", {"STEP_name": "piston", "STEP_uuid": 5,
+                                    "STEP_parent": 4, "STEP_file": "asm.step"},
+                         translated(0.2, 0.0, 0.0))
+        barrel = FakeObj("barrel", {"STEP_name": "barrel", "STEP_uuid": 7,
+                                    "STEP_parent": 6, "STEP_file": "asm.step"},
+                         translated(0.55, 0.0, 0.0))
+        gland = FakeObj("gland", {"STEP_name": "gland", "STEP_uuid": 9,
+                                  "STEP_parent": 8, "STEP_file": "asm.step"},
+                        translated(0.6, 0.0, 0.0))
+
+        def col(name, **kw):
+            props = {"STEP_name": name} if stamped else {}
+            return FakeCollection(name, props=props, **kw)
+
+        rod_sub = col("42S TC100.2.01", objects=[piston])
+        cyl_rod = col("42S TC100.2", objects=[rod], children=[rod_sub])
+        body_sub = col("42S TC100.1.02.01", objects=[gland])
+        cyl_body = col("42S TC100.1.02", objects=[barrel], children=[body_sub])
+        asm = col("asm", objects=[base], children=[cyl_rod, cyl_body])
+        root = FakeCollection("asm.hierarchy", children=[asm])
+        return m, [base, rod, piston, barrel, gland], [
+            root, asm, cyl_rod, rod_sub, cyl_body, body_sub]
+
+    def _check(self, stamped):
+        m, objs, cols = self._scene(stamped)
+        report = matching.match(m, objects=objs, collections=cols)
+        self.assertEqual([], report.unmatched, report.notes)
+        got = {e.component_id: sorted(e.object_names) for e in report.matched}
+        self.assertEqual(["piston", "rod"], got["c002"])
+        self.assertEqual(["barrel", "gland"], got["c003"])
+        for name in ("rod", "piston"):
+            self.assertEqual("g001", next(o for o in objs if o.name == name).get("RIG_group"))
+        for name in ("barrel", "gland"):
+            self.assertEqual("g002", next(o for o in objs if o.name == name).get("RIG_group"))
+
+    def test_stamped_collections(self):
+        self._check(stamped=True)
+
+    def test_unstamped_collections(self):
+        self._check(stamped=False)
 
 
 class ForeignFileTest(unittest.TestCase):

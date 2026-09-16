@@ -130,7 +130,7 @@ def _fuzzy_label(text: str) -> str:
     # Both are identity noise for a last-resort name comparison.
     label = str(text)
     while True:
-        stripped = re.sub(r"\.\d+$", "", label)
+        stripped = re.sub(r"\.\d{3,}$", "", label)
         stripped = re.sub(r"-\d+$", "", stripped)
         if stripped == label:
             break
@@ -140,13 +140,30 @@ def _fuzzy_label(text: str) -> str:
 
 def _strip_dedup(name: str) -> str:
     """Blender appends '.001' to a duplicate datablock name. The CAD node
-    name underneath it is what the manifest knows."""
+    name underneath it is what the manifest knows.
+
+    Blender's suffix is always at least three digits. A product number is
+    not: the hydraulic cylinder of live TongRig (2026-09-14) is
+    "42S TC100.2", its body "42S TC100.1.02", and stripping every dotted
+    number folded them and their nested subassemblies into one label, so
+    the manifest's one occurrence met four collections and claimed none.
+    """
     label = str(name)
     while True:
-        stripped = re.sub(r"\.\d+$", "", label)
+        stripped = re.sub(r"\.\d{3,}$", "", label)
         if stripped == label:
             return label
         label = stripped
+
+
+def _collection_label(col) -> str:
+    """The CAD name of a collection: what the importer stamped on it when
+    it has, the label with Blender's duplicate suffix removed otherwise."""
+    try:
+        name = col.get("STEP_name")
+    except (AttributeError, TypeError):
+        name = None
+    return str(name) if name else _strip_dedup(col.name)
 
 
 def collect_collections(collections=None):
@@ -175,12 +192,14 @@ def _collection_paths(collections):
     for col in collections:
         for child in col.children:
             parent[child.name] = col.name
+    by_name = {col.name: col for col in collections}
     paths = {}
     for col in collections:
         segs, cur, seen = [], col.name, set()
         while cur is not None and cur not in seen:
             seen.add(cur)
-            segs.append(_strip_dedup(cur))
+            segs.append(_collection_label(by_name[cur]) if cur in by_name
+                        else _strip_dedup(cur))
             cur = parent.get(cur)
         segs.reverse()
         paths[col.name] = segs
@@ -639,7 +658,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         same_file = [o for o in candidates
                      if _basename(get_step_key(o).file) == want_file]
         if same_file and len(same_file) != len(candidates):
-            print("[SWTB match] restricting to %d object(s) imported from %r "
+            print("[CADLink match] restricting to %d object(s) imported from %r "
                   "(%d other object(s) in the scene ignored)"
                   % (len(same_file), want_file, len(candidates) - len(same_file)))
             candidates = same_file
@@ -758,55 +777,93 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     def note_ambiguous(component_id, objs):
         ambiguous_seen[component_id] = [o.name for o in objs]
 
-    # Pre-seed from a previous run. A tag pointing at an id this manifest
-    # does not know is stale and ignored.
+    def path_steps():
+        """Steps 1 and 2, over whatever is in the pool right now. Run once
+        after the pre-seed and again after a stale pre-seed is reverted,
+        so an object handed back to the pool gets its exact chance rather
+        than only the transform steps below."""
+        # Step 1: exact STEP_name plus rebuilt occurrence path. The uuid
+        # chain is preferred. Where it dead-ends because the ancestors were
+        # built as collections rather than objects, the collection ancestry
+        # supplies the same path.
+        paths = {}
+        for obj in pool:
+            p = _occurrence_path(obj, by_uuid)
+            if p is None or "/" not in p:
+                via_collection = _collection_occurrence_path(
+                    obj, col_of_object, col_paths, col_depth)
+                if via_collection is not None:
+                    p = via_collection
+            if p is not None:
+                paths[id(obj)] = _norm_path(p)
+        for cid in sorted(todo):
+            comp = todo[cid]
+            if comp.step_occurrence_path is None:
+                continue
+            want = _norm_path(comp.step_occurrence_path)
+            hits = [o for o in pool
+                    if get_step_key(o).name == comp.step_name
+                    and paths.get(id(o)) == want]
+            if len(hits) == 1:
+                claim(cid, hits[0], 1)
+            elif len(hits) > 1:
+                note_ambiguous(cid, hits)
+
+        # Step 2: path equality with instance suffixes and separators
+        # normalized.
+        for cid in sorted(todo):
+            comp = todo[cid]
+            if comp.step_occurrence_path is None:
+                continue
+            want = _loose_path(comp.step_occurrence_path)
+            hits = [o for o in pool
+                    if id(o) in paths and _loose_path(paths[id(o)]) == want]
+            if len(hits) == 1:
+                claim(cid, hits[0], 2)
+            elif len(hits) > 1:
+                note_ambiguous(cid, hits)
+
+    path_steps()
+
+    # Pre-seed from a previous run, AFTER the exact steps: a tag is history
+    # and history goes stale, an occurrence path is identity. Component ids
+    # are positional: a re-export that walks the assembly in another order
+    # renumbers every one of them, and then EVERY tag in the scene names a
+    # component its object never was (live TongRig, 2026-09-14: the
+    # manifest re-sent against the standing import matched nothing and
+    # parented nothing, because the wrong pre-seeds emptied the pool before
+    # the path steps ran and then voted the frame). Run first, a stale
+    # twin's tag would also take one twin out of the pool and hand the
+    # other twin's path a false uniqueness. So the tags only fill what the
+    # paths left (twins, flat imports, foreign files), and only when the
+    # object still carries the component's STEP name. A tag naming an id
+    # this manifest does not know, has already placed, or calls by another
+    # name, is cleared, and the object goes through the cascade like any
+    # other.
     for obj in list(pool):
         try:
             tagged = obj.get("RIG_component_id")
         except (AttributeError, TypeError):
             tagged = None
-        if tagged in todo:
+        if tagged is None:
+            continue
+        comp = todo.get(tagged)
+        if comp is not None and get_step_key(obj).name == comp.step_name:
             claim(tagged, obj, 0)
-
-    # Step 1: exact STEP_name plus rebuilt occurrence path. The uuid chain
-    # is preferred. Where it dead-ends because the ancestors were built as
-    # collections rather than objects, the collection ancestry supplies the
-    # same path.
-    paths = {}
-    for obj in pool:
-        p = _occurrence_path(obj, by_uuid)
-        if p is None or "/" not in p:
-            via_collection = _collection_occurrence_path(
-                obj, col_of_object, col_paths, col_depth)
-            if via_collection is not None:
-                p = via_collection
-        if p is not None:
-            paths[id(obj)] = _norm_path(p)
-    for cid in sorted(todo):
-        comp = todo[cid]
-        if comp.step_occurrence_path is None:
             continue
-        want = _norm_path(comp.step_occurrence_path)
-        hits = [o for o in pool
-                if get_step_key(o).name == comp.step_name
-                and paths.get(id(o)) == want]
-        if len(hits) == 1:
-            claim(cid, hits[0], 1)
-        elif len(hits) > 1:
-            note_ambiguous(cid, hits)
-
-    # Step 2: path equality with instance suffixes and separators normalized.
-    for cid in sorted(todo):
-        comp = todo[cid]
-        if comp.step_occurrence_path is None:
-            continue
-        want = _loose_path(comp.step_occurrence_path)
-        hits = [o for o in pool
-                if id(o) in paths and _loose_path(paths[id(o)]) == want]
-        if len(hits) == 1:
-            claim(cid, hits[0], 2)
-        elif len(hits) > 1:
-            note_ambiguous(cid, hits)
+        for tag in ("RIG_component_id", "RIG_group"):
+            try:
+                del obj[tag]
+            except (KeyError, TypeError):
+                pass
+        if comp is not None:
+            print("[CADLink match] stale tag: %s was tagged %s, which this "
+                  "manifest calls %r. Tag cleared, re-matching"
+                  % (obj.name, tagged, comp.step_name))
+        elif tagged in claimed:
+            print("[CADLink match] stale tag: %s was tagged %s, which the "
+                  "occurrence path gives to %s. Tag cleared, re-matching"
+                  % (obj.name, tagged, claimed[tagged].name))
 
     # The scene frame: estimated from the name/path anchors when there are
     # any. Without them (FLAT imports, foreign importers), uniquely-named
@@ -873,8 +930,10 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
                 del obj[tag]
             except (KeyError, TypeError):
                 pass
-        print("[SWTB match] stale tag: %s no longer sits at %s's transform. "
+        print("[CADLink match] stale tag: %s no longer sits at %s's transform. "
               "Re-matching both" % (obj.name, e.component_id))
+    if stale:
+        path_steps()
 
     # Step 3: same STEP_name plus transform agreement under the scene frame.
     for cid in sorted(todo):
@@ -939,7 +998,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         collection_bodies.setdefault(path, []).append(name)
     named_collections = {}
     for col in collections:
-        named_collections.setdefault(_strip_dedup(col.name), []).append(col.name)
+        named_collections.setdefault(_collection_label(col), []).append(col.name)
 
     # Only a component that IS a subassembly occurrence belongs here, and the
     # manifest says which those are: `subassembly_solving` is set for a
@@ -1110,9 +1169,9 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             "hierarchy = \"Parented empties\" gives every subassembly an "
             "object of its own and needs none of this guesswork."
             % (orphaned, len(stuck_subs)))
-        print("[SWTB match] %s" % report.hint)
+        print("[CADLink match] %s" % report.hint)
     for note in report.notes:
-        print("[SWTB match] %s" % note)
+        print("[CADLink match] %s" % note)
 
     report.ambiguous = sorted(
         (cid, names) for cid, names in ambiguous_seen.items() if cid in todo)
@@ -1126,27 +1185,35 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     # would silently ride that body's bone. A member this run did not
     # re-claim loses its tags here. Out of the rig is visible and
     # recoverable. In the wrong rigid group is neither.
+    # The same goes for a component tag that survived the pre-seed (its id
+    # was already taken by another object) and was never re-claimed: left
+    # in place, its group tag would parent the object to a body it is not.
     for obj in pool:
         try:
             was_member = obj.get("RIG_component_of") is not None
+            was_tagged = obj.get("RIG_component_id") is not None
         except (AttributeError, TypeError):
-            was_member = False
-        if not was_member:
+            was_member = was_tagged = False
+        if not was_member and not was_tagged:
             continue
-        for tag in ("RIG_component_of", "RIG_group"):
+        for tag in ("RIG_component_of", "RIG_component_id", "RIG_group"):
             try:
                 del obj[tag]
             except (KeyError, TypeError):
                 pass
-        print("[SWTB match] stale member tag: %s no longer belongs to a "
-              "matched subassembly body. Group tag cleared" % obj.name)
+        if was_member:
+            print("[CADLink match] stale member tag: %s no longer belongs to a "
+                  "matched subassembly body. Group tag cleared" % obj.name)
+        else:
+            print("[CADLink match] stale tag: %s was not re-claimed by this "
+                  "manifest. Tags cleared" % obj.name)
 
     report.unclaimed_objects = [o.name for o in pool]
 
     # Say WHY, per failure: the console line is what turns the next
     # "unmatched: c004" report into a one-look diagnosis.
     for cid, names in report.ambiguous:
-        print("[SWTB match] ambiguous: %s (%s), candidates %s"
+        print("[CADLink match] ambiguous: %s (%s), candidates %s"
               % (cid, comps[cid].step_name, ", ".join(names)))
     for cid in report.unmatched:
         comp = comps[cid]
@@ -1154,7 +1221,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
         pred = apply_frame(frame, crows)
         name_hits = [o for o in pool if get_step_key(o).name == comp.step_name]
         if not name_hits:
-            print("[SWTB match] unmatched: %s, no unclaimed object carries "
+            print("[CADLink match] unmatched: %s, no unclaimed object carries "
                   "STEP_name %r" % (cid, comp.step_name))
             continue
         nearest = []
@@ -1164,6 +1231,6 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             nearest.append((d * scene_scale, o.name))
         nearest.sort()
         detail = ", ".join("%s at %.4f m off" % (n, d) for d, n in nearest[:3])
-        print("[SWTB match] unmatched: %s (%s), same-name candidates rejected "
+        print("[CADLink match] unmatched: %s (%s), same-name candidates rejected "
               "on transform: %s" % (cid, comp.step_name, detail))
     return report

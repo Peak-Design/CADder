@@ -68,12 +68,34 @@ CADder ships as a Blender **extension** (since v2.3.0). The OpenCASCADE
 The importer panel will appear in **3D View > Tools panel > CADder**.
 
 > **Upgrading from v2.2.x or older (legacy addon):** remove the old
-> "CADder" entry from **Preferences > Add-ons** and restart Blender
+> "STEPper NEXT" entry from **Preferences > Add-ons** and restart Blender
 > before installing the extension.
+>
+> **Upgrading from v2.5.0 or older:** the addon was renamed from STEPper
+> NEXT to CADder. Blender keys addon preferences by the addon name, so
+> the material database folder and the other preferences are empty the
+> first time. Set them again under **Preferences > Add-ons > CADder**.
 
 To remove or update: remove the extension from **Preferences > Get Extensions >
 Installed** (or Add-ons). To update, install the new `.zip` and Blender
 replaces the older version.
+
+### Working from a checkout
+
+Keep the repository wherever the other work is, not inside the Blender
+application data folder, and link it into each Blender:
+
+```
+.	ools\Link-Addon.ps1                 every installed Blender 5.1 or newer
+.	ools\Link-Addon.ps1 -Version 5.2    one version
+.	ools\Link-Addon.ps1 -Version 5.2 -Remove
+```
+
+The link is a directory junction, so it needs no administrator rights.
+A new Blender version then needs one command and not a copy of the
+repository. The script never deletes a real folder: if the addons folder
+already holds a CADder directory that is not a link, it says so and
+leaves it alone.
 
 ### Requirements
 

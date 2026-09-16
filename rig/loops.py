@@ -14,7 +14,10 @@ IK at the tip bone's own tail instead left the four-bar dead (live corpus
 point and cannot even move in the mechanism plane.
 
 No pole target, ever: a pole target disables IK bone limits for the whole
-chain (Blender bug T28313), and the limits are the entire point here.
+chain (Blender bug T28313), and the limits are the entire point here. They
+carry the mate limits AND the branch the mechanism rests on (graph.py's
+_branch_limits): without the second, a chain driven to its straight or
+folded pose comes out of it mirrored.
 
 The IK solver ignores Limit Rotation constraints, so every joint limit is
 duplicated into the pose bone's ik_* settings.
@@ -27,6 +30,20 @@ except ImportError:
 
 _IK_NAME = "CADLink IK "
 
+# How hard an elbow resists bending, next to the shoulder that swings the
+# whole chain. Blender solves the chain from its REST pose every time, so
+# with both ends equally free the descent can cut straight across the pose
+# where the chain is in line with itself and come out on the mirror branch.
+# A stiff elbow makes the chain unfold gradually instead, and the path it
+# takes stays on the branch it started on.
+#
+# Measured on live wrench.sldasm (2026-09-16, Oscar) over 2479 poses the
+# five-bar really has: the branch limit alone got 524 of them wrong, and
+# the limit with this stiffness gets 11, none of them nearer than 129
+# degrees of jaw. Anything from 0.15 to 0.40 gives between 11 and 15, so
+# the number is a plateau and not a knife edge.
+_ELBOW_STIFFNESS = 0.3
+
 
 def _set_ik_y_limit(pb, limit):
     pb.use_ik_limit_y = True
@@ -34,7 +51,20 @@ def _set_ik_y_limit(pb, limit):
     pb.ik_max_y = limit.delta_max
 
 
-def _configure_chain_bone(pb, joint, planar_loop):
+def _clamp_ik_y(pb, low, high):
+    """Narrows the bone's IK Y limit to [low, high], keeping whatever it
+    already had. An empty overlap keeps what was there: a limit read from
+    a mate is a fact about the machine and outranks anything derived."""
+    if pb.use_ik_limit_y:
+        low, high = max(low, pb.ik_min_y), min(high, pb.ik_max_y)
+        if low >= high:
+            return
+    pb.use_ik_limit_y = True
+    pb.ik_min_y = low
+    pb.ik_max_y = high
+
+
+def _configure_chain_bone(pb, joint, planar_loop, branch=None):
     pb.lock_ik_x = False
     pb.lock_ik_y = False
     pb.lock_ik_z = False
@@ -86,6 +116,18 @@ def _configure_chain_bone(pb, joint, planar_loop):
         # plane. With joint axes normal to the plane, X and Z are off-plane.
         pb.lock_ik_x = True
         pb.lock_ik_z = True
+
+    if branch is not None and not pb.lock_ik_y:
+        # IN the plane, the chain can still fold through its own straight
+        # or folded pose and come out mirrored. graph.py's _branch_limits
+        # works out where those two poses are; this stops the bone on
+        # them. Live wrench.sldasm, 2026-09-16.
+        _clamp_ik_y(pb, branch[0], branch[1])
+        # The limit says where the branch ENDS. The stiffness is what keeps
+        # the solver walking to the answer along the mechanism instead of
+        # jumping the singular pose and pressing up against the limit from
+        # the wrong side. Both, or neither works.
+        pb.ik_stiffness_y = _ELBOW_STIFFNESS
 
 
 def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
@@ -161,6 +203,7 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
                         lplan.loop.id, gid))
                 continue
             _configure_chain_bone(pb, plan.bone_by_group[gid].joint,
-                                  lplan.loop.planar)
+                                  lplan.loop.planar,
+                                  lplan.branch_limits.get(gid))
         count += 1
     return count, warnings

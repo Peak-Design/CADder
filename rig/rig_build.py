@@ -114,6 +114,10 @@ class BuildResult:
     tangent_helper_names: Dict[str, str] = field(default_factory=dict)  # group id -> bone name
     limit_names: Dict[str, str] = field(default_factory=dict)   # group id -> limit bone name
     slide_names: Dict[str, str] = field(default_factory=dict)   # group id -> stretch bone name
+    # group id of a SCREW body -> the hidden bone that takes its slide and
+    # none of its spin. Bodies joined to the screw about another axis hang
+    # off this instead of off the screw (graph.py BonePlan.nospin_name).
+    nospin_names: Dict[str, str] = field(default_factory=dict)
     contact_mesh_names: Dict[str, str] = field(default_factory=dict)  # joint id -> rail or patch object name
     # Swing-cone balls AND cone_spin collapses: bone_names[gid] is the
     # hidden DEF bone (geometry and child bones ride the clamped result).
@@ -1235,6 +1239,15 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             # joint dies silently, so no bone is ever connected, except a
             # slide the loop solver owns (below).
             eb.use_connect = False
+            parent_name = None
+            if bp.parent_group_id is not None:
+                parent_name = result.bone_names[bp.parent_group_id]
+                if bp.parent_nospin:
+                    # This body must not take its parent screw's spin: it
+                    # rides the screw's no-spin carrier instead. See
+                    # graph.py BonePlan.nospin_name.
+                    parent_name = result.nospin_names.get(
+                        bp.parent_group_id, parent_name)
             if bp.slide_name and bp.parent_group_id is not None:
                 # A slide inside a solved chain (graph.py BonePlan.slide_name):
                 # a hidden stretch bone lies along this bone's own +Y, its
@@ -1251,15 +1264,32 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 sb.matrix = m
                 sb.length = rest_len
                 sb.use_connect = False
-                sb.parent = edit_bones[result.bone_names[bp.parent_group_id]]
+                sb.parent = edit_bones[parent_name]
                 helpers_coll.assign(sb)
                 result.slide_names[bp.group.id] = sb.name
                 eb.parent = sb
                 eb.use_connect = True
                 eb.inherit_scale = "NONE"
             elif bp.parent_group_id is not None:
-                eb.parent = edit_bones[result.bone_names[bp.parent_group_id]]
+                eb.parent = edit_bones[parent_name]
             result.bone_names[bp.group.id] = eb.name
+            if bp.nospin_name:
+                # The screw's own bone spins, and its geometry with it. This
+                # bone sits exactly where that bone sits, under the same
+                # parent, and a driver gives it the screw's slide alone
+                # (drivers.py). Bodies pinned to the screw about another
+                # axis hang off it, so they follow the screw down its axis
+                # and stay in the plane of the mechanism.
+                nb = edit_bones.new(bp.nospin_name)
+                nb.head = (0.0, 0.0, 0.0)
+                nb.tail = (0.0, 1.0, 0.0)
+                nb.matrix = eb.matrix.copy()
+                nb.length = eb.length
+                nb.use_connect = False
+                nb.parent = eb.parent
+                nb.inherit_scale = eb.inherit_scale
+                helpers_coll.assign(nb)
+                result.nospin_names[bp.group.id] = nb.name
             if (bp.cam_prj_name or bp.cam_rel_name) and cam_contact.wanted(bp):
                 cam_contact.add_helper_bones(
                     edit_bones, eb, bp, plan, manifest, frame, unit_scale,
@@ -1525,6 +1555,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                      + list(result.helper_names.values())
                      + list(result.effector_names.values())
                      + list(result.slide_names.values())
+                     + list(result.nospin_names.values())
                      + list(result.tangent_helper_names.values())
                      + list(result.ball_ctrl_names.values())
                      + list(result.ball_pole_names.values())
@@ -1635,6 +1666,13 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 pb.lock_rotation = [True, True, True]
                 pb.lock_scale = [True, True, True]
 
+        for gid, name in result.nospin_names.items():
+            pb = pose.bones[name]
+            pb["RIG_helper"] = gid
+            pb.lock_location = [True, True, True]
+            pb.lock_rotation = [True, True, True]
+            pb.lock_scale = [True, True, True]
+
         for gid, name in result.slide_names.items():
             # The stretch bone belongs to the solver (loops.py sets its IK
             # stretch); the body on it is connected, so its own location is
@@ -1650,7 +1688,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
 
         n_drivers, drv_warnings = drivers.build(
             arm_obj, manifest, plan, result.bone_names,
-            unit_scale=unit_scale, context=context)
+            unit_scale=unit_scale, context=context,
+            nospin_names=result.nospin_names)
         result.warnings.extend(drv_warnings)
         result.warnings.extend(cam_contact.apply(
             arm_obj, manifest, plan, result, cam_surfaces, unit_scale))

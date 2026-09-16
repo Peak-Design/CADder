@@ -82,14 +82,17 @@ def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
     return fcurve
 
 
-def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context=None):
+def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
+          context=None, nospin_names=None):
     """Creates every coupling driver. bone_names maps group id -> actual
     bone name (Blender may have renamed on collision, so plan names are not
-    trusted). unit_scale is Blender units per metre. Returns (count,
-    warnings)."""
+    trusted). nospin_names maps a screw body to the hidden bone that takes
+    its slide and none of its spin. unit_scale is Blender units per metre.
+    Returns (count, warnings)."""
     warnings = []
     count = 0
     pose = arm_obj.pose
+    nospin_names = nospin_names or {}
 
     for joint in manifest.joints:
         c = joint.coupling
@@ -123,6 +126,15 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0, context
             _add_driver(arm_obj, own_pb, "rotation_euler",
                         own_pb.name, "LOC_Y", constant)
             count += 1
+            hold = pose.bones.get(nospin_names.get(own_group, ""))
+            if hold is not None:
+                # The carrier sits where the screw sits, under the same
+                # parent, so one channel copied across gives it the slide
+                # exactly and leaves the spin behind. See rig_build's
+                # nospin_names and graph.py BonePlan.nospin_name.
+                _add_driver(arm_obj, hold, "location",
+                            own_pb.name, "LOC_Y", 1.0)
+                count += 1
             continue
 
         driver_group = plan.joint_group.get(c.driver_joint or "")

@@ -83,6 +83,99 @@ def five_bar_manifest(mobility=2):
     return data
 
 
+def screw_manifest(child_axis):
+    """A screw with one body pinned to it about child_axis."""
+    data = base_manifest()
+    data["components"] = [component("c%03d" % i, n) for i, n in
+                          enumerate(["Ground", "Screw", "Knuckle"], 1)]
+    data["rigid_groups"] = [
+        {"id": "g000", "name": "ground", "components": ["c001"],
+         "grounded": True, "frame": identity4(), "bbox_diag": 0.5},
+        {"id": "g001", "name": "screw", "components": ["c002"],
+         "grounded": False, "frame": None, "bbox_diag": 0.1},
+        {"id": "g002", "name": "knuckle", "components": ["c003"],
+         "grounded": False, "frame": None, "bbox_diag": 0.1},
+    ]
+    data["joints"] = [
+        {"id": "j001", "type": "screw", "parent_group": "g000",
+         "child_group": "g001", "origin": [0.0, 0.0, 0.0],
+         "axis": [1.0, 0.0, 0.0], "secondary_axis": [0.0, 0.0, 1.0],
+         "limits": None,
+         "coupling": {"kind": "screw", "driver_joint": None,
+                      "lead_m_per_rev": 0.0254}},
+        {"id": "j002", "type": "revolute", "parent_group": "g001",
+         "child_group": "g002", "origin": [0.05, 0.0, 0.0],
+         "axis": list(child_axis), "secondary_axis": [1.0, 0.0, 0.0],
+         "limits": None},
+    ]
+    return data
+
+
+class TestScrewSpinCarrier(unittest.TestCase):
+    """A screw spins as it advances, and the spin is driven by its own
+    slide: nothing has to ask for it. A body pinned to the screw about
+    another axis cannot turn back out of that spin, so it must hang off a
+    carrier that takes the slide alone.
+
+    Live wrench.sldasm (2026-09-16, Oscar): "the problem is that everything
+    rotates with the screw but it shouldn't"."""
+
+    def test_a_pin_across_the_screw_axis_gets_a_carrier(self):
+        plan = plan_of(screw_manifest([0.0, 0.0, 1.0]))
+        self.assertTrue(plan.bone_by_group["g001"].nospin_name)
+        self.assertTrue(plan.bone_by_group["g002"].parent_nospin)
+
+    def test_a_pin_on_the_screw_axis_keeps_the_spin(self):
+        # Coaxial: the body turns about the screw's OWN axis, so its own
+        # channel can undo whatever the screw does. Nothing to carry.
+        plan = plan_of(screw_manifest([1.0, 0.0, 0.0]))
+        self.assertEqual(plan.bone_by_group["g001"].nospin_name, "")
+        self.assertFalse(plan.bone_by_group["g002"].parent_nospin)
+
+    def test_a_pin_under_a_plain_hinge_gets_nothing(self):
+        # Only a screw spins on its own. A hinge is the user's to pose.
+        data = screw_manifest([0.0, 0.0, 1.0])
+        data["joints"][0]["type"] = "revolute"
+        data["joints"][0]["coupling"] = None
+        plan = plan_of(data)
+        self.assertEqual(plan.bone_by_group["g001"].nospin_name, "")
+        self.assertFalse(plan.bone_by_group["g002"].parent_nospin)
+
+
+class TestBranchLimits(unittest.TestCase):
+    """Two links reaching one point have two answers, mirrored in the line
+    through the ends of the chain. The assembly SolidWorks shipped is on
+    one of them, and an elbow held inside the half turn either side of its
+    rest bend cannot reach the other.
+
+    Live wrench.sldasm (2026-09-16, Oscar): "at some point secondgrip and
+    centerlink instantly flip to the wrong position/direction"."""
+
+    def test_the_elbow_is_held_to_its_own_half_turn(self):
+        lplan = plan_of(five_bar_manifest(mobility=2)).loops[0]
+        # The driven branch is c, b: c is the elbow, b the shoulder.
+        self.assertEqual(sorted(lplan.branch_limits), ["g003"])
+        low, high = lplan.branch_limits["g003"]
+        # Its links turn by +26.565 then -26.565 degrees, so it rests bent
+        # by -53.13 degrees. Straight is 53.13 degrees away one way, folded
+        # right back is 126.87 the other.
+        self.assertAlmostEqual(math.degrees(high), 53.130, places=3)
+        self.assertAlmostEqual(math.degrees(low), -126.870, places=3)
+        self.assertAlmostEqual(high - low, math.pi, places=9)
+
+    def test_the_shoulder_of_the_chain_is_left_free(self):
+        # The shoulder swings the whole chain round and passes through its
+        # own straight pose with nothing wrong at all.
+        lplan = plan_of(five_bar_manifest(mobility=2)).loops[0]
+        self.assertNotIn("g002", lplan.branch_limits)
+
+    def test_a_loop_that_is_not_planar_is_left_alone(self):
+        data = five_bar_manifest(mobility=2)
+        data["loops"][0]["planar"] = False
+        lplan = plan_of(data).loops[0]
+        self.assertEqual(lplan.branch_limits, {})
+
+
 class TestLoopMobility(unittest.TestCase):
     """A loop that takes more than one input must leave a bone out of the
     solve for each spare input, or the user has nothing to pose with.

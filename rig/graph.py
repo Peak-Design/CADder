@@ -111,6 +111,21 @@ class BonePlan:
     cam_prj_name: str = ""
     cam_rel_name: str = ""
     cam_off_name: str = ""
+    # A screw SPINS as it advances, and that spin is driven by its own
+    # slide: it happens whether or not anything asks for it. A body joined
+    # to the screw about some OTHER axis cannot turn back out of it, so
+    # inheriting the spin tips that body out of the mechanism for good.
+    # Such a body therefore hangs off a hidden carrier that takes the
+    # screw's slide and none of its turn. nospin_name is that carrier, on
+    # the SCREW's own plan; parent_nospin marks each child that uses it.
+    #
+    # Live wrench.sldasm (2026-09-16, Oscar): "rotating the clamp2 bone
+    # does produce correct movement ... the problem is that everything
+    # rotates with the screw but it shouldn't". The centerlink sits on a
+    # point on the screw's end, pinned about the mechanism normal while
+    # the screw turns about its own axis at right angles to it.
+    nospin_name: str = ""
+    parent_nospin: bool = False
 
 
 @dataclass
@@ -132,6 +147,9 @@ class LoopPlan:
     # Bones the IK chain spans below the effector: the driven bodies plus
     # one stretch bone per slide among them (BonePlan.slide_name).
     chain_count: int = 0
+    # group id -> (min, max) radians on that bone's own Y, holding the
+    # chain on the branch it rests on. See _branch_limits.
+    branch_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -252,6 +270,12 @@ def _v_sub(a, b):
 
 def _v_dot(a, b):
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _v_cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]]
 
 
 def _v_norm(a):
@@ -435,6 +459,86 @@ def _assert_acyclic(edges: Dict[str, Set[str]], labels: Dict[str, str]):
             if not advanced:
                 state[node] = 2
                 stack.pop()
+
+
+# A joint whose origin is one point, fixed in BOTH bodies: a link
+# between two of these has a length that does not change, which is what
+# makes a rest bend angle mean anything.
+_PIVOTS = ("revolute", "cylindrical", "ball", "fixed")
+
+# How far a rest bend must sit from a singularity before it names a branch
+# to hold. A mechanism resting exactly straight has not chosen one.
+_BRANCH_FLOOR = math.radians(2.0)
+
+
+def _flatten(w, axis):
+    """w with its component along axis taken out."""
+    d = _v_dot(w, axis)
+    return [w[0] - d * axis[0], w[1] - d * axis[1], w[2] - d * axis[2]]
+
+
+def _branch_limits(lp: Loop, driven: List[str], closure: Joint, parent_of):
+    """How far each elbow of a driven chain may bend, so the solver never
+    reaches the pose where it could bend the other way instead.
+
+    A chain of two links reaching one point has TWO answers, mirrored in
+    the line through its ends. The two meet where the chain is straight
+    (its links end to end) and where it is folded back on itself. Blender
+    picks whichever its iteration lands on, so a chain driven up to one of
+    those poses comes out of it on either branch, and the mechanism turns
+    itself inside out in one frame.
+
+    Live wrench.sldasm (2026-09-16, Oscar): "at some point secondgrip and
+    centerlink instantly flip to the wrong position/direction ... as soon
+    as this triangle flips direction it starts giving problems". Measured:
+    the elbow went from -115.7 to +119.4 degrees between two neighbouring
+    poses and the closure tore open by 25 mm.
+
+    The assembly SolidWorks shipped is on one branch already, so that is
+    the branch to hold. The bend at an elbow is the signed angle from the
+    link coming in to the link going out, about the elbow's own axis, and
+    the bone's own Y turns the outgoing link by exactly that much: the
+    bend is its rest value plus the bone's Y, all the way round. Holding Y
+    inside the half turn that keeps the bend's sign holds the branch. The
+    limits land ON the two singular poses, so the mechanism still reaches
+    both and only stops where it would otherwise have to guess.
+
+    Planar loops only: those are the loops whose chains are held in the
+    plane already (loops.py locks X and Z), so a bend about the joint axis
+    is the whole of the freedom the solver has there.
+
+    The bone at the ROOT of the chain is left out. Its bend is the chain's
+    shoulder, free to swing the whole chain round, and the live wrench
+    passes through its straight pose with nothing wrong at all.
+    """
+    limits = {}
+    if not lp.planar:
+        return limits
+    for i in range(len(driven) - 1):
+        gid = driven[i]
+        joint = parent_of[gid][1]
+        before = parent_of[driven[i + 1]][1]
+        after = closure if i == 0 else parent_of[driven[i - 1]][1]
+        if joint.type not in ("revolute", "cylindrical"):
+            continue
+        if before.type not in _PIVOTS or after.type not in _PIVOTS:
+            continue
+        axis = _unit(joint.axis) if joint.axis else None
+        if (axis is None or joint.origin is None
+                or before.origin is None or after.origin is None):
+            continue
+        u = _flatten(_v_sub(joint.origin, before.origin), axis)
+        v = _flatten(_v_sub(after.origin, joint.origin), axis)
+        if _v_norm(u) < 1e-9 or _v_norm(v) < 1e-9:
+            continue
+        bend = math.atan2(_v_dot(_v_cross(u, v), axis), _v_dot(u, v))
+        if abs(bend) < _BRANCH_FLOOR or abs(bend) > math.pi - _BRANCH_FLOOR:
+            continue
+        if bend < 0.0:
+            limits[gid] = (-math.pi - bend, -bend)
+        else:
+            limits[gid] = (-bend, math.pi - bend)
+    return limits
 
 
 def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
@@ -690,6 +794,7 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             driven_chain=list(driven_groups),
             driver_chain=list(driver_groups),
             chain_count=len(driven_groups) + len(slides),
+            branch_limits=_branch_limits(lp, list(driven_groups), cj, parent_of),
         ))
 
     # Contact carrier chains fold into single posable bones AFTER loop
@@ -791,6 +896,21 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
         aim_of[splan.a_group] = list(splan.c_pivot)
         aim_of[splan.c_group] = list(splan.a_pivot)
 
+    # A screw's driven spin cannot be inherited by a body joined to it
+    # about another axis: see BonePlan.nospin_name. Coaxial is left alone,
+    # because a body turning about the screw's OWN axis can turn back.
+    nospin_children = set()
+    nospin_groups = set()
+    for child, (parent, cj) in parent_of.items():
+        pj = parent_of.get(parent, (None, None))[1]
+        if pj is None or pj.type != "screw" or pj.axis is None:
+            continue
+        a, b = _unit(cj.axis or []), _unit(pj.axis)
+        if a is None or b is None or abs(_v_dot(a, b)) > 0.999:
+            continue
+        nospin_children.add(child)
+        nospin_groups.add(parent)
+
     taken_names = set()
     order = list(plan.grounded_groups) + list(plan.free_groups)
     stack = list(reversed(order))
@@ -818,7 +938,11 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             root=is_root,
             mirror_normal=mirror_normal_of.get(gid),
             aim_at=aim_of.get(gid),
+            parent_nospin=gid in nospin_children,
         )
+        if gid in nospin_groups:
+            bp.nospin_name = _unique_name(
+                "NSP_" + bp.bone_name, taken_names, gid)
         if swing_cone(joint):
             bp.ball_def_name = _unique_name("DEF_" + bp.bone_name, taken_names, gid)
             bp.ball_pole_name = _unique_name("POLE_" + bp.bone_name, taken_names, gid)

@@ -7,8 +7,10 @@ baked into the expression as a literal: use_self would be the alternative
 and it is blocked whenever Auto Run Python Scripts is off, which is the
 default on every machine the rig gets shared to.
 
-The screw self-driver (rotation from own location) is safe because the
-depsgraph resolves per channel. Location never reads rotation back.
+A screw's turn is driven from its own slide, and no driver may read the
+bone it writes: that is a depsgraph cycle. The turn therefore lives on a
+child bone of its own (graph.py BonePlan.spin_name) and reads its PARENT,
+which is an ordinary dependency.
 """
 
 import math
@@ -83,16 +85,16 @@ def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
 
 
 def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
-          context=None, nospin_names=None):
+          context=None, spin_names=None):
     """Creates every coupling driver. bone_names maps group id -> actual
     bone name (Blender may have renamed on collision, so plan names are not
-    trusted). nospin_names maps a screw body to the hidden bone that takes
-    its slide and none of its spin. unit_scale is Blender units per metre.
-    Returns (count, warnings)."""
+    trusted). spin_names maps a screw body to the hidden child bone that
+    carries its turn. unit_scale is Blender units per metre. Returns
+    (count, warnings)."""
     warnings = []
     count = 0
     pose = arm_obj.pose
-    nospin_names = nospin_names or {}
+    spin_names = spin_names or {}
 
     for joint in manifest.joints:
         c = joint.coupling
@@ -122,19 +124,21 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
                 continue
             # rotation [rad] = location [m] * 2*pi / lead. Location arrives
             # in Blender units, hence the divide by unit_scale.
+            spin_pb = pose.bones.get(spin_names.get(own_group, ""))
+            if spin_pb is None:
+                warnings.append(
+                    "joint {}: screw coupling skipped, the body has no bone "
+                    "to turn on".format(joint.id))
+                continue
+            # rotation [rad] = location [m] * 2*pi / lead. Location arrives
+            # in Blender units, hence the divide by unit_scale. The source
+            # is this bone's PARENT, which is the body itself: a child
+            # reading its parent is no cycle, and LOCAL_SPACE reads the
+            # slide after the joint's own travel limit.
             constant = (2.0 * math.pi) / (c.lead_m_per_rev * unit_scale)
-            _add_driver(arm_obj, own_pb, "rotation_euler",
+            _add_driver(arm_obj, spin_pb, "rotation_euler",
                         own_pb.name, "LOC_Y", constant)
             count += 1
-            hold = pose.bones.get(nospin_names.get(own_group, ""))
-            if hold is not None:
-                # The carrier sits where the screw sits, under the same
-                # parent, so one channel copied across gives it the slide
-                # exactly and leaves the spin behind. See rig_build's
-                # nospin_names and graph.py BonePlan.nospin_name.
-                _add_driver(arm_obj, hold, "location",
-                            own_pb.name, "LOC_Y", 1.0)
-                count += 1
             continue
 
         driver_group = plan.joint_group.get(c.driver_joint or "")

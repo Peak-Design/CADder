@@ -16,9 +16,18 @@ screw turns about its own axis at right angles to it. Ten millimetres of
 screw leaned the centerlink 15 degrees and arm2 62 degrees out of a loop
 that is flat by construction.
 
-The rig answers with a hidden carrier (graph.py BonePlan.nospin_name) that
-takes the screw's slide and none of its turn. The screw's own bone still
-spins, and its geometry with it.
+The rig answers by putting the turn on a bone of its OWN, a child of the
+body's bone (graph.py BonePlan.spin_name). The geometry rides that child,
+so the screw still turns on screen, and a body pinned across the axis
+parents to the body's bone like any other child and takes the slide alone.
+
+The same bone fixes a second fault. A driver that reads the slide off the
+bone it writes is a depsgraph cycle: Blender reports it and then breaks it
+with the last evaluation's value, so the turn lagged the slide by a whole
+step and stayed lagged once the user let go (14.2 degrees out on this
+mechanism, and the loop it closes 2.2 mm open). A child reading its parent
+is an ordinary dependency. So this measures the turn against the lead as
+well as the linkage against its plane.
 """
 
 import json
@@ -113,45 +122,68 @@ finally:
     os.unlink(PATH)
 
 plan = graph.build(m)
-_check(plan.bone_by_group["g004"].nospin_name != "",
-       "the screw got no carrier, so whatever hangs off it takes its spin")
-_check(plan.bone_by_group["g002"].parent_nospin,
-       "the centerlink is pinned to the screw about another axis and still "
-       "rides the screw's own bone")
-_check(not plan.bone_by_group["g004"].parent_nospin,
-       "the screw itself was given a carrier to ride")
+_check(plan.bone_by_group["g004"].spin_name != "",
+       "the screw got no bone to turn on, so its own bone must be turning")
+_check(not plan.bone_by_group["g002"].parent_spin,
+       "the centerlink is pinned to the screw about another axis and was "
+       "still put on the bone that turns")
 
 result = rig_build.build(bpy.context, m, plan)
 arm = result.armature_object
-_check(result.nospin_names.get("g004"), "the carrier bone was never built")
+_check(result.spin_names.get("g004"), "the turning bone was never built")
 screw = arm.pose.bones[result.bone_names["g004"]]
-carrier = arm.pose.bones[result.nospin_names["g004"]]
+spinner = arm.pose.bones[result.spin_names["g004"]]
+_check(spinner.parent is not None and spinner.parent.name == screw.name,
+       "the turning bone hangs off %s rather than off the screw's own bone"
+       % (spinner.parent.name if spinner.parent else "nothing"))
+
+LEAD = 0.0254
+
+
+def turned():
+    """The screw's turn about its axis, off the evaluated pose."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    pb = arm.evaluated_get(dg).pose.bones[result.spin_names["g004"]]
+    return (pb.bone.matrix_local.inverted() @ pb.matrix).to_euler().y
+
 
 worst_lean = 0.0
+worst_lag = 0.0
 spun = 0.0
 slid = 0.0
-for step in range(11):
-    screw.location[1] = 0.001 * step
+# Out and back: a lagging driver reads right on the way out and wrong the
+# moment the slide turns round, which is what a user doing this by hand
+# sees first.
+for slide in ([0.001 * s for s in range(11)]
+              + [0.001 * s for s in range(9, -1, -1)]):
+    screw.location[1] = slide
     bpy.context.view_layer.update()
-    spun = max(spun, abs(screw.matrix.to_euler().y + math.pi / 2.0))
-    slid = max(slid, (carrier.head - screw.head).length)
+    want = slide * 2.0 * math.pi / LEAD
+    worst_lag = max(worst_lag, abs(math.degrees(
+        ((turned() - want + math.pi) % (2.0 * math.pi)) - math.pi)))
+    spun = max(spun, abs(turned()))
+    slid = max(slid, (spinner.head - screw.head).length)
     for gid in ("g001", "g002"):
         y = arm.pose.bones[result.bone_names[gid]].matrix.to_3x3() @ Vector(
             (0.0, 1.0, 0.0))
         worst_lean = max(worst_lean, math.degrees(y.angle(Vector(Z))))
 
 print("rig_screwspin_smoke: %.3f rad of screw leaves the linkage %.4f deg "
-      "out of its plane; the carrier tracked the screw to %.7f m"
-      % (spun, worst_lean, slid))
+      "out of its plane; the turning bone held the axis to %.7f m; the turn "
+      "is within %.4f deg of the lead" % (spun, worst_lean, slid, worst_lag))
 
 # Without a real turn the fault cannot show and the test proves nothing.
 _check(spun > 1.5, "the screw barely turned (%.3f rad): check the lead" % spun)
 _check(slid < 1e-6,
-       "the carrier lagged the screw's own bone by %.6f m, so it is not "
-       "carrying the slide" % slid)
+       "the turning bone sat %.6f m off the screw's own head, so it is not "
+       "on the same axis" % slid)
 _check(worst_lean < 0.01,
        "the linkage leaned %.4f deg out of a loop that is flat by "
        "construction: the screw's spin is still being inherited" % worst_lean)
+_check(worst_lag < 0.01,
+       "the screw's turn was out by %.4f deg against its own lead, so the "
+       "driver is reading a pose it is itself deciding" % worst_lag)
 
-print("rig_screwspin_smoke: OK: the screw turns, its geometry turns with it, "
-       "and the bodies pinned to it stay in the plane of the mechanism")
+print("rig_screwspin_smoke: OK: the screw turns by its own lead, on a bone "
+      "of its own, and the bodies pinned across its axis stay in the plane "
+      "of the mechanism")

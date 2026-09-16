@@ -105,6 +105,13 @@ def _rig_maps(arm_obj):
         gid = pb.get("RIG_group")
         if gid and "RIG_helper" not in pb.keys():
             bone_by_key[(pb.get("RIG_source") or None, gid)] = pb.name
+    for pb in arm_obj.pose.bones:
+        # A screw's TURN is on a bone of its own, below the body's, and
+        # that is where its geometry belongs: the body's own bone carries
+        # the slide and nothing else (rig_build's spin_names).
+        gid = pb.get("RIG_spin")
+        if gid:
+            bone_by_key[(pb.get("RIG_source") or None, gid)] = pb.name
 
     geometry = {}
     for obj in bpy.data.objects:

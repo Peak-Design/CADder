@@ -111,21 +111,34 @@ class BonePlan:
     cam_prj_name: str = ""
     cam_rel_name: str = ""
     cam_off_name: str = ""
-    # A screw SPINS as it advances, and that spin is driven by its own
-    # slide: it happens whether or not anything asks for it. A body joined
-    # to the screw about some OTHER axis cannot turn back out of it, so
-    # inheriting the spin tips that body out of the mechanism for good.
-    # Such a body therefore hangs off a hidden carrier that takes the
-    # screw's slide and none of its turn. nospin_name is that carrier, on
-    # the SCREW's own plan; parent_nospin marks each child that uses it.
+    # A screw SPINS as it advances. The spin lives on a hidden bone of
+    # its own, a child of the body's bone, and that is where the geometry
+    # rides. Two things need it there.
     #
-    # Live wrench.sldasm (2026-09-16, Oscar): "rotating the clamp2 bone
-    # does produce correct movement ... the problem is that everything
-    # rotates with the screw but it shouldn't". The centerlink sits on a
-    # point on the screw's end, pinned about the mechanism normal while
-    # the screw turns about its own axis at right angles to it.
-    nospin_name: str = ""
-    parent_nospin: bool = False
+    # One: the turn is a function of the slide, and a driver reading the
+    # slide off the bone it writes to is a depsgraph cycle. Blender reports
+    # it and then breaks it with the last evaluation's value, so the turn
+    # lagged the slide by a whole step and stayed lagged once the user let
+    # go (live wrench.sldasm, 2026-09-16: 14.2 degrees out, and the loop it
+    # closed 2.2 mm open). A child reading its PARENT is an ordinary
+    # dependency with no cycle at all, and it reads the slide after the
+    # joint's own travel limit rather than before it.
+    #
+    # Two: that spin is driven, so it happens whether or not anything asks
+    # for it, and a body joined to the screw about some OTHER axis cannot
+    # turn back out of it. Inheriting it would tip that body out of the
+    # mechanism for good ("everything rotates with the screw but it
+    # shouldn't", Oscar, same day: the wrench's centerlink sits on a point
+    # on the screw's end, pinned about the mechanism normal while the screw
+    # turns about its own axis at right angles to it). Hanging the spin
+    # BELOW the body's bone means such a child inherits the slide alone by
+    # simply parenting where every other child parents.
+    #
+    # parent_spin marks the children that do ride the turn: the ones joined
+    # about the screw's own axis, which can turn back out of it, and welds,
+    # which are part of the turning body.
+    spin_name: str = ""
+    parent_spin: bool = False
 
 
 @dataclass
@@ -896,20 +909,25 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
         aim_of[splan.a_group] = list(splan.c_pivot)
         aim_of[splan.c_group] = list(splan.a_pivot)
 
-    # A screw's driven spin cannot be inherited by a body joined to it
-    # about another axis: see BonePlan.nospin_name. Coaxial is left alone,
-    # because a body turning about the screw's OWN axis can turn back.
-    nospin_children = set()
-    nospin_groups = set()
+    # Every screw body's turn lives on a bone of its own: see
+    # BonePlan.spin_name. A child joined about the screw's own axis rides
+    # it, and so does a weld. Anything else stays on the body's bone and
+    # takes the slide alone.
+    spin_groups = set()
+    spin_children = set()
     for child, (parent, cj) in parent_of.items():
         pj = parent_of.get(parent, (None, None))[1]
         if pj is None or pj.type != "screw" or pj.axis is None:
             continue
-        a, b = _unit(cj.axis or []), _unit(pj.axis)
-        if a is None or b is None or abs(_v_dot(a, b)) > 0.999:
+        if cj.type == "fixed":
+            spin_children.add(child)
             continue
-        nospin_children.add(child)
-        nospin_groups.add(parent)
+        a, b = _unit(cj.axis or []), _unit(pj.axis)
+        if a is not None and b is not None and abs(_v_dot(a, b)) > 0.999:
+            spin_children.add(child)
+    for gid, (_parent, j) in parent_of.items():
+        if j is not None and j.type == "screw":
+            spin_groups.add(gid)
 
     taken_names = set()
     order = list(plan.grounded_groups) + list(plan.free_groups)
@@ -938,11 +956,11 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             root=is_root,
             mirror_normal=mirror_normal_of.get(gid),
             aim_at=aim_of.get(gid),
-            parent_nospin=gid in nospin_children,
+            parent_spin=gid in spin_children,
         )
-        if gid in nospin_groups:
-            bp.nospin_name = _unique_name(
-                "NSP_" + bp.bone_name, taken_names, gid)
+        if gid in spin_groups:
+            bp.spin_name = _unique_name(
+                "SPN_" + bp.bone_name, taken_names, gid)
         if swing_cone(joint):
             bp.ball_def_name = _unique_name("DEF_" + bp.bone_name, taken_names, gid)
             bp.ball_pole_name = _unique_name("POLE_" + bp.bone_name, taken_names, gid)

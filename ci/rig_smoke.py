@@ -235,20 +235,23 @@ def run():
 
     # 1) One bone per rigid group (collapsed carriers get none) plus a
     # helper and an effector per loop, DEF/POLE/GOAL for every swing-cone
-    # ball, DEF/POLE/GOAL/FRM for every cone_spin collapse, and one limit
-    # dial for every control that has a limit to show.
+    # ball, DEF/POLE/GOAL/FRM for every cone_spin collapse, one bone for
+    # every screw's own turn, and one limit dial for every control that has
+    # a limit to show.
     coned = [bp for bp in plan.bones if bp.ball_def_name]
     cone_spins = [bp for bp in plan.bones
                   if bp.collapsed is not None and bp.collapsed.kind == "cone_spin"]
+    spins = [bp for bp in plan.bones if bp.spin_name]
     limits = len(result.limit_names)
     expected = (len(m.rigid_groups) - len(plan.collapsed_carriers)
                 + 2 * len(plan.loops) + 3 * len(coned) + 4 * len(cone_spins)
-                + limits)
+                + len(spins) + limits)
     _check(len(arm.bones) == expected,
            "bone count {} != groups {} - carriers {} + 2x loops {} + 3x "
-           "coned balls {} + 4x cone spins {} + limit dials {}".format(
+           "coned balls {} + 4x cone spins {} + screw turns {} + limit "
+           "dials {}".format(
                len(arm.bones), len(m.rigid_groups), len(plan.collapsed_carriers),
-               len(plan.loops), len(coned), len(cone_spins), limits))
+               len(plan.loops), len(coned), len(cone_spins), len(spins), limits))
     _check(limits > 0, "no limit dial was built at all")
 
     # 2) Every joint bone's local +Y parallel to the manifest axis, except a
@@ -586,7 +589,12 @@ def run():
         driver_paths = {(fc.data_path, fc.array_index): fc
                        for fc in anim.drivers}
         for joint in coupled:
-            pb = arm_obj.pose.bones[result.bone_names[plan.joint_group[joint.id]]]
+            gid = plan.joint_group[joint.id]
+            # A screw's turn is on a bone of its own, below the body's: a
+            # driver may not read the bone it writes (drivers.py).
+            name = (result.spin_names.get(gid) if joint.coupling.kind == "screw"
+                    else None) or result.bone_names[gid]
+            pb = arm_obj.pose.bones[name]
             channel = ("rotation_euler"
                        if joint.coupling.kind in ("gear", "screw")
                        else "location")

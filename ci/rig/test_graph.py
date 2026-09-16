@@ -111,35 +111,46 @@ def screw_manifest(child_axis):
     return data
 
 
-class TestScrewSpinCarrier(unittest.TestCase):
-    """A screw spins as it advances, and the spin is driven by its own
-    slide: nothing has to ask for it. A body pinned to the screw about
-    another axis cannot turn back out of that spin, so it must hang off a
-    carrier that takes the slide alone.
+class TestScrewSpinBone(unittest.TestCase):
+    """A screw's turn lives on a bone of its own, below the body's.
 
-    Live wrench.sldasm (2026-09-16, Oscar): "the problem is that everything
-    rotates with the screw but it shouldn't"."""
+    Two reasons, both live wrench.sldasm (2026-09-16, Oscar). A driver
+    reading the slide off the bone it writes is a depsgraph cycle, and
+    Blender breaks it with a stale value. And the turn is driven, so a body
+    joined to the screw about another axis would be carried round by a turn
+    it cannot undo: "everything rotates with the screw but it shouldn't".
+    Hanging the turn BELOW the body means such a child inherits the slide
+    alone by parenting where every child parents."""
 
-    def test_a_pin_across_the_screw_axis_gets_a_carrier(self):
+    def test_a_screw_turns_on_a_bone_of_its_own(self):
         plan = plan_of(screw_manifest([0.0, 0.0, 1.0]))
-        self.assertTrue(plan.bone_by_group["g001"].nospin_name)
-        self.assertTrue(plan.bone_by_group["g002"].parent_nospin)
+        self.assertTrue(plan.bone_by_group["g001"].spin_name)
 
-    def test_a_pin_on_the_screw_axis_keeps_the_spin(self):
+    def test_a_pin_across_the_screw_axis_stays_off_the_turn(self):
+        plan = plan_of(screw_manifest([0.0, 0.0, 1.0]))
+        self.assertFalse(plan.bone_by_group["g002"].parent_spin)
+
+    def test_a_pin_on_the_screw_axis_rides_the_turn(self):
         # Coaxial: the body turns about the screw's OWN axis, so its own
-        # channel can undo whatever the screw does. Nothing to carry.
+        # channel can undo whatever the screw does.
         plan = plan_of(screw_manifest([1.0, 0.0, 0.0]))
-        self.assertEqual(plan.bone_by_group["g001"].nospin_name, "")
-        self.assertFalse(plan.bone_by_group["g002"].parent_nospin)
+        self.assertTrue(plan.bone_by_group["g002"].parent_spin)
 
-    def test_a_pin_under_a_plain_hinge_gets_nothing(self):
-        # Only a screw spins on its own. A hinge is the user's to pose.
+    def test_a_weld_on_a_screw_rides_the_turn(self):
+        data = screw_manifest([0.0, 0.0, 1.0])
+        data["joints"][1]["type"] = "fixed"
+        plan = plan_of(data)
+        self.assertTrue(plan.bone_by_group["g002"].parent_spin)
+
+    def test_a_plain_hinge_turns_on_its_own_bone(self):
+        # Only a screw turns without being asked. A hinge is the user's to
+        # pose, so its body needs no second bone.
         data = screw_manifest([0.0, 0.0, 1.0])
         data["joints"][0]["type"] = "revolute"
         data["joints"][0]["coupling"] = None
         plan = plan_of(data)
-        self.assertEqual(plan.bone_by_group["g001"].nospin_name, "")
-        self.assertFalse(plan.bone_by_group["g002"].parent_nospin)
+        self.assertEqual(plan.bone_by_group["g001"].spin_name, "")
+        self.assertFalse(plan.bone_by_group["g002"].parent_spin)
 
 
 class TestBranchLimits(unittest.TestCase):

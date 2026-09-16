@@ -557,6 +557,23 @@ def _exclude(context, collection):
         lc.exclude = True
 
 
+def _mesh_holders(obj):
+    """The objects whose mesh data is this part's geometry.
+
+    A part that came in as its own mesh holds it. A part that came in as
+    a collection instance is an empty, and the geometry is on the
+    prototype objects inside the collection it instances. Those
+    prototypes are shared by every instance of the same part, so
+    replacing one replaces them all, which is what a re-tessellation
+    means."""
+    if obj.type == "MESH":
+        return [obj]
+    collection = getattr(obj, "instance_collection", None)
+    if collection is None:
+        return []
+    return [o for o in collection.all_objects if o.type == "MESH"]
+
+
 def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     """Swaps in finer geometry for objects that are already in the scene.
 
@@ -591,17 +608,25 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
             me = _build_mesh(definition, materials, unit_scale)
             meshes[inst.definition_id] = me
         for obj in targets:
-            if obj.data is me:
-                continue
-            if isinstance(obj.data, bpy.types.Mesh):
-                retired.add(obj.data.name)
-            obj.data = me
+            # A part sent as a collection instance is an empty: the mesh
+            # sits on the prototype object inside the collection it
+            # instances. Assigning a mesh to the empty itself raised
+            # "Object.data expected a Image type" (Oscar, 2026-09-16),
+            # because an empty's data slot takes an image, not geometry.
+            for holder in _mesh_holders(obj):
+                if holder.data is me:
+                    continue
+                if isinstance(holder.data, bpy.types.Mesh):
+                    retired.add(holder.data.name)
+                holder.data = me
+                _material_names(holder)
+                if holder not in replaced:
+                    replaced.append(holder)
             obj[_TAG_DEFINITION] = inst.definition_id
             obj[_TAG_TOLERANCE] = scene.tolerance
-            replaced.append(obj)
+            if obj not in replaced:
+                replaced.append(obj)
 
-    for obj in replaced:
-        _material_names(obj)
     matdb.apply(replaced, "refine")
 
     # Only now: a datablock may still have been in use while the loop ran.

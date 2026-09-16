@@ -283,10 +283,45 @@ def main():
         arms = [o for o in bpy.data.objects if o.type == "ARMATURE" and o.get("RIG_rig")]
         assert len(arms) == 1, "the re-send did not rebuild exactly one rig: %s" % arms
 
+        # 10. The same round trip with the parts sent as collection
+        #     instances. The object that carries the component id is then
+        #     an empty, and the geometry sits on the prototype inside the
+        #     collection it instances. Assigning the new mesh to the empty
+        #     raised "Object.data expected a Image type" (Oscar,
+        #     2026-09-16), so this holds that route open.
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+        rig_ui._STATE["manifest"] = None
+        coarse = write_mesh(
+            os.path.join(tempfile.gettempdir(), "refine_coarse_ci.swmesh"),
+            COARSE_TRIS, 0.002)
+        objects, _ = native_import.build(
+            bpy.context, coarse, hierarchy="COLLECTION_INSTANCES")
+        empty = objects[0]
+        assert empty.type == "EMPTY" and empty.instance_collection is not None
+        holder = next(o for o in empty.instance_collection.all_objects
+                      if o.type == "MESH")
+        assert len(holder.data.polygons) == COARSE_TRIS
+        before_world = empty.matrix_world.copy()
+
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        empty.select_set(True)
+        bpy.context.view_layer.objects.active = empty
+        result = bpy.ops.cadlink.update_from_cad(quality=0.9, scope="SELECTED")
+        assert "FINISHED" in result, result
+        holder = next(o for o in empty.instance_collection.all_objects
+                      if o.type == "MESH")
+        assert len(holder.data.polygons) == FINE_TRIS,             "the prototype still holds the coarse mesh"
+        assert (empty.matrix_world.translation
+                - before_world.translation).length < 1e-9
+        assert empty["SWMESH_tolerance_m"] == 0.00002
+
         print("refine_smoke: OK: %d -> %d triangles, object kept its bone "
               "parent and world pose, a pose update moved it onto the new CAD "
               "transform, and a whole-assembly re-send rebuilt the scene from a "
-              "fresh export" % (COARSE_TRIS, FINE_TRIS))
+              "fresh export, and a part sent as a collection instance "
+              "refines through its prototype" % (COARSE_TRIS, FINE_TRIS))
     finally:
         server.shutdown()
         cad_link._REGISTRY = real_registry

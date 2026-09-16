@@ -392,7 +392,9 @@ def build(context, path, manifest=None, collection_name=None,
     # so a refine finds the mesh to swap.
     prototypes = {}
     if hierarchy == "COLLECTION_INSTANCES":
-        components = _collection(stem + ".components", stem, "components", destination)
+        # Inside the assembly's own collection, so the scene shows one
+        # collection per send and not a hidden second one beside it.
+        components = _collection(stem + ".components", stem, "components", root)
         for definition in scene.definitions:
             me = meshes.get(definition.id)
             if me is None:

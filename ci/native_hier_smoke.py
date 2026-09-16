@@ -174,8 +174,18 @@ def main():
         _check(o.get("RIG_component_id") in ("c003", "c004"), "%s lost its component id" % name)
     lc = bpy.context.view_layer.layer_collection.children["hier"] \
         if "hier" in bpy.context.view_layer.layer_collection.children else None
-    excluded = [c.name for c in bpy.context.view_layer.layer_collection.children if c.exclude]
+    # The prototypes live inside the assembly's own collection, hidden
+    # from the view layer.
+    def excluded_names(layer_col):
+        out = [layer_col.name] if layer_col.exclude else []
+        for child in layer_col.children:
+            out.extend(excluded_names(child))
+        return out
+
+    excluded = excluded_names(bpy.context.view_layer.layer_collection)
     _check("hier.components" in excluded, "the prototype collection is not hidden")
+    _check("hier.components" in [c.name for c in bpy.data.collections["hier"].children],
+           "the prototype collection is not inside the file's collection")
 
     # Up axis. The import always lands in one collection named after the
     # file, whatever the hierarchy inside it is.

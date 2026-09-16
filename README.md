@@ -138,9 +138,9 @@ add-in and builds a rig from it. Today one add-in speaks it:
 SolidWorks. The tab is off by default.
 
 1. Open **Edit > Preferences > Add-ons > CADder**.
-2. Tick **CAD Link (experimental)**. The addon starts a listener on
+2. Tick **CAD Link (Experimental)**. The addon starts a listener on
    127.0.0.1 and shows the port.
-3. In the 3D View sidebar (N), open the **CAD Link** tab.
+3. In the 3D View sidebar (N), open the **CADder** tab.
 
 With the listener on, **Send to Blender** in the CAD add-in imports the
 geometry, matches it to the rig manifest, snaps every part onto its CAD
@@ -148,9 +148,11 @@ pose, builds the armature and parents the geometry, all without a file
 dialog. The listener accepts connections only from this machine, and only
 with the token the add-in reads from the user's own app data.
 
-The tab holds one panel and two closed sub-panels:
+The **CADder** tab holds the link at the top and the STEP import
+panels below it. The link is one panel with three sub-panels, two of
+them closed:
 
-- **CAD Link**: **Quality**, and **Update from CAD**. The four quality
+- **SolidWorks Bridge**: **Quality**, and **Update from CAD**. The four quality
   names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
   and Custom takes a chord of its own. Update from CAD asks the CAD
   application for the geometry of the selected parts again at that
@@ -160,16 +162,20 @@ The tab holds one panel and two closed sub-panels:
   Geometry and poses, Poses, or Everything). Everything asks for the
   assembly again and rebuilds the scene from it, which is what catches
   parts added or removed and mates changed. One dropdown per mechanism
-  that offers a choice of input sits below the button. Changing the input
-  rebuilds the rig for that choice.
+  that offers a choice of input sits in the **Mechanism Input**
+  sub-panel below. Changing the input rebuilds the rig for that choice.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
-  Build Rig, Re-link Geometry). A direct send runs all of it, so this
-  panel appears only when **Show the STEP rig panel** is on in the addon
+  Build Rig, Relink Geometry). A direct send runs all of it, so this
+  panel appears only when **STEP Rig Panel** is on in the addon
   preferences.
 - **Info**: the listener's port, what is selected, the joint, group and
   loop counts of the manifest, the exporter's warnings, and the match,
   pose and rig reports of the last run.
+
+Below the bridge come **Material Database** and the STEP import panels:
+**STEP - Tools**, **STEP - UV** and **STEP - File**. **STEP - Debug**
+joins them when **Debug Options** is on in the addon preferences.
 
 The manual route still works: export from the add-in to disk, then point
 **Manifest** at the `.rig.json` and press the buttons in order. The STEP

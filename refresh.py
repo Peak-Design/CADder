@@ -777,54 +777,49 @@ if bpy is not None:
             self.report({"INFO"}, "Forgotten")
             return {"FINISHED"}
 
-    class STEP_PT_ImportedFiles(bpy.types.Panel):
-        bl_label = "CADder - Imported Files"
-        bl_space_type = "VIEW_3D"
-        bl_region_type = "UI"
-        bl_category = "CADder"
-        bl_order = 1006
+    def draw_imported_files(layout, context):
+        """The imported files, drawn into the STEP - File panel.
 
-        def draw(self, context):
-            layout = self.layout
-            files = imported_files()
-            if not files:
-                layout.label(text="No STEP file imported in this .blend file",
-                             icon="INFO")
-                return
+        This used to be a panel of its own. It belongs with the file
+        buttons it works on, so it is a function the File panel calls.
+        """
+        files = imported_files()
+        if not files:
+            layout.label(text="No STEP file imported in this .blend file",
+                         icon="INFO")
+            return
 
-            for rec in files:
-                path = rec["path"]
-                box = layout.box()
-                head = box.row(align=True)
-                head.label(text=os.path.basename(path), icon="FILE_3D")
+        for rec in files:
+            path = rec["path"]
+            box = layout.box()
+            head = box.row(align=True)
+            head.label(text=os.path.basename(path), icon="FILE_3D")
 
-                missing = not os.path.isfile(bpy.path.abspath(path))
-                changed = None if missing else changed_on_disk(context.scene, path)
-                if missing:
-                    box.label(text="Not on disk any more", icon="ERROR")
-                elif changed:
-                    box.label(text="Changed on disk since import",
-                              icon="TEMP")
-                elif changed is None:
-                    box.label(text="Imported before settings were recorded",
-                              icon="QUESTION")
+            missing = not os.path.isfile(bpy.path.abspath(path))
+            changed = None if missing else changed_on_disk(context.scene, path)
+            if missing:
+                box.label(text="Not on disk any more", icon="ERROR")
+            elif changed:
+                box.label(text="Changed on disk since import", icon="TEMP")
+            elif changed is None:
+                box.label(text="Imported before settings were recorded",
+                          icon="QUESTION")
 
-                box.label(text="%d object(s), %d collection(s)"
-                               % (rec["objects"], rec["collections"]))
+            box.label(text="%d object(s), %d collection(s)"
+                           % (rec["objects"], rec["collections"]))
 
-                row = box.row(align=True)
-                op = row.operator("stepper.refresh_file", icon="FILE_REFRESH")
-                op.filepath = path
-                op = row.operator("stepper.select_file_objects",
-                                  icon="RESTRICT_SELECT_OFF")
-                op.filepath = path
-                sub = box.row()
-                sub.enabled = not missing
-                sub.label(text=path)
+            row = box.row(align=True)
+            op = row.operator("stepper.refresh_file", icon="FILE_REFRESH")
+            op.filepath = path
+            op = row.operator("stepper.select_file_objects",
+                              icon="RESTRICT_SELECT_OFF")
+            op.filepath = path
+            sub = box.row()
+            sub.enabled = not missing
+            sub.label(text=path)
 
     classes = (
         STEP_OT_RefreshFile,
         STEP_OT_SelectFile,
         STEP_OT_ForgetFile,
-        STEP_PT_ImportedFiles,
     )

@@ -4141,11 +4141,11 @@ class STEP_UL_MaterialMappings(bpy.types.UIList):
 
 
 class STEP_PT_MaterialDB(bpy.types.Panel):
-    bl_label = "CADder - Material Database"
+    bl_label = "Material Database"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1005
+    bl_order = 1002
 
     def draw(self, context):
         layout = self.layout
@@ -4229,11 +4229,11 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
-    bl_label = "CADder - Tools"
+    bl_label = "STEP - Tools"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1002
+    bl_order = 1003
 
     def draw(self, context):
         prg = context.scene.stepper
@@ -4264,11 +4264,11 @@ class STEP_PT_STEPper(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
-    bl_label = "CADder - File"
+    bl_label = "STEP - File"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1004
+    bl_order = 1005
 
     def draw(self, context):
         layout = self.layout
@@ -4286,13 +4286,16 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
         row = layout.row()
         row.label(text=f"Cached files: {len(global_file_cache)}/{MAX_FILE_CACHE}")
 
+        layout.separator()
+        refresh_mod.draw_imported_files(layout, context)
+
 
 class STEP_PT_STEPper_UV(bpy.types.Panel):
-    bl_label = "CADder - UV"
+    bl_label = "STEP - UV"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1003
+    bl_order = 1004
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -4312,12 +4315,16 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Debug(bpy.types.Panel):
-    bl_label = "CADder - Debug"
+    bl_label = "STEP - Debug"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1007
+    bl_order = 1006
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return _get_addon_prefs().debug_options
 
     def draw(self, context):
         layout = self.layout
@@ -4400,6 +4407,13 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         name="Skip Empty Objects",
         description="Do not create objects for parts that produce no geometry",
         default=True,
+    )
+
+    debug_options: bpy.props.BoolProperty(
+        name="Debug Options",
+        description="Show the STEP - Debug panel, which reports what the "
+                    "reader made of a file and what it had to skip",
+        default=False,
     )
 
     debug_timing: bpy.props.BoolProperty(
@@ -4588,7 +4602,16 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         col.prop(self, "skip_empty_objects")
         col.prop(self, "hack_skip_zero_solids")
         col.prop(self, "simpler_parameters")
-        col.prop(self, "debug_timing")
+
+        layout.separator()
+
+        col = layout.column()
+        col.prop(self, "debug_options")
+        sub = col.column()
+        # The timing numbers are part of the same picture, so they follow
+        # the panel that shows the rest of it.
+        sub.active = self.debug_options
+        sub.prop(self, "debug_timing")
 
         layout.separator()
 

@@ -772,7 +772,7 @@ if bpy is not None:
         model over again. Everything else is in a sub-panel, closed.
         """
 
-        bl_label = "CADder - SolidWorks Bridge"
+        bl_label = "SolidWorks Bridge"
         bl_idname = "CADLINK_PT_bridge"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"

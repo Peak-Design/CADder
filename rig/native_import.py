@@ -22,12 +22,17 @@ tolerance the add-in was asked for, so a part that needs to be smoother
 has to be asked for again, which is what the quality round trip is for.
 """
 
+import hashlib
 import os
+import struct
+from dataclasses import dataclass, field
+from typing import List
 
 import bpy
 from mathutils import Matrix
 
 from . import appearance, matdb, matching, progress, swmesh
+from . import diff as diff_mod
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -49,6 +54,10 @@ _TAG_TOLERANCE = "SWMESH_tolerance_m"
 _TAG_PATH = "SWMESH_path"
 # This placement inside its component's frame, 16 floats, row-major.
 _TAG_LOCAL = "SWMESH_local"
+# A short signature of the triangles this object came in with, so an update
+# can tell a part that was re-tessellated from one that came back the same.
+_TAG_GEOMETRY = "SWMESH_geometry"
+_TAG_TRANSFORM = diff_mod.TAG_TRANSFORM
 
 
 def _material(spec, name_prefix, unit_scale=1.0):
@@ -395,6 +404,284 @@ def _object_colour(obj):
         obj.color = tuple(mat.diffuse_color)
 
 
+class _Placer:
+    """Everything one import needs to make a part and put it where it
+    belongs: the meshes, the collections, the branch empties, the tags.
+
+    A first import and an update of one both go through this, so a part
+    that arrives in an update lands exactly where the same part would have
+    landed in a fresh send.
+    """
+
+    def __init__(self, context, scene, manifest, stem, root, frame,
+                 unit_scale, hierarchy, material_prefix):
+        self.context = context
+        self.scene = scene
+        self.manifest = manifest
+        self.stem = stem
+        self.root = root
+        self.frame = frame
+        self.unit_scale = unit_scale
+        self.hierarchy = hierarchy
+        self.material_prefix = material_prefix
+
+        self.group_of = _group_of(manifest)
+        self.persistent_of = _persistent_of(manifest)
+        self.by_id, self.by_path = _paths(manifest)
+        self.branches = _branches(scene, self.by_path, unit_scale)
+        self.definitions = {d.id: d for d in scene.definitions}
+
+        self._materials = None
+        self._meshes = {}
+        self.prototypes = {}
+        self.components_collection = None
+        self.tree_cols = {"": root}
+        self.empties = {}
+        self.flat_groups = {}
+
+    # ── materials and meshes, built only when something needs them ──────
+    #
+    # An update usually changes a handful of parts out of hundreds. Building
+    # a Blender mesh for every definition in the file would cost the whole
+    # import again to change three of them.
+
+    @property
+    def materials(self):
+        if self._materials is None:
+            self._materials = [_material(spec, self.material_prefix, self.unit_scale)
+                               for spec in self.scene.materials]
+        return self._materials
+
+    def mesh(self, definition_id):
+        if definition_id in self._meshes:
+            return self._meshes[definition_id]
+        definition = self.definitions.get(definition_id)
+        me = None
+        if definition is not None:
+            me = _build_mesh(definition, self.materials, self.unit_scale)
+        self._meshes[definition_id] = me
+        return me
+
+    def build_prototypes(self):
+        """The instancing mode's hidden prototypes: one object per
+        definition, in a collection of its own."""
+        if self.hierarchy != "COLLECTION_INSTANCES":
+            return
+        # Inside the assembly's own collection, so the scene shows one
+        # collection per send and not a hidden second one beside it.
+        components = _collection(self.stem + ".components", self.stem,
+                                 "components", self.root)
+        self.components_collection = components
+        for definition in self.scene.definitions:
+            me = self.mesh(definition.id)
+            if me is None:
+                continue
+            part_col = _collection(
+                definition.name or ("definition %d" % definition.id),
+                self.stem, "part", components)
+            proto = bpy.data.objects.new(definition.name or "part", me)
+            proto[_TAG_FILE] = self.stem
+            proto[_TAG_DEFINITION] = definition.id
+            proto[_TAG_TOLERANCE] = self.scene.tolerance
+            proto["SWMESH_prototype"] = True
+            _material_names(proto)
+            part_col.objects.link(proto)
+            self.prototypes[definition.id] = part_col
+        _exclude(self.context, components)
+
+    # ── the assembly tree ───────────────────────────────────────────────
+
+    def branch_name(self, sw_path):
+        branch = self.branches.get(sw_path)
+        if branch is not None and branch.name:
+            return branch.name
+        return sw_path.rpartition("/")[2]
+
+    def node_col(self, sw_path):
+        if sw_path in self.tree_cols:
+            return self.tree_cols[sw_path]
+        parent_path = sw_path.rpartition("/")[0]
+        col = _collection(self.branch_name(sw_path), self.stem, "node",
+                          self.node_col(parent_path))
+        col[_TAG_PATH] = sw_path
+        self.tree_cols[sw_path] = col
+        return col
+
+    def node_empty(self, sw_path):
+        if not sw_path:
+            return None
+        if sw_path in self.empties:
+            return self.empties[sw_path]
+        parent = self.node_empty(sw_path.rpartition("/")[0])
+        emp = bpy.data.objects.new(self.branch_name(sw_path), None)
+        emp.empty_display_size = 2
+        emp.empty_display_type = "PLAIN_AXES"
+        emp[_TAG_FILE] = self.stem
+        emp[_TAG_PATH] = sw_path
+        comp = self.by_path.get(sw_path)
+        if comp is not None:
+            emp[_TAG_COMPONENT] = comp.id
+        branch = self.branches.get(sw_path)
+        if branch is not None and branch.transform is not None:
+            emp.matrix_world = self.frame @ branch.transform
+        self.root.objects.link(emp)
+        if parent is not None:
+            emp.parent = parent
+            emp.matrix_parent_inverse = parent.matrix_world.inverted()
+        self.empties[sw_path] = emp
+        return emp
+
+    def adopt_tree(self):
+        """Takes over the collections and empties a previous import of this
+        file left, so an update reuses them instead of building a second
+        tree beside the first. Anything the user put inside one of them
+        stays where it is."""
+        for col in bpy.data.collections:
+            if col.get(_TAG_FILE) != self.stem:
+                continue
+            path = col.get(_TAG_PATH)
+            if col.get("SWMESH_role") == "node" and path is not None:
+                self.tree_cols[path] = col
+            elif col.get("SWMESH_role") == "group":
+                self.flat_groups[col.name] = col
+            elif col.get("SWMESH_role") == "components":
+                self.components_collection = col
+            elif col.get("SWMESH_role") == "part":
+                for obj in col.objects:
+                    if obj.get("SWMESH_prototype"):
+                        self.prototypes[_int(obj.get(_TAG_DEFINITION), -1)] = col
+        for obj in bpy.data.objects:
+            if obj.get(_TAG_FILE) != self.stem or obj.type != "EMPTY":
+                continue
+            if obj.get("SWMESH_prototype") or obj.get(_TAG_GROUP) is not None:
+                continue
+            path = obj.get(_TAG_PATH)
+            if path and obj.instance_collection is None:
+                self.empties[path] = obj
+
+    # ── the parts themselves ────────────────────────────────────────────
+
+    def create(self, inst):
+        """One new object for one placement, tagged and placed. None when
+        the file holds no geometry for it."""
+        me = self.mesh(inst.definition_id)
+        if me is None:
+            return None
+        name = inst.name or inst.component_id
+        if self.hierarchy == "COLLECTION_INSTANCES":
+            obj = bpy.data.objects.new(name, None)
+            obj.instance_type = "COLLECTION"
+            obj.instance_collection = self.prototypes.get(inst.definition_id)
+            obj.empty_display_size = 0.01
+        else:
+            obj = bpy.data.objects.new(name, me)
+        self.retag(obj, inst)
+        self.pose(obj, inst)
+        self.place(obj, self.path_of(inst))
+        _object_colour(obj)
+        _material_names(obj)
+        return obj
+
+    def path_of(self, inst):
+        return _instance_path(inst, self.by_id)
+
+    def retag(self, obj, inst):
+        """The tags that describe THIS export. Every one of them can change
+        between two sends of one assembly, so an update rewrites them all
+        rather than trusting what is there."""
+        obj[_TAG_FILE] = self.stem
+        obj[_TAG_COMPONENT] = inst.component_id
+        gid = self.group_of.get(inst.component_id)
+        if gid is not None:
+            obj[_TAG_GROUP] = gid
+        elif _TAG_GROUP in obj.keys():
+            del obj[_TAG_GROUP]
+        obj[_TAG_DEFINITION] = inst.definition_id
+        obj[_TAG_TOLERANCE] = self.scene.tolerance
+        obj[_TAG_PATH] = self.path_of(inst)
+        # What the CAD application said the pose was, kept for the next
+        # comparison. The object's own matrix cannot answer that question:
+        # a part the user moved in Blender would read as moved in the CAD
+        # application and be dragged back on the next update.
+        obj[_TAG_TRANSFORM] = list(inst.transform or [])
+        persistent = self.persistent_of.get(inst.component_id)
+        if persistent:
+            obj[_TAG_PERSISTENT] = persistent
+        # Where this part sits INSIDE its component, as the file states it.
+        # A part that is its own component carries nothing; a part inside a
+        # rigid subassembly carries its place in it, because the
+        # subassembly is the component. Pose sync moves a component to
+        # where the CAD says it is now, and without this it would stack
+        # every part of a subassembly on that one point.
+        if inst.local:
+            obj[_TAG_LOCAL] = list(inst.local)
+        elif _TAG_LOCAL in obj.keys():
+            del obj[_TAG_LOCAL]
+        signature = self.geometry_hash(inst)
+        if signature is not None:
+            obj[_TAG_GEOMETRY] = signature
+
+    def geometry_hash(self, inst):
+        definition = self.definitions.get(inst.definition_id)
+        return None if definition is None else _definition_hash(definition)
+
+    def pose(self, obj, inst):
+        obj.matrix_world = self.frame @ _matrix(inst.transform, self.unit_scale)
+
+    def place(self, obj, sw_path):
+        """Into the collection, or under the empty, the mode calls for."""
+        parent_path = sw_path.rpartition("/")[0]
+        if self.hierarchy == "FLAT":
+            key = obj.data.name if obj.data is not None else (obj.name or "part")
+            col = self.flat_groups.get(key)
+            if col is None:
+                col = self.flat_groups[key] = _collection(
+                    key, self.stem, "group", self.root)
+            col.objects.link(obj)
+        elif self.hierarchy == "TREE":
+            self.node_col(parent_path).objects.link(obj)
+        else:
+            self.root.objects.link(obj)
+            parent = self.node_empty(parent_path)
+            if parent is not None:
+                obj.parent = parent
+                obj.matrix_parent_inverse = parent.matrix_world.inverted()
+
+    def unplace(self, obj):
+        """Out of the collections THIS import made, and off its branch
+        empty. A collection of the user's own keeps the object."""
+        for col in list(obj.users_collection):
+            if col.get(_TAG_FILE) == self.stem:
+                col.objects.unlink(obj)
+        parent = obj.parent
+        if parent is not None and parent.get(_TAG_FILE) == self.stem \
+                and parent.type == "EMPTY":
+            world = obj.matrix_world.copy()
+            obj.parent = None
+            obj.matrix_world = world
+
+
+def _int(value, fallback):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _definition_hash(definition):
+    """A short, exact signature of one part's geometry, so an update can
+    tell a part that was re-tessellated from one that was not and leave the
+    mesh (and the work done on it in Blender) alone."""
+    digest = hashlib.blake2b(digest_size=8)
+    digest.update(struct.pack("<II", definition.vertex_count,
+                              definition.triangle_count))
+    for block in (definition.positions, definition.triangles,
+                  definition.triangle_materials):
+        if block is not None:
+            digest.update(memoryview(block).cast("B"))
+    return digest.hexdigest()
+
+
 def build(context, path, manifest=None, collection_name=None,
           unit_scale=1.0, material_prefix="SW ", up_as="ZPOS",
           hierarchy="FLAT", report_to=None):
@@ -410,13 +697,12 @@ def build(context, path, manifest=None, collection_name=None,
     option, same spelling): the geometry is turned and the report's frame
     says so, so the rig lands on it. hierarchy is the STEP importer's
     hierarchy_types; group_in_collection wraps the import in one
-    collection named after the file, as the importer does."""
+    collection named after the file, as the importer does.
+
+    This REPLACES what was there. To change only what changed, keeping the
+    rest of the scene, see update()."""
     scene = swmesh.load(path)
-    group_of = _group_of(manifest)
-    persistent_of = _persistent_of(manifest)
-    by_id, by_path = _paths(manifest)
     frame_rows = up_frame(up_as)
-    frame = Matrix([tuple(r) for r in frame_rows])
     stem = os.path.splitext(os.path.basename(path))[0]
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
@@ -431,84 +717,12 @@ def build(context, path, manifest=None, collection_name=None,
             "COLLECTION_INSTANCES": "hierarchy"}[hierarchy]
     root = _collection(stem, stem, role, destination)
 
-    materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
-    meshes = {}
-    for definition in scene.definitions:
-        meshes[definition.id] = _build_mesh(definition, materials, unit_scale)
-
-    # Prototypes for the instancing mode: one object per definition at the
-    # origin, in a hidden ".components" collection, tagged like the parts
-    # so a refine finds the mesh to swap.
-    prototypes = {}
-    if hierarchy == "COLLECTION_INSTANCES":
-        # Inside the assembly's own collection, so the scene shows one
-        # collection per send and not a hidden second one beside it.
-        components = _collection(stem + ".components", stem, "components", root)
-        for definition in scene.definitions:
-            me = meshes.get(definition.id)
-            if me is None:
-                continue
-            part_col = _collection(definition.name or ("definition %d" % definition.id),
-                                   stem, "part", components)
-            proto = bpy.data.objects.new(definition.name or "part", me)
-            proto[_TAG_FILE] = stem
-            proto[_TAG_DEFINITION] = definition.id
-            proto[_TAG_TOLERANCE] = scene.tolerance
-            proto["SWMESH_prototype"] = True
-            _material_names(proto)
-            part_col.objects.link(proto)
-            prototypes[definition.id] = part_col
-        _exclude(context, components)
-
-    # Subassembly nodes for the tree modes: every path prefix above a part.
-    # A node is named after the DOCUMENT it references, as the STEP route
-    # names its products, and not after the occurrence ("lifter", not
-    # "lifter-2"): the tree then reads the same whichever route brought it.
-    branches = _branches(scene, by_path, unit_scale)
-    tree_cols = {"": root}
-    empties = {}
-
-    def branch_name(sw_path):
-        branch = branches.get(sw_path)
-        if branch is not None and branch.name:
-            return branch.name
-        return sw_path.rpartition("/")[2]
-
-    def node_col(sw_path):
-        if sw_path in tree_cols:
-            return tree_cols[sw_path]
-        parent_path = sw_path.rpartition("/")[0]
-        col = _collection(branch_name(sw_path), stem, "node", node_col(parent_path))
-        col["SWMESH_path"] = sw_path
-        tree_cols[sw_path] = col
-        return col
-
-    def node_empty(sw_path):
-        if not sw_path:
-            return None
-        if sw_path in empties:
-            return empties[sw_path]
-        parent = node_empty(sw_path.rpartition("/")[0])
-        emp = bpy.data.objects.new(branch_name(sw_path), None)
-        emp.empty_display_size = 2
-        emp.empty_display_type = "PLAIN_AXES"
-        emp[_TAG_FILE] = stem
-        emp[_TAG_PATH] = sw_path
-        comp = by_path.get(sw_path)
-        if comp is not None:
-            emp[_TAG_COMPONENT] = comp.id
-        branch = branches.get(sw_path)
-        if branch is not None and branch.transform is not None:
-            emp.matrix_world = frame @ branch.transform
-        root.objects.link(emp)
-        if parent is not None:
-            emp.parent = parent
-            emp.matrix_parent_inverse = parent.matrix_world.inverted()
-        empties[sw_path] = emp
-        return emp
+    placer = _Placer(context, scene, manifest, stem, root,
+                     Matrix([tuple(r) for r in frame_rows]), unit_scale,
+                     hierarchy, material_prefix)
+    placer.build_prototypes()
 
     objects = []
-    flat_groups = {}
     report = matching.MatchReport()
     report.frame_rows = frame_rows
     # Placing the instances is the long part of a large send, so it is the
@@ -519,59 +733,10 @@ def build(context, path, manifest=None, collection_name=None,
     for inst in scene.instances:
         placed += 1
         said.step(placed)
-        me = meshes.get(inst.definition_id)
-        if me is None:
+        obj = placer.create(inst)
+        if obj is None:
             report.unmatched.append(inst.component_id)
             continue
-        name = inst.name or inst.component_id
-        if hierarchy == "COLLECTION_INSTANCES":
-            obj = bpy.data.objects.new(name, None)
-            obj.instance_type = "COLLECTION"
-            obj.instance_collection = prototypes.get(inst.definition_id)
-            obj.empty_display_size = 0.01
-        else:
-            obj = bpy.data.objects.new(name, me)
-        placement = _matrix(inst.transform, unit_scale)
-        obj.matrix_world = frame @ placement
-        obj[_TAG_FILE] = stem
-        obj[_TAG_COMPONENT] = inst.component_id
-        gid = group_of.get(inst.component_id)
-        if gid is not None:
-            obj[_TAG_GROUP] = gid
-        obj[_TAG_DEFINITION] = inst.definition_id
-        obj[_TAG_TOLERANCE] = scene.tolerance
-        persistent = persistent_of.get(inst.component_id)
-        if persistent:
-            obj[_TAG_PERSISTENT] = persistent
-
-        sw_path = _instance_path(inst, by_id)
-        obj[_TAG_PATH] = sw_path
-        # Where this part sits INSIDE its component, as the file states it.
-        # A part that is its own component carries nothing; a part inside a
-        # rigid subassembly carries its place in it, because the
-        # subassembly is the component. Pose sync moves a component to
-        # where the CAD says it is now, and without this it would stack
-        # every part of a subassembly on that one point.
-        if inst.local:
-            obj[_TAG_LOCAL] = list(inst.local)
-
-        parent_path = sw_path.rpartition("/")[0]
-        if hierarchy == "FLAT":
-            key = me.name
-            col = flat_groups.get(key)
-            if col is None:
-                col = flat_groups[key] = _collection(key, stem, "group", root)
-            col.objects.link(obj)
-        elif hierarchy == "TREE":
-            node_col(parent_path).objects.link(obj)
-        else:
-            root.objects.link(obj)
-            parent = node_empty(parent_path)
-            if parent is not None:
-                obj.parent = parent
-                obj.matrix_parent_inverse = parent.matrix_world.inverted()
-        _object_colour(obj)
-        _material_names(obj)
         objects.append(obj)
         report.matched.append(
             matching.MatchEntry(component_id=inst.component_id,
@@ -588,10 +753,213 @@ def build(context, path, manifest=None, collection_name=None,
     # The material database, as a STEP import applies it: the materials
     # are named after the SolidWorks appearance and every object carries
     # STEP_materials, so an entry for "SW polished gold" replaces it here.
-    matdb.apply(objects + prototypes_objects(prototypes), "direct send")
+    matdb.apply(objects + prototypes_objects(placer.prototypes), "direct send")
     report.frame_agree = len(report.matched)
     context.view_layer.update()
     return objects, report
+
+
+@dataclass
+class UpdateReport:
+    """What an update did, in the words the user reads."""
+
+    added: List[str] = field(default_factory=list)
+    removed: List[str] = field(default_factory=list)
+    moved: List[str] = field(default_factory=list)
+    reshaped: List[str] = field(default_factory=list)
+    kept: int = 0
+    structural: bool = False
+
+    def describe(self):
+        return ("%d part(s) added, %d removed, %d moved, %d re-tessellated, "
+                "%d unchanged" % (len(self.added), len(self.removed),
+                                  len(self.moved), len(self.reshaped), self.kept))
+
+
+def update(context, path, manifest=None, unit_scale=1.0,
+           material_prefix="SW ", up_as="ZPOS", hierarchy="FLAT",
+           report_to=None):
+    """Brings the scene up to date with a new export, changing only what
+    changed. Returns (objects, MatchReport, UpdateReport).
+
+    A send replaces the import outright, which throws away everything done
+    in Blender since. This compares the two assemblies part by part
+    (rig/diff.py), and then:
+
+      * a part that is still there and still the same shape keeps its
+        object, its mesh, its materials and its modifiers, and is only
+        moved and re-tagged,
+      * a part that was re-tessellated or changed shape takes the new mesh
+        on the SAME object,
+      * a part that is new is built and placed as a fresh import would,
+      * a part that has gone is removed with its mesh.
+
+    The rig is not touched here. What to do with it is a separate question
+    and a separate answer: see rig_update.py."""
+    scene = swmesh.load(path)
+    frame_rows = up_frame(up_as)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if hierarchy not in HIERARCHIES:
+        hierarchy = "FLAT"
+    said = report_to or progress.NONE
+
+    root = None
+    for col in bpy.data.collections:
+        if col.get(_TAG_FILE) == stem and col.get("SWMESH_role") in (
+                "flat", "hierarchy"):
+            root = col
+            break
+    if root is None:
+        # Nothing of this assembly is in the scene: an update of nothing is
+        # an import.
+        objects, report = build(
+            context, path, manifest=manifest, unit_scale=unit_scale,
+            material_prefix=material_prefix, up_as=up_as, hierarchy=hierarchy,
+            report_to=report_to)
+        out = UpdateReport(added=[o.name for o in objects], structural=True)
+        return objects, report, out
+
+    placer = _Placer(context, scene, manifest, stem, root,
+                     Matrix([tuple(r) for r in frame_rows]), unit_scale,
+                     hierarchy, material_prefix)
+    placer.adopt_tree()
+    if hierarchy == "COLLECTION_INSTANCES" and not placer.prototypes:
+        placer.build_prototypes()
+
+    old = diff_mod.from_objects(bpy.data.objects, stem)
+    new = diff_mod.from_scene_file(scene, manifest)
+    changes = diff_mod.compare(old, new)
+
+    said.stage("bringing the parts up to date", 20, 85,
+               len(changes.pairs) + len(changes.added) + len(changes.removed))
+    done = 0
+    out = UpdateReport(structural=changes.structural)
+    objects = []
+    report = matching.MatchReport()
+    report.frame_rows = frame_rows
+
+    for pair in changes.pairs:
+        done += 1
+        said.step(done)
+        obj = pair.old.payload
+        inst = pair.new.payload
+        try:
+            # New geometry only where the geometry is actually new: the
+            # hash is of the triangles themselves, so a part that came back
+            # identical keeps the mesh it has, with whatever was done to it
+            # in Blender.
+            reshaped = obj.get(_TAG_GEOMETRY) != placer.geometry_hash(inst)
+        except ReferenceError:
+            continue
+        placer.retag(obj, inst)
+        if pair.moved:
+            placer.pose(obj, inst)
+            out.moved.append(obj.name)
+        if reshaped:
+            _reshape(obj, placer, inst)
+            out.reshaped.append(obj.name)
+        if pair.old.path != pair.new.path:
+            placer.unplace(obj)
+            placer.place(obj, placer.path_of(inst))
+        if not pair.moved and not reshaped:
+            out.kept += 1
+        objects.append(obj)
+        report.matched.append(matching.MatchEntry(
+            component_id=inst.component_id, object_name=obj.name,
+            step=0, confidence="exact"))
+
+    for occurrence in changes.added:
+        done += 1
+        said.step(done)
+        obj = placer.create(occurrence.payload)
+        if obj is None:
+            report.unmatched.append(occurrence.component_id)
+            continue
+        objects.append(obj)
+        out.added.append(obj.name)
+        report.matched.append(matching.MatchEntry(
+            component_id=occurrence.component_id, object_name=obj.name,
+            step=0, confidence="exact"))
+
+    doomed = []
+    for occurrence in changes.removed:
+        done += 1
+        said.step(done)
+        obj = occurrence.payload
+        try:
+            out.removed.append(obj.name)
+        except ReferenceError:
+            continue
+        doomed.append(obj)
+    _remove_objects(doomed)
+    _prune_tree(placer, new)
+
+    matdb.apply(objects + prototypes_objects(placer.prototypes), "update")
+    report.frame_agree = len(report.matched)
+    context.view_layer.update()
+    return objects, report, out
+
+
+def _reshape(obj, placer, inst):
+    """New geometry on an object that is already in the scene: the mesh
+    DATA is replaced and the object is not, so its place, its parent, its
+    modifiers and its bone all survive."""
+    me = placer.mesh(inst.definition_id)
+    if me is None:
+        return
+    for holder in _mesh_holders(obj):
+        old = holder.data
+        if old is me:
+            continue
+        holder.data = me
+        _material_names(holder)
+        if isinstance(old, bpy.types.Mesh) and old.users == 0:
+            bpy.data.meshes.remove(old)
+    _object_colour(obj)
+
+
+def _remove_objects(doomed):
+    for obj in doomed:
+        try:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+        except ReferenceError:
+            continue
+        if isinstance(data, bpy.types.Mesh) and data.users == 0:
+            bpy.data.meshes.remove(data)
+
+
+def _prune_tree(placer, occurrences):
+    """Branch collections and empties the new assembly no longer has. One
+    that still holds something (a part of the user's own, or a part this
+    update could not place) is kept: an empty branch is tidy, a branch with
+    something in it is somebody's work."""
+    wanted = set()
+    for occurrence in occurrences:
+        path = occurrence.path
+        while "/" in path:
+            path = path.rpartition("/")[0]
+            wanted.add(path)
+    for path, col in list(placer.tree_cols.items()):
+        if not path or path in wanted:
+            continue
+        try:
+            if col.objects or col.children:
+                continue
+            bpy.data.collections.remove(col)
+        except (ReferenceError, RuntimeError):
+            pass
+        placer.tree_cols.pop(path, None)
+    for path, emp in list(placer.empties.items()):
+        if path in wanted:
+            continue
+        try:
+            if any(o.parent is emp for o in bpy.data.objects):
+                continue
+            bpy.data.objects.remove(emp, do_unlink=True)
+        except (ReferenceError, RuntimeError):
+            pass
+        placer.empties.pop(path, None)
 
 
 def prototypes_objects(prototypes):

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 """Joint type -> pose-bone locks and Limit constraints.
 
 The bone's local +Y axis is the joint DOF axis, so every rule below speaks
@@ -41,6 +41,15 @@ def driven_channel(joint: Joint):
     if joint.coupling.kind == "cam":
         # A cam contact writes the follower's slide (cam_contact.py).
         return "location"
+    if joint.coupling.kind == "rack_pinion":
+        # Either half of the pair may be the driven one: the user can hold
+        # it by the pinion or by the rack (inputs.py turns it round), so
+        # the joint's own type says which channel a driver writes. Read
+        # from the kind alone, a driven PINION kept an unlocked turn and
+        # went on offering itself as something to grab (Oscar,
+        # 2026-09-16: "it keeps the pinion control visible even though it
+        # cannot be interacted").
+        return "rotation" if joint.type == "revolute" else "location"
     return _DRIVEN_CHANNEL.get(joint.coupling.kind)
 
 

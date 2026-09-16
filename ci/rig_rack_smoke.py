@@ -154,6 +154,19 @@ def main():
     _check(not any(rack.name in p for p in paths),
            "the rack is still driven: %s" % paths)
 
+    # And the half that is now driven stops offering itself as a handle:
+    # every channel of it is written, so it is mechanism, and mechanism
+    # bones are out of sight.
+    _check(all(pinion.lock_rotation) and all(pinion.lock_location),
+           "the driven pinion still has a channel to grab: rot %s loc %s"
+           % (list(pinion.lock_rotation), list(pinion.lock_location)))
+    hidden = {b.name for b in arm.data.bones
+              if not any(c.is_visible for c in b.collections)}
+    _check(pinion.name in hidden,
+           "the driven pinion is still on show")
+    _check(rack.name not in hidden,
+           "the rack is the control now and must be on show")
+
     start = pinion.matrix.to_quaternion()
     for slide in (0.0127, -0.0127):
         rack.location[1] = slide

@@ -460,6 +460,44 @@ def _apply_poses_from(poses: dict) -> int:
     return rig_ui._apply_poses(bpy.context, poses)
 
 
+def _find_rig():
+    """The rig standing in the scene, if there is one."""
+    for obj in bpy.context.scene.objects:
+        if obj.type == "ARMATURE" and obj.get("RIG_rig"):
+            return obj
+    return None
+
+
+def _update_rig(mode, log):
+    """The rig half of an update: KEEP, APPEND or REGENERATE."""
+    from .rig import rig_update, ui as rig_ui
+
+    manifest = rig_ui._STATE.get("manifest")
+    if manifest is None:
+        return {"error": "no manifest to build the rig from"}
+    report = rig_ui._STATE.get("match_report")
+    frame_rows = (report.frame_rows
+                  if report is not None and report.frame_agree > 0 else None)
+    try:
+        result, rig_report = rig_update.apply(
+            bpy.context, mode, manifest, _find_rig(), bpy.data.objects,
+            frame_rows=frame_rows,
+            before=rig_ui._STATE.get("rig_snapshot") or {})
+    except Exception as exc:
+        return {"error": "the rig could not be brought up to date: %s" % exc}
+    if result is not None:
+        rig_ui._STATE["build"] = result
+    log.append("rig (%s): %s" % (mode.lower(), rig_report.describe()))
+    return {
+        "mode": rig_report.mode,
+        "bones": rig_report.bones_after,
+        "kept": len(rig_report.kept),
+        "added": rig_report.added,
+        "removed": rig_report.removed,
+        "warnings": rig_report.warnings,
+    }
+
+
 def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 want, have_manifest, said):
     """The stages themselves. Split out so the reporter closes whatever
@@ -483,6 +521,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             stages["poses"] = {"moved": moved, "components": said_count}
             bpy.context.view_layer.update()
         return {"ok": True, "stages": stages, "log": log}
+
+    # An UPDATE brings the scene up to date part by part. A send replaces
+    # it. The difference reaches several stages, so it is read once.
+    updating = want("update", False)
 
     with _ops_context():
         scene = bpy.context.scene
@@ -519,21 +561,46 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             if not os.path.isfile(mesh_path):
                 return {"ok": False, "error": "mesh not found: %s" % mesh_path,
                         "stages": stages}
-            from .rig import native_import
-            if want("replace"):
+            from .rig import native_import, rig_update
+            opts = payload.get("import_options") or {}
+            rig_ui._STATE["import_options"] = dict(opts)
+            # An UPDATE keeps the scene and changes what changed. A send
+            # replaces it. The rig snapshot has to be taken before either
+            # touches the parts: it reads the group ids of the export the
+            # rig was built from, which the update overwrites.
+            standing = _find_rig()
+            rig_ui._STATE["rig_snapshot"] = (
+                rig_update.snapshot(standing, bpy.data.objects)
+                if updating and standing is not None else {})
+            if want("replace") and not updating:
                 # A STEP import of the same assembly goes too, or the scene
                 # holds every part twice.
                 said.stage("replacing the last import", 10, 20)
                 _remove_previous_import(mesh_path, stages, by_stem=True)
             try:
-                opts = payload.get("import_options") or {}
-                rig_ui._STATE["import_options"] = dict(opts)
-                objects, report = native_import.build(
-                    bpy.context, mesh_path,
-                    manifest=rig_ui._STATE.get("manifest"),
-                    up_as=opts.get("up_as") or "ZPOS",
-                    hierarchy=opts.get("hierarchy_types") or "FLAT",
-                    report_to=said)
+                if updating:
+                    objects, report, changed = native_import.update(
+                        bpy.context, mesh_path,
+                        manifest=rig_ui._STATE.get("manifest"),
+                        up_as=opts.get("up_as") or "ZPOS",
+                        hierarchy=opts.get("hierarchy_types") or "FLAT",
+                        report_to=said)
+                    stages["update"] = {
+                        "added": changed.added,
+                        "removed": changed.removed,
+                        "moved": changed.moved,
+                        "reshaped": changed.reshaped,
+                        "kept": changed.kept,
+                        "structural": changed.structural,
+                    }
+                    log.append("update: " + changed.describe())
+                else:
+                    objects, report = native_import.build(
+                        bpy.context, mesh_path,
+                        manifest=rig_ui._STATE.get("manifest"),
+                        up_as=opts.get("up_as") or "ZPOS",
+                        hierarchy=opts.get("hierarchy_types") or "FLAT",
+                        report_to=said)
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
@@ -589,7 +656,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
         # A skipped earlier stage can fail a later operator's poll(), and a
         # failed poll RAISES instead of returning CANCELLED: every optional
         # stage below runs only when its precondition actually holds.
-        if have_manifest and want("sync_poses") \
+        # An update has already put every part where the CAD says it is,
+        # so syncing the poses again has nothing to do and would report
+        # every bone-parented part as one it could not move.
+        if have_manifest and want("sync_poses") and not updating \
                 and rig_ui._STATE.get("match_report") is not None:
             said.stage("syncing the poses", 85, 88)
             if "FINISHED" in bpy.ops.cadlink.sync_poses():
@@ -607,13 +677,23 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # A rig the user locked is kept, and the send says so rather
             # than failing: the geometry still arrives and still attaches
             # to it, which is the whole point of locking one.
-            from .rig import rig_build
-            standing = rig_build.locked_rig(bpy.context)
-            if standing is not None:
+            from .rig import rig_build, rig_update
+            locked = rig_build.locked_rig(bpy.context)
+            mode = (payload.get("rig_mode") or "").upper()
+            if locked is not None:
                 said.stage("keeping the locked rig", 88, 96)
-                stages["rig"] = {"locked": standing.name}
+                stages["rig"] = {"locked": locked.name}
                 log.append("the rig %s is locked: it was kept as it is, and "
-                           "the parts were attached to it" % standing.name)
+                           "the parts were attached to it" % locked.name)
+            elif mode in rig_update.MODES:
+                # An update says what to do with the rig: keep it, rebuild
+                # it inside the armature that is there (which keeps the
+                # animation), or build a new one.
+                said.stage("bringing the rig up to date", 88, 96)
+                stages["rig"] = _update_rig(mode, log)
+                if stages["rig"].get("error"):
+                    return {"ok": False, "error": stages["rig"]["error"],
+                            "stages": stages}
             else:
                 said.stage("building the rig", 88, 96)
                 if "FINISHED" not in bpy.ops.cadlink.build_rig():

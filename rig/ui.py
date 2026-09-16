@@ -35,6 +35,10 @@ _STATE = {
     # an Update from CAD that asks for the whole assembly again lands it the
     # same way round and in the same shape.
     "import_options": None,
+    # Which bone drove which parts, taken before an update moves the parts
+    # on: what lets a rebuilt bone come back under the name an animation
+    # already keys against (rig_update.py).
+    "rig_snapshot": None,
     "error": "",
 }
 

@@ -849,6 +849,78 @@ def _remove_previous_rig(collection):
     _remove_rig_objects(doomed)
 
 
+def _bone_collection(arm_data, name):
+    """A bone collection by name, made once. A rebuild into a standing
+    armature would otherwise stack a second "Helpers" beside the first."""
+    existing = arm_data.collections.get(name)
+    return existing if existing is not None else arm_data.collections.new(name)
+
+
+def _rig_collection_of(arm_obj):
+    """The collection a standing rig lives in, so a rebuild into it does
+    not move it somewhere else."""
+    scene_roots = {s.collection.name for s in bpy.data.scenes}
+    for col in arm_obj.users_collection:
+        if col.name not in scene_roots and not col.get("CADLINK_widgets"):
+            return col
+    return None
+
+
+def _clear_generated(context, arm_obj, collection):
+    """Everything the last build made, out of a rig that is standing: its
+    bones, the drivers on them, and the helper objects beside it. A bone
+    with no tag of ours was put there by the user and stays, with whatever
+    they hung on it."""
+    _ensure_object_mode(context)
+    generated = set()
+    for pb in arm_obj.pose.bones:
+        keys = pb.keys()
+        if "RIG_group" in keys or "RIG_helper" in keys or "RIG_joint" in keys:
+            generated.add(pb.name)
+    animation = arm_obj.animation_data
+    if animation is not None:
+        for fcurve in list(animation.drivers):
+            name = _bone_in_path(fcurve.data_path)
+            if name is None or name in generated:
+                try:
+                    animation.drivers.remove(fcurve)
+                except (RuntimeError, ReferenceError):
+                    pass
+    for pb in arm_obj.pose.bones:
+        if pb.name in generated:
+            for constraint in list(pb.constraints):
+                pb.constraints.remove(constraint)
+    if generated:
+        context.view_layer.objects.active = arm_obj
+        arm_obj.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            for name in generated:
+                eb = arm_obj.data.edit_bones.get(name)
+                if eb is not None:
+                    arm_obj.data.edit_bones.remove(eb)
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+    # The rails, cam surfaces and group empties of the last build. The
+    # armature itself stays, which is the whole point.
+    doomed = [o for o in list(collection.objects)
+              if o.get("RIG_rig") and o is not arm_obj]
+    _remove_rig_objects(doomed)
+
+
+def _bone_in_path(path):
+    """The bone a driver's data path names, or None for a path that is not
+    about a bone."""
+    if not path or 'pose.bones[' not in path:
+        return None
+    start = path.index('pose.bones[') + len('pose.bones[')
+    quote = path[start:start + 1]
+    if quote not in ('"', "'"):
+        return None
+    end = path.find(quote, start + 1)
+    return None if end < 0 else path[start + 1:end]
+
+
 def _remove_rig_objects(doomed):
     doomed_set = set(doomed)
     if not doomed:
@@ -1075,7 +1147,7 @@ def _make_surface_patch(collection, joint, frame, unit_scale):
     return obj
 
 
-def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
+def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> BuildResult:
     """Builds the armature, constraints, drivers and loop closures.
     plan already passed the dependency pre-flight in graph.build: nothing
     here is allowed to create a depsgraph cycle. Geometry is not required. The rig builds identically on an empty scene.
@@ -1087,7 +1159,13 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     axis the import used. Without a frame (no match run, or nothing to
     anchor one) the rig lands at the 3D cursor, like the STEP import itself
     does: never silently at the world origin. Limits and drivers are
-    bone-local and need no adjustment."""
+    bone-local and need no adjustment.
+
+    `into` is an armature to rebuild INSIDE, rather than a new one to make:
+    the object, its action, its drivers and any bones the user added are
+    kept, and only the bones this addon generated are replaced. With the
+    plan's keep_names holding the names those bones already had, a keyframe
+    still names the bone it was written for."""
     result = BuildResult()
     result.warnings.extend(plan.warnings)
     unit_scale = _unit_scale(context)
@@ -1109,25 +1187,35 @@ def build(context, manifest, plan: RigPlan, frame_rows=None) -> BuildResult:
     _ensure_object_mode(context)
 
     rig_name = _rig_name(manifest)
-    collection = _place_rig_collection(context, manifest, rig_name)
-    _remove_previous_rig(collection)
+    if into is not None and getattr(into, "type", None) == "ARMATURE":
+        # Into the armature that is already there. The action, the drivers
+        # the user wrote, the bones they added and everything keyed against
+        # a bone NAME live on this object, so keeping it is what lets an
+        # update keep an animation. Only what this addon generated goes.
+        arm_obj = into
+        arm_data = arm_obj.data
+        collection = _rig_collection_of(arm_obj)             or _place_rig_collection(context, manifest, rig_name)
+        _clear_generated(context, arm_obj, collection)
+    else:
+        collection = _place_rig_collection(context, manifest, rig_name)
+        _remove_previous_rig(collection)
 
-    # ops.armature_add would depend on cursor, context overrides and the
-    # active collection. Direct datablock creation depends on nothing.
-    arm_data = bpy.data.armatures.new(rig_name)
-    arm_obj = bpy.data.objects.new(rig_name, arm_data)
+        # ops.armature_add would depend on cursor, context overrides and the
+        # active collection. Direct datablock creation depends on nothing.
+        arm_data = bpy.data.armatures.new(rig_name)
+        arm_obj = bpy.data.objects.new(rig_name, arm_data)
+        collection.objects.link(arm_obj)
     arm_obj["RIG_rig"] = True
     arm_obj["RIG_source"] = manifest.source_path or ""
     arm_obj["RIG_frame"] = [v for row in frame for v in row]
     arm_obj.show_in_front = True
-    collection.objects.link(arm_obj)
     result.armature_object = arm_obj
     result.collection = collection
 
-    helpers_coll = arm_data.collections.new(_HELPERS_COLLECTION)
-    controls_coll = arm_data.collections.new(_CONTROLS_COLLECTION)
-    limits_coll = arm_data.collections.new(_LIMITS_COLLECTION)
-    mechanism_coll = arm_data.collections.new(_MECHANISM_COLLECTION)
+    helpers_coll = _bone_collection(arm_data, _HELPERS_COLLECTION)
+    controls_coll = _bone_collection(arm_data, _CONTROLS_COLLECTION)
+    limits_coll = _bone_collection(arm_data, _LIMITS_COLLECTION)
+    mechanism_coll = _bone_collection(arm_data, _MECHANISM_COLLECTION)
 
     # ---- Phase 2: one Edit-mode session, every bone --------------------
     context.view_layer.objects.active = arm_obj

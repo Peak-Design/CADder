@@ -182,6 +182,9 @@ class RigPlan:
     grounded_groups: List[str] = field(default_factory=list)
     free_groups: List[str] = field(default_factory=list)    # unparented, not grounded
     collapsed_carriers: List[str] = field(default_factory=list)  # groups with no bone
+    # group id -> the bone name that group already has in the scene, where
+    # an update asked for it to be kept. See build().
+    keep_names: Dict[str, str] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -469,11 +472,18 @@ def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
     )
 
 
-def build(manifest: Manifest) -> RigPlan:
+def build(manifest: Manifest, keep_names=None) -> RigPlan:
     """Plans the rig. Raises manifest.ManifestError on any inconsistency the
     exporter contract forbids, and on any dependency cycle the generated rig
-    would hand to Blender's depsgraph."""
+    would hand to Blender's depsgraph.
+
+    keep_names maps a group id to the bone name it already has in the
+    scene. An update that keeps the animation depends on it: a keyframe
+    names its bone, so a bone that stands for the same parts after an edit
+    has to come back under the same name. Nothing else changes; a name
+    that is taken by then is given up rather than fought over."""
     plan = RigPlan(manifest=manifest)
+    plan.keep_names = dict(keep_names or {})
     groups = manifest.group_by_id()
     joints = manifest.joint_by_id()
 
@@ -781,7 +791,8 @@ def build(manifest: Manifest) -> RigPlan:
         bp = BonePlan(
             group=group,
             bone_name=_unique_name(
-                assembly_stem if is_root and assembly_stem else group.name,
+                plan.keep_names.get(group.id)
+                or (assembly_stem if is_root and assembly_stem else group.name),
                 taken_names, group.id),
             parent_group_id=parent_id,
             joint=joint,

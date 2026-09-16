@@ -9,12 +9,12 @@ import sys
 import tempfile
 import unittest
 
-# The addons directory (the parent of the STEPper_NEXT repo root) makes
-# "import STEPper_NEXT.rig" work from any checkout named STEPper_NEXT.
+# The addons directory (the parent of the CADder repo root) makes
+# "import CADder.rig" work from any checkout named CADder.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import manifest  # noqa: E402
-from STEPper_NEXT.rig.manifest import ManifestError  # noqa: E402
+from CADder.rig import manifest  # noqa: E402
+from CADder.rig.manifest import ManifestError  # noqa: E402
 
 
 def identity4():
@@ -27,7 +27,7 @@ def identity4():
 def base_manifest():
     return {
         "manifest_version": "1.0.0",
-        "generator": {"name": "Peak.SwToBlender", "version": "0.1.0"},
+        "generator": {"name": "Peak.Cadder", "version": "0.1.0"},
         "units": {"length": "meter", "angle": "radian"},
         "frame": {"handedness": "right", "up_axis": "Z",
                   "transform_convention": "row_major_4x4_global"},

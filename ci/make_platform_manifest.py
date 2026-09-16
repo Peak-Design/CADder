@@ -5,7 +5,7 @@ Usage: python ci/make_platform_manifest.py <src_manifest> <platform> <wheel_file
 Example:
   python ci/make_platform_manifest.py blender_manifest.toml windows-x64 \
       cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-win_amd64.whl \
-      STEPper_NEXT/blender_manifest.toml
+      CADder/blender_manifest.toml
 """
 import re
 import sys

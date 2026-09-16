@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import ui  # noqa: E402
+from CADder.rig import ui  # noqa: E402
 
 
 class Settings:
@@ -50,7 +50,7 @@ def test_an_unknown_name_still_answers():
 def test_the_dials_match_the_cad_addin():
     """The C# side is the source: read it, do not trust a copy."""
     source = os.path.join(
-        r"C:\PeakDesign\SW-To-Blender\sw-addin\src\Peak.SwToBlender",
+        r"C:\PeakDesign\SW-To-Blender\sw-addin\src\Peak.Cadder",
         "SendToBlenderCommand.cs")
     if not os.path.exists(source):
         return                      # not a checkout of both repos

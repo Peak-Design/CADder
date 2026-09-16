@@ -21,7 +21,7 @@ import sys
 import tempfile
 import traceback
 
-# The addons directory (the parent of the STEPper_NEXT repo root), so the
+# The addons directory (the parent of the CADder repo root), so the
 # rig subpackage imports exactly as Blender's addon loader sees it.
 _ADDON_DIR = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,7 +53,7 @@ def _demo_manifest():
 
     return {
         "manifest_version": "1.0.0",
-        "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+        "generator": {"name": "Peak.Cadder", "version": "smoke"},
         "units": {"length": "meter", "angle": "radian"},
         "frame": {"handedness": "right", "up_axis": "Z",
                   "transform_convention": "row_major_4x4_global"},
@@ -206,11 +206,11 @@ def run():
     sys.path.insert(0, _ADDON_DIR)
 
     import bpy
-    from STEPper_NEXT import rig
+    from CADder import rig
     rig.register()
     _check(hasattr(bpy.types, "CADLINK_PT_panel"), "panel did not register")
 
-    from STEPper_NEXT.rig import graph, manifest as manifest_mod, rig_build
+    from CADder.rig import graph, manifest as manifest_mod, rig_build
 
     def hidden_bones(armature):
         """Every bone in a collection the user cannot see. The rig sorts

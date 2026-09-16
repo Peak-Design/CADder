@@ -22,7 +22,7 @@ ADDON = (r"C:\Users\Oscar\AppData\Roaming\Blender Foundation\Blender\5.1"
          r"\scripts\addons")
 sys.path.insert(0, ADDON)
 import bpy
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+bpy.ops.preferences.addon_enable(module="CADder")
 
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCP.gp import gp_Pnt, gp_Trsf, gp_Vec

@@ -21,12 +21,12 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import (  # noqa: E402
+from CADder.rig import (  # noqa: E402
     graph, manifest as man_mod, native_import, parenting, rig_build, swmesh)
 
 MANIFEST = {
     "manifest_version": "1.0.0",
-    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "generator": {"name": "Peak.Cadder", "version": "smoke"},
     "units": {"length": "meter", "angle": "radian"},
     "frame": {"handedness": "right", "up_axis": "Z",
               "transform_convention": "row_major_4x4_global"},

@@ -15,7 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import manifest, matching  # noqa: E402
+from CADder.rig import manifest, matching  # noqa: E402
 
 
 def identity4():
@@ -393,7 +393,7 @@ class CollectionHierarchyTest(unittest.TestCase):
         self.assertEqual("c002", part.get("RIG_component_of"))
 
     def test_a_collection_body_is_left_alone_by_pose_sync(self):
-        from STEPper_NEXT.rig import pose_sync
+        from CADder.rig import pose_sync
         m, objs, cols = self._scene(with_empties=False)
         report = matching.match(m, objects=objs, collections=cols)
         out = pose_sync.sync(m, report, objects=objs)

@@ -23,7 +23,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import native_import  # noqa: E402
+from CADder.rig import native_import  # noqa: E402
 argv = sys.argv[sys.argv.index("--") + 1:]
 mesh_path, out_png = argv[0], argv[1]
 size = int(argv[2]) if len(argv) > 2 else 900

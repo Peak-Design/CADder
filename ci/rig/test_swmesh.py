@@ -19,13 +19,13 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import swmesh  # noqa: E402
+from CADder.rig import swmesh  # noqa: E402
 
 # Written by the C# test suite into its own source tree. See the module
 # docstring for why the two halves have to meet on a real file.
 GOLDEN = os.path.join(
     "C:", os.sep, "PeakDesign", "SW-To-Blender", "sw-addin", "tests",
-    "Peak.SwToBlender.Tests", "golden", "sample.swmesh")
+    "Peak.Cadder.Tests", "golden", "sample.swmesh")
 
 
 @pytest.mark.skipif(not os.path.exists(GOLDEN),

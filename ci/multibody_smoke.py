@@ -31,8 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 import bpy
 import numpy as np
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 
@@ -117,7 +117,7 @@ def turn_foam_labels(reader):
     fixture turns the foam's face labels over after the file is read. The
     foam is the body whose faces carry the second face color.
     """
-    from STEPper_NEXT.importer import ShapeKey
+    from CADder.importer import ShapeKey
     from OCP.TopAbs import TopAbs_FACE
     turned = 0
     for key, subs in reader.sub_shapes.items():
@@ -136,11 +136,11 @@ def turn_foam_labels(reader):
 
 def load():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-    live = sys.modules["STEPper_NEXT.main"]
+    bpy.ops.preferences.addon_enable(module="CADder")
+    live = sys.modules["CADder.main"]
     live._cache_drop(STEP)
     turned = []
-    from STEPper_NEXT import importer
+    from CADder import importer
     real_read = importer.ReadSTEP.read_file
 
     def read_and_turn(self, filename):

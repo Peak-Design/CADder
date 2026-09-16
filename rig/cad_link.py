@@ -23,7 +23,7 @@ import urllib.request
 
 _REGISTRY = os.path.join(
     os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-    "PeakDesign", "SwToBlender", "solidworks")
+    "PeakDesign", "CADder", "solidworks")
 
 _TIMEOUT_PING = 1.5
 _TIMEOUT_JOB = 600.0     # tessellating a big assembly finely is not quick

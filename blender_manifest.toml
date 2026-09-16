@@ -1,13 +1,13 @@
 schema_version = "1.0.0"
 
-id = "stepper_next"
+id = "cadder"
 version = "2.5.0"
-name = "STEPper NEXT"
-tagline = "STEP CAD importer"
+name = "CADder"
+tagline = "Import CAD files, link SolidWorks, and rig assemblies"
 maintainer = "Peak-Design"
 type = "add-on"
 
-website = "https://github.com/Peak-Design/STEPper_NEXT"
+website = "https://github.com/Peak-Design/CADder"
 
 tags = ["Import-Export"]
 

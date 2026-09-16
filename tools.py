@@ -1,4 +1,4 @@
-# Post-import tools for STEPper NEXT: state-preserving Regenerate,
+# Post-import tools for CADder: state-preserving Regenerate,
 # Prune/Restore hierarchy and mesh cleanup.
 
 import json
@@ -33,8 +33,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     use_scene_settings: bpy.props.BoolProperty(
-        name="Use STEPper Panel Resolution",
-        description="Use the resolution values from the STEPper panel. Turn "
+        name="Use CADder Panel Resolution",
+        description="Use the resolution values from the CADder panel. Turn "
                     "this off to use the original import settings of each "
                     "object",
         default=True,

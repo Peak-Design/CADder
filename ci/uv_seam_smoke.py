@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 import bmesh
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 
@@ -93,7 +93,7 @@ def load(mode):
     """Both parts, biggest first: [closed hole, two half hole] by face count
     is not reliable, so they come back keyed by name."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     m._cache_drop(STEP)
     m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z",
                 uv_mode="CONFORMAL", uv_closed_seams=mode)
@@ -238,7 +238,7 @@ print("\n== CAD Surface puts the patches of one hole in one island")
 
 def surface_islands(name_part):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     m._cache_drop(STEP)
     m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z",
                 uv_mode="SURFACE", tris_to_quads=False)

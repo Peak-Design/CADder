@@ -24,7 +24,7 @@ GREY = (0.8, 0.8, 0.8)
 
 def fresh():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
 
 
 def base_color(mat):

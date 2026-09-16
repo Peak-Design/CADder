@@ -21,8 +21,8 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT import main  # noqa: E402
-from STEPper_NEXT.rig import matdb, native_import, swmesh  # noqa: E402
+from CADder import main  # noqa: E402
+from CADder.rig import matdb, native_import, swmesh  # noqa: E402
 
 
 def _check(cond, msg):
@@ -56,11 +56,11 @@ def write_mesh(path, appearance_json):
 
 def main_():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     tmp = tempfile.mkdtemp(prefix="cadlink_matdb_")
     db_dir = os.path.join(tmp, "MaterialDB")
     os.makedirs(db_dir)
-    prefs = bpy.context.preferences.addons["STEPper_NEXT"].preferences
+    prefs = bpy.context.preferences.addons["CADder"].preferences
     prefs.matdb_dir = db_dir
 
     authored = bpy.data.materials.new("Brass authored")

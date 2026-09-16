@@ -97,7 +97,7 @@ class MatchReport:
 
 def get_step_key(obj) -> StepKey:
     """The only place STEP_* custom properties are touched. Foreign importers
-    (no STEPper NEXT metadata) come back as an all-None key and simply fall
+    (no CADder metadata) come back as an all-None key and simply fall
     through to the fuzzy step."""
     key = StepKey()
     try:
@@ -177,7 +177,7 @@ def collect_collections(collections=None):
 def _collection_paths(collections):
     """name -> the CAD path of that collection, root first.
 
-    STEPper's "Tree collection" import builds one collection per assembly
+    CADder's "Tree collection" import builds one collection per assembly
     node and links each object into the collection of the node that owns it
     (main.py: hierarchy_collections[node.index], then
     hierarchy_collections[obj["STEP_parent"]].objects.link(obj)). So the
@@ -242,7 +242,7 @@ def _subtree_objects(col):
 
 def _occurrence_path(obj, by_uuid: Dict[Tuple[Optional[str], int], object]) -> Optional[str]:
     """Rebuilds the STEP occurrence path from STEP_uuid/STEP_parent chains.
-    STEPper's artificial root node (parent -1, labelled '<file>.empties') is
+    CADder's artificial root node (parent -1, labelled '<file>.empties') is
     not part of the STEP tree and never enters the path. FLAT/TREE imports
     have no ancestor objects, so the chain degrades to the leaf name and the
     exact-path step simply fails over to the later steps."""
@@ -425,7 +425,7 @@ def _rotation_angle(cols_a, cols_b) -> float:
 
 # ── Scene-frame estimation ──────────────────────────────────────────────
 # The manifest is Z-up SolidWorks global. The importer may have rotated the
-# geometry (STEPper's up-axis option, or any foreign importer's convention).
+# geometry (CADder's up-axis option, or any foreign importer's convention).
 # Comparing manifest transforms against object transforms directly would
 # then fail everywhere, and a rig built in the manifest frame would not
 # touch the geometry. The orientation-independent matches (steps 0–2, name

@@ -15,8 +15,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import matching, pose_sync  # noqa: E402
-from STEPper_NEXT.ci.rig.test_matching import (FakeObj, identity4,  # noqa: E402
+from CADder.rig import matching, pose_sync  # noqa: E402
+from CADder.ci.rig.test_matching import (FakeObj, identity4,  # noqa: E402
                                                make_manifest, translated)
 
 
@@ -133,7 +133,7 @@ class ParentedChildTest(unittest.TestCase):
 
 
 class ScalePreservationTest(unittest.TestCase):
-    """STEPper bakes STEP_applied_scale into the object matrix. Snapping to
+    """CADder bakes STEP_applied_scale into the object matrix. Snapping to
     the manifest's rigid transform must keep those column norms or the
     geometry shrinks by the import scale."""
 

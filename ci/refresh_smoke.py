@@ -28,8 +28,8 @@ _ADDON_DIR = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _ADDON_DIR)
 
 import bpy
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m, refresh as R
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m, refresh as R
 
 FAILS = []
 

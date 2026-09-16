@@ -36,8 +36,8 @@ sys.path.insert(0, os.path.dirname(_ADDON))
 
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m, refresh as R, background as B
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m, refresh as R, background as B
 
 FAILS = []
 UNIT = 0.01              # a scene that is NOT the worker's factory 1.0
@@ -73,7 +73,7 @@ def write_step(path):
 
 def clean(unit):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     bpy.context.scene.unit_settings.scale_length = unit
     m._cache_drop(STEP)
 
@@ -109,7 +109,7 @@ check(bool(direct), "the direct import produced geometry")
 
 out_blend = os.path.join(tmp, "worker.blend")
 request = {
-    "addon_module": "STEPper_NEXT",
+    "addon_module": "CADder",
     "filepath": STEP,
     "out_blend": out_blend,
     "op_kwargs": {"hierarchy_types": "TREE",

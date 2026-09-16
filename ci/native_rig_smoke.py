@@ -25,12 +25,12 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import (  # noqa: E402
+from CADder.rig import (  # noqa: E402
     graph, manifest as man_mod, native_import, parenting, rig_build, swmesh)
 
 MANIFEST = {
     "manifest_version": "1.0.0",
-    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "generator": {"name": "Peak.Cadder", "version": "smoke"},
     "units": {"length": "meter", "angle": "radian"},
     "frame": {"handedness": "right", "up_axis": "Z",
               "transform_convention": "row_major_4x4_global"},
@@ -229,7 +229,7 @@ def main():
     # import replaces that import: the bridge matches on the file stem, so
     # native-other.swmesh takes native-other.step's objects away and leaves
     # another file's alone.
-    from STEPper_NEXT import bridge
+    from CADder import bridge
     step_col = bpy.data.collections.new("native-other.hierarchy")
     bpy.context.scene.collection.children.link(step_col)
     for name, file in (("step_lever", "native-other.step"),

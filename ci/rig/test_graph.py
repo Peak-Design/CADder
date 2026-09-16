@@ -8,12 +8,12 @@ import os
 import sys
 import unittest
 
-# The addons directory (the parent of the STEPper_NEXT repo root) makes
-# "import STEPper_NEXT.rig" work from any checkout named STEPper_NEXT.
+# The addons directory (the parent of the CADder repo root) makes
+# "import CADder.rig" work from any checkout named CADder.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import graph, manifest  # noqa: E402
-from STEPper_NEXT.rig.manifest import ManifestError  # noqa: E402
+from CADder.rig import graph, manifest  # noqa: E402
+from CADder.rig.manifest import ManifestError  # noqa: E402
 
 from test_manifest import base_manifest, component, four_bar_manifest, hinge_manifest, identity4, ram_manifest  # noqa: E402
 
@@ -27,16 +27,16 @@ class TestImportGuards(unittest.TestCase):
     what keeps CI able to run manifest.py and graph.py at all."""
 
     def test_package_imports_without_bpy(self):
-        for name in ("STEPper_NEXT.rig", "STEPper_NEXT.rig.manifest",
-                     "STEPper_NEXT.rig.graph", "STEPper_NEXT.rig.matching",
-                     "STEPper_NEXT.rig.constraints", "STEPper_NEXT.rig.drivers",
-                     "STEPper_NEXT.rig.loops", "STEPper_NEXT.rig.parenting",
-                     "STEPper_NEXT.rig.rig_build", "STEPper_NEXT.rig.ui",
-                     "STEPper_NEXT.rig"):
+        for name in ("CADder.rig", "CADder.rig.manifest",
+                     "CADder.rig.graph", "CADder.rig.matching",
+                     "CADder.rig.constraints", "CADder.rig.drivers",
+                     "CADder.rig.loops", "CADder.rig.parenting",
+                     "CADder.rig.rig_build", "CADder.rig.ui",
+                     "CADder.rig"):
             importlib.import_module(name)
 
     def test_register_refuses_without_bpy(self):
-        import STEPper_NEXT.rig as main
+        import CADder.rig as main
         with self.assertRaises(RuntimeError):
             main.register()
 

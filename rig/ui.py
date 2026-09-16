@@ -298,7 +298,7 @@ if bpy is not None:
     class CADLINK_OT_import_step(bpy.types.Operator):
         bl_idname = "cadlink.import_step"
         bl_label = "Import STEP"
-        bl_description = "Import the manifest's STEP file with STEPper NEXT"
+        bl_description = "Import the manifest's STEP file with CADder"
 
         @classmethod
         def poll(cls, context):
@@ -315,11 +315,11 @@ if bpy is not None:
                 return {"CANCELLED"}
             if not _stepper_available():
                 self.report({"WARNING"},
-                            "STEPper NEXT is not installed. Import {} "
+                            "CADder is not installed. Import {} "
                             "manually with any STEP importer, then run Match "
                             "Geometry".format(step_path))
                 return {"CANCELLED"}
-            # The normal STEPper import dialog, with the file filled in:
+            # The normal CADder import dialog, with the file filled in:
             # every option the user has (up axis, hierarchy, quality), seeded
             # from their preferences, instead of a fixed Z-up empties import
             # nobody asked for. The matcher reads the scene frame from the

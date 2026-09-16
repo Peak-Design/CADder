@@ -1,4 +1,4 @@
-# Update check for STEPper NEXT.
+# Update check for CADder.
 #
 # Asks the GitHub releases API once a day whether a newer release exists,
 # so the N-panel can say so and hand the user the zip for their platform.
@@ -21,14 +21,14 @@ try:
 except ImportError:
     bpy = None
 
-REPO = "Peak-Design/STEPper_NEXT"
+REPO = "Peak-Design/CADder"
 RELEASES_API = "https://api.github.com/repos/{}/releases/latest".format(REPO)
 RELEASES_PAGE = "https://github.com/{}/releases/latest".format(REPO)
 KOFI_URL = "https://ko-fi.com/oskarasspalvys"
 
 _TIMEOUT = 6.0
 # GitHub rejects requests with no User-Agent.
-_USER_AGENT = "STEPper-NEXT-updater"
+_USER_AGENT = "CADder-updater"
 
 # Written by the worker thread, read by the main thread. Assignment of a
 # whole dict is atomic under the GIL, so no lock is needed.
@@ -172,7 +172,7 @@ def _tick():
         try:
             _apply_result(prefs, _result)
         except Exception as exc:
-            print("STEPper NEXT: could not store update check:", exc)
+            print("CADder: could not store update check:", exc)
     _timer_running = False
     return None
 
@@ -189,7 +189,7 @@ def start(delay=6.0):
                                 persistent=True)
     except Exception as exc:
         _timer_running = False
-        print("STEPper NEXT: update check not scheduled:", exc)
+        print("CADder: update check not scheduled:", exc)
 
 
 def stop():

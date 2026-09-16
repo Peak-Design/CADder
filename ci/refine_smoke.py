@@ -28,7 +28,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import native_import, cad_link, swmesh  # noqa: E402
+from CADder.rig import native_import, cad_link, swmesh  # noqa: E402
 
 TOKEN = "smoke-token"
 COARSE_TRIS = 1
@@ -37,7 +37,7 @@ FINE_TRIS = 4
 
 RESEND_MANIFEST = {
     "manifest_version": "1.0.0",
-    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "generator": {"name": "Peak.Cadder", "version": "smoke"},
     "units": {"length": "meter", "angle": "radian"},
     "frame": {"handedness": "right", "up_axis": "Z",
               "transform_convention": "row_major_4x4_global"},
@@ -101,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         if self.path.rstrip("/") == "/ping":
-            self._send(200, {"ok": True, "app": "Peak.SwToBlender"})
+            self._send(200, {"ok": True, "app": "Peak.Cadder"})
             return
         if self.headers.get("X-CADLink-Token") != TOKEN:
             self._send(403, {"ok": False, "error": "bad token"})
@@ -138,7 +138,7 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     # The operator is the thing under test here, so the add-on has to be
     # registered rather than just imported.
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     server.seen = []
@@ -228,10 +228,10 @@ def main():
         # 8. Poses: the CAD side says the part has moved, and the object
         #    follows. The manifest keeps the new transform, so a rig built
         #    from it afterwards rests where the part now is.
-        from STEPper_NEXT.rig import manifest as man_mod, ui as rig_ui
+        from CADder.rig import manifest as man_mod, ui as rig_ui
         data = {
             "manifest_version": "1.0.0",
-            "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+            "generator": {"name": "Peak.Cadder", "version": "smoke"},
             "units": {"length": "meter", "angle": "radian"},
             "frame": {"handedness": "right", "up_axis": "Z",
                       "transform_convention": "row_major_4x4_global"},
@@ -290,7 +290,7 @@ def main():
         #     raised "Object.data expected a Image type" (Oscar,
         #     2026-09-16), so this holds that route open.
         bpy.ops.wm.read_factory_settings(use_empty=True)
-        bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+        bpy.ops.preferences.addon_enable(module="CADder")
         rig_ui._STATE["manifest"] = None
         coarse = write_mesh(
             os.path.join(tempfile.gettempdir(), "refine_coarse_ci.swmesh"),

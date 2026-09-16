@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import progress  # noqa: E402
+from CADder.rig import progress  # noqa: E402
 
 
 class FakeWindowManager:

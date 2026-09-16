@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """CAD Link rig subpackage: builds a constrained armature from the
-.rig.json manifest written by a CAD add-in (today: Peak.SwToBlender for
+.rig.json manifest written by a CAD add-in (today: Peak.Cadder for
 SolidWorks)
 (schema and semantics live in the SW-To-Blender repo, schema/SCHEMA.md).
 
-Registered from STEPper NEXT's main.register(), guarded there so a rig
+Registered from CADder's main.register(), guarded there so a rig
 failure never costs STEP import. Importable without Blender: manifest.py
 and graph.py run under plain Python in CI. The bpy-dependent classes only
 exist inside Blender."""
@@ -23,7 +23,7 @@ if bpy is not None:
     class CadLinkSettings(bpy.types.PropertyGroup):
         manifest_path: bpy.props.StringProperty(
             name="Manifest",
-            description="Path to the .rig.json written by Peak.SwToBlender",
+            description="Path to the .rig.json written by Peak.Cadder",
             # Not FILE_PATH: that subtype draws its own UNFILTERED browse
             # button beside the panel's filtered one (cadlink.pick_manifest),
             # and two file buttons with different behavior reads as a bug.

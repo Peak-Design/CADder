@@ -77,7 +77,7 @@ def _invert_affine(rows):
 
 def _retarget_rows(pred, cur) -> Optional[List[List[float]]]:
     """The manifest pose's rotation and translation, the object's own scale:
-    STEPper bakes STEP_applied_scale into the object matrix and overwriting
+    CADder bakes STEP_applied_scale into the object matrix and overwriting
     it with the manifest's rigid transform would shrink the geometry."""
     pcols = _rotation_columns(pred)
     if pcols is None:

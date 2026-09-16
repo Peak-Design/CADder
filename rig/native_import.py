@@ -530,7 +530,7 @@ def prototypes_objects(prototypes):
 
 
 def _material_names(obj):
-    """STEP_materials, the property the STEPper NEXT material database
+    """STEP_materials, the property the CADder material database
     matches on: the original name of the material in each slot, so a
     database entry for "polished gold" replaces it on a direct send
     exactly as on a STEP import."""

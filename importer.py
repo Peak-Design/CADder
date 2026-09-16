@@ -112,7 +112,7 @@ try:
 except ImportError:  # standalone use outside the package (test harnesses)
     from ocp_utils import SameKey, ShapeKey, get_label_name
 
-print("--> STEPper NEXT OpenCASCADE (OCP) version:", OCP_VERSION)
+print("--> CADder OpenCASCADE (OCP) version:", OCP_VERSION)
 
 # Native C++ acceleration for mesh extraction (optional).  The module links
 # its own plain-named OCCT subset shipped in native_libs/ (the vendored OCP
@@ -128,13 +128,13 @@ try:
     _HAS_NATIVE = hasattr(stepper_native, "mesh_and_extract")
     _NATIVE_ABI = getattr(stepper_native, "ABI_VERSION", 1)
     if _HAS_NATIVE:
-        print("--> STEPper NEXT native acceleration: ENABLED")
+        print("--> CADder native acceleration: ENABLED")
     else:
-        print("--> STEPper NEXT native acceleration: incompatible binary (using Python fallback)")
+        print("--> CADder native acceleration: incompatible binary (using Python fallback)")
 except ImportError:
     _HAS_NATIVE = False
     _NATIVE_ABI = 0
-    print("--> STEPper NEXT native acceleration: not available (using Python fallback)")
+    print("--> CADder native acceleration: not available (using Python fallback)")
 
 
 def _mesh_shape(shp, lin_def, ang_def, relative=False):

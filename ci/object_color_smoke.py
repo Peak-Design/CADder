@@ -28,8 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 DEFAULT = (1.0, 1.0, 1.0, 1.0)      # what Blender gives an object with no help
@@ -70,7 +70,7 @@ def write_step(path, colors):
 
 def clean():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     m._cache_drop(STEP)
 
 

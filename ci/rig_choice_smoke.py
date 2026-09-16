@@ -20,8 +20,8 @@ import bpy
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
-from STEPper_NEXT import rig  # noqa: E402
-from STEPper_NEXT.rig import inputs, ui  # noqa: E402
+from CADder import rig  # noqa: E402
+from CADder.rig import inputs, ui  # noqa: E402
 
 
 def _manifest():

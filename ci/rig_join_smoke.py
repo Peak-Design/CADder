@@ -34,8 +34,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 import bpy
 from mathutils import Euler, Matrix, Vector
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT.rig import (graph, joining, manifest as mm,      # noqa: E402
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder.rig import (graph, joining, manifest as mm,      # noqa: E402
                               parenting, rig_build)
 
 FAILS = []
@@ -166,7 +166,7 @@ print("   posed attach refused:", refused.warnings[:1])
 
 print("\n-- rebuilding and joining at rest")
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+bpy.ops.preferences.addon_enable(module="CADder")
 machine, machine_parts, machine_src = build("machine", 0.0)
 sub, sub_parts, sub_src = build("gripper", 1.0, coupled=True)
 sub_arm, machine_arm = sub.armature_object, machine.armature_object

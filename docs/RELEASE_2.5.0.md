@@ -1,4 +1,4 @@
-# STEPper NEXT 2.5.0
+# CADder 2.5.0
 
 The UV release. Blender 5.1 or later. Install the zip for your platform the
 same way as the first time.
@@ -22,7 +22,7 @@ meshed, so it adds almost no time.
 The other UV modes and packing add a lot of time on a large model. For
 example, Smart adds about 35% and packing each part on its own adds about
 86%. Use them on single parts: select the parts, then click **Apply UVs to
-Selected** in the **STEPper NEXT: UV** panel.
+Selected** in the **CADder: UV** panel.
 
 ## New import options
 
@@ -68,7 +68,7 @@ Selected** in the **STEPper NEXT: UV** panel.
 
 ## New UV panel
 
-**STEPper NEXT: UV** in the sidebar makes the UV map of the selected parts
+**CADder: UV** in the sidebar makes the UV map of the selected parts
 again, with the same settings as the import dialog. One part can then get a
 treatment its neighbor does not: a bent bracket as one flat pattern, the
 block beside it face by face. It replaces the Box Project UVs button, which
@@ -80,4 +80,4 @@ go on to each object, so a later Regenerate or Refresh keeps them.
 
 ## Interface
 
-The STEPper NEXT sidebar tab now sits after Item, Tool and View.
+The CADder sidebar tab now sits after Item, Tool and View.

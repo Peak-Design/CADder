@@ -1,4 +1,4 @@
-# Additional CAD format readers for STEPper NEXT: IGES and BREP.
+# Additional CAD format readers for CADder: IGES and BREP.
 #
 # Both subclass ReadSTEP and override only the document-transfer stage. the
 # shared tree walk, tessellation, healing and native handoff run unchanged.

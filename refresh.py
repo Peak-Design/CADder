@@ -721,9 +721,9 @@ if bpy is not None:
                 msg += (". The assembly changed: %d component(s) gone, %d new"
                         % (len(gone), len(added)))
                 for name in gone[:10]:
-                    print("[STEPper refresh] gone from the file: %s" % name)
+                    print("[CADder refresh] gone from the file: %s" % name)
                 for name in added[:10]:
-                    print("[STEPper refresh] new in the file: %s" % name)
+                    print("[CADder refresh] new in the file: %s" % name)
 
             # The size must not change on a refresh. It can only change if
             # the file's units changed, and a user who sees their assembly
@@ -778,10 +778,10 @@ if bpy is not None:
             return {"FINISHED"}
 
     class STEP_PT_ImportedFiles(bpy.types.Panel):
-        bl_label = "STEPper NEXT: Imported files"
+        bl_label = "CADder: Imported files"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
-        bl_category = "STEPper NEXT"
+        bl_category = "CADder"
         bl_order = 1006
 
         def draw(self, context):

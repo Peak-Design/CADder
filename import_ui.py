@@ -1,5 +1,5 @@
 # Import dialog UI, quality presets, preference seeding, drag & drop and
-# folder batch import for STEPper NEXT.
+# folder batch import for CADder.
 #
 # The import operator class lives in main.py (registration hub). This module
 # holds the preset table, deflection resolution and the dialog draw code so
@@ -68,7 +68,7 @@ def save_last_used(op, prefs):
             vals[key] = float(v) if isinstance(v, float) else v
         prefs.last_import_settings = json.dumps(vals)
     except (AttributeError, TypeError, ValueError) as e:
-        print(f"STEPper: could not save import settings: {e}")
+        print(f"CADder: could not save import settings: {e}")
 
 
 def _restore_last_used(op, prefs):
@@ -262,7 +262,7 @@ def draw_import_dialog(op, layout, prefs):
 class STEPPER_FH_step(bpy.types.FileHandler):
     """Viewport drag & drop for STEP files (single or multiple)."""
     bl_idname = "STEPPER_FH_step"
-    bl_label = "STEP import (STEPper NEXT)"
+    bl_label = "STEP import (CADder)"
     bl_import_operator = "import_scene.occ_import_step"
     bl_file_extensions = ";".join(STEP_EXTENSIONS)
 

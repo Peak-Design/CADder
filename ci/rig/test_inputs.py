@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import inputs, manifest as man_mod  # noqa: E402
+from CADder.rig import inputs, manifest as man_mod  # noqa: E402
 
 
 def _t(x, y, z):

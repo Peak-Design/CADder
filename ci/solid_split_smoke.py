@@ -23,8 +23,8 @@ sys.path.insert(0, _ADDON_DIR)
 STEP = os.path.join(_HERE, "fixtures", "multisolid.step")
 
 import bpy
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 

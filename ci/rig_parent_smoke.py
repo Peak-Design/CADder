@@ -40,9 +40,9 @@ STEP = os.path.join(_HERE, "fixtures", "assembly.step")
 import bpy
 from mathutils import Vector
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m                                  # noqa: E402
-from STEPper_NEXT.rig import (graph, manifest as mm, matching,      # noqa: E402
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m                                  # noqa: E402
+from CADder.rig import (graph, manifest as mm, matching,      # noqa: E402
                               parenting, rig_build)
 
 FAILS = []

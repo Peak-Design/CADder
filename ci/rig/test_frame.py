@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene-frame estimation tests: a STEP import with another up axis rotates
 the geometry. Matching must detect that frame from its own matches and the
-rig must be built through it. Found live 2026-08-22: a Y-up STEPper import
+rig must be built through it. Found live 2026-08-22: a Y-up CADder import
 left the rig lying in the manifest's Z-up frame, nowhere near the parts.
 
 No bpy: matching.py degrades to plain Python and the fake objects below
@@ -12,11 +12,11 @@ import os
 import sys
 import unittest
 
-# The addons directory (the parent of the STEPper_NEXT repo root) makes
-# "import STEPper_NEXT.rig" work from any checkout named STEPper_NEXT.
+# The addons directory (the parent of the CADder repo root) makes
+# "import CADder.rig" work from any checkout named CADder.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import manifest, matching  # noqa: E402
+from CADder.rig import manifest, matching  # noqa: E402
 
 
 ROT_X_POS90 = [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
@@ -194,7 +194,7 @@ class TestFrameEstimation(unittest.TestCase):
                 self.assertAlmostEqual(report.frame_rows[i][j], frame[i][j], places=9)
 
     def test_cursor_offset_import_is_carried_in_the_frame(self):
-        # STEPper places imports at the 3D cursor (main.py transform_to_up
+        # CADder places imports at the 3D cursor (main.py transform_to_up
         # bakes the offset into matrix_world). The frame must carry that
         # translation so the rig lands on the geometry, not at the origin.
         frame = rot_frame([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],

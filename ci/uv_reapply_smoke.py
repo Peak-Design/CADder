@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 import bmesh
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 
@@ -86,7 +86,7 @@ write_step(STEP)
 
 def load(**kw):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     m._cache_drop(STEP)
     opts = dict(htypes="FLAT", up_as="Z", tris_to_quads=False,
                 uv_mode="SURFACE", uv_normalize=False)
@@ -210,7 +210,7 @@ a = load(uv_mode="ANGLE_BASED", tris_to_quads=True)[0]
 faces = len(a.data.polygons)
 # The load above enabled the addon again, which loads the module again, so
 # the wrapper goes on the module that is live now.
-live = sys.modules["STEPper_NEXT.main"]
+live = sys.modules["CADder.main"]
 asked = []
 real_unwrap = live._unwrap_uv_objects
 

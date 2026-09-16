@@ -323,7 +323,7 @@ static PyMethodDef methods[] = {
 static struct PyModuleDef module_def = {
     PyModuleDef_HEAD_INIT,
     "stepper_native",
-    "Native C++ mesh extraction for STEPper NEXT Blender addon.",
+    "Native C++ mesh extraction for CADder Blender addon.",
     -1,
     methods
 };

@@ -20,11 +20,11 @@ import bpy
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from STEPper_NEXT import bridge, rig  # noqa: E402
+from CADder import bridge, rig  # noqa: E402
 
 MANIFEST = {
     "manifest_version": "1.0.0",
-    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "generator": {"name": "Peak.Cadder", "version": "smoke"},
     "units": {"length": "meter", "angle": "radian"},
     "frame": {"handedness": "right", "up_axis": "Z",
               "transform_convention": "row_major_4x4_global"},
@@ -182,7 +182,7 @@ def main():
     resp = result["resp"]
     assert resp["ok"], resp
     assert resp["stages"]["poses"]["components"] == 1, resp["stages"]
-    from STEPper_NEXT.rig import ui as rig_ui
+    from CADder.rig import ui as rig_ui
     arm_component = next(c for c in rig_ui._STATE["manifest"].components
                          if c.id == "c002")
     assert abs(arm_component.transform[0][3] - 0.45) < 1e-9,         "the push did not reach the manifest: %s" % (arm_component.transform,)
@@ -272,8 +272,8 @@ def check_option_parity():
     where nobody looks. Both directions are checked here because the add-in
     and the addon ship separately.
     """
-    from STEPper_NEXT import bridge as bridge_mod
-    from STEPper_NEXT import main as main_mod
+    from CADder import bridge as bridge_mod
+    from CADder import main as main_mod
 
     # The class annotations, not the registered RNA: this smoke drives the
     # bridge module directly and never enables the addon, and the properties
@@ -298,7 +298,7 @@ def check_option_parity():
         "the operator has import options the bridge never forwards: %s"
         % unforwarded)
 
-    # What Peak.SwToBlender.SendToBlenderCommand puts in import_options.
+    # What Peak.Cadder.SendToBlenderCommand puts in import_options.
     sent_by_addin = {
         "hierarchy_types", "quality_preset", "up_as", "fw_as",
         "import_curves", "group_in_collection", "separate_solids",

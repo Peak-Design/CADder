@@ -1,4 +1,4 @@
-# UV layer helpers for STEPper NEXT.
+# UV layer helpers for CADder.
 #
 # All import modes write a single "UVMap" layer (Blender's default name):
 # the CAD parametric UVs extracted during tessellation are written by the

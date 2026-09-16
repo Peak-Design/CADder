@@ -1,4 +1,4 @@
-# Non-blocking background import for STEPper NEXT.
+# Non-blocking background import for CADder.
 #
 # OCP holds the GIL during STEP parsing (measured), so responsiveness
 # requires a separate process. A headless Blender runs worker.py (the
@@ -42,7 +42,7 @@ def prefs_snapshot(prefs):
 
 
 def _job_root():
-    root = os.path.join(tempfile.gettempdir(), "STEPperNEXT", "jobs")
+    root = os.path.join(tempfile.gettempdir(), "CADder", "jobs")
     os.makedirs(root, exist_ok=True)
     _sweep_stale_jobs(root)
     return root

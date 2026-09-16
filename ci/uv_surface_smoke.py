@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 
@@ -73,7 +73,7 @@ STEP = os.path.join(tmp, "drum.step")
 write_step(STEP)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+bpy.ops.preferences.addon_enable(module="CADder")
 m._cache_drop(STEP)
 m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z", uv_mode="SURFACE")
 obj = sorted([o for o in bpy.data.objects

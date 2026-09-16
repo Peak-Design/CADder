@@ -21,7 +21,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from STEPper_NEXT.rig import native_import, swmesh  # noqa: E402
+from CADder.rig import native_import, swmesh  # noqa: E402
 
 
 def _text(s):

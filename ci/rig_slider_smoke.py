@@ -137,10 +137,10 @@ def run():
 
     import bpy
     from mathutils import Vector
-    from STEPper_NEXT import rig
+    from CADder import rig
     rig.register()
 
-    from STEPper_NEXT.rig import graph, manifest as manifest_mod, rig_build
+    from CADder.rig import graph, manifest as manifest_mod, rig_build
 
     m = manifest_mod.load(manifest_path)
     plan = graph.build(m)

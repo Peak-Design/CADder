@@ -29,8 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 import bmesh
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import main as m
 
 FAILS = []
 # The flat pattern of one face: the profile length by the width.
@@ -391,7 +391,7 @@ def overlap_share(tris, grid=256):
 def load(step=None, **kw):
     step = step or STEP
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     m._cache_drop(step)
     opts = dict(htypes="FLAT", up_as="Z", tris_to_quads=False,
                 uv_normalize=False)
@@ -769,7 +769,7 @@ def flat_pieces(arm):
     chart of its own that Smart can join.
     """
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     if arm:
         # A 10 by 10 square, and a 20 by 1 arm out of its corner.
         verts = [(0, 0, 0), (10, 0, 0), (10, 1, 0), (10, 10, 0), (0, 10, 0),
@@ -794,7 +794,7 @@ def flat_pieces(arm):
 
 def pieces_after(arm, gain=None, split=True):
     me = flat_pieces(arm)
-    from STEPper_NEXT import uv as live
+    from CADder import uv as live
     old = live.SMART_SPLIT_GAIN
     if gain is not None:
         live.SMART_SPLIT_GAIN = gain
@@ -825,12 +825,12 @@ check(pieces_after(True, split=False) == 1,
 # order they come in. This is built as a mesh on purpose, with nothing
 # sharp, so the overlap test is the only thing that can stop it.
 print("\n== Smart refuses a join that lands on the island")
-from STEPper_NEXT import uv as uv_mod
+from CADder import uv as uv_mod
 
 
 def saddle():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+    bpy.ops.preferences.addon_enable(module="CADder")
     n = 5
     verts = [(0.0, 0.0, 0.0)]
     for i in range(n):

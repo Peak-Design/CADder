@@ -1,4 +1,4 @@
-# Background import worker for STEPper NEXT.
+# Background import worker for CADder.
 #
 # Runs inside a HEADLESS Blender instance spawned by background.py:
 #   blender -b --factory-startup --python-exit-code 1 \

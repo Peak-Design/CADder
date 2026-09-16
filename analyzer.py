@@ -1,4 +1,4 @@
-# Pre-import file analyzer for STEPper NEXT.
+# Pre-import file analyzer for CADder.
 #
 # Fast chunked text scan of a STEP file (no OpenCASCADE, no Transfer):
 # schema, declared units, entity counts and per-preset import-time estimates

@@ -1,10 +1,10 @@
-"""Headless parity harness for STEPper NEXT.
+"""Headless parity harness for CADder.
 
 Usage:
   blender.exe -b --factory-startup --python parity_harness.py -- \
       <file.step> <out.json> [<operator_kwargs_json>]
 
-Imports the STEP file with the STEPper_NEXT addon and dumps a deterministic
+Imports the STEP file with the CADder addon and dumps a deterministic
 JSON snapshot of the resulting scene (objects, mesh counts, materials,
 transforms, collections) for baseline/parity diffing.
 
@@ -23,7 +23,7 @@ argv = sys.argv[sys.argv.index("--") + 1:]
 step_file, out_json = argv[0], argv[1]
 op_kwargs = json.loads(argv[2]) if len(argv) > 2 else {}
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
+bpy.ops.preferences.addon_enable(module="CADder")
 
 t0 = time.perf_counter()
 result = bpy.ops.import_scene.occ_import_step(

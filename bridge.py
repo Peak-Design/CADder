@@ -9,7 +9,7 @@ main thread and signals the waiting handler, which then writes the HTTP
 response. Everything bpy happens on the main thread, always.
 
 Discovery: on start the server binds 127.0.0.1 on an ephemeral port and
-writes %LOCALAPPDATA%/PeakDesign/SwToBlender/bridge/<pid>.json with the
+writes %LOCALAPPDATA%/PeakDesign/CADder/bridge/<pid>.json with the
 port and a random token. The CAD side lists that directory, pings
 each entry, and prunes the corpses. Every request must carry the token in
 X-CADLink-Token: the file is user-readable only, so possession proves the
@@ -80,7 +80,7 @@ _state = {
 
 def registry_dir() -> str:
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    return os.path.join(base, "PeakDesign", "SwToBlender", "bridge")
+    return os.path.join(base, "PeakDesign", "CADder", "bridge")
 
 
 def _addon_version() -> str:

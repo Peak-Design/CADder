@@ -8,12 +8,12 @@ import os
 import sys
 import unittest
 
-# The addons directory (the parent of the STEPper_NEXT repo root) makes
-# "import STEPper_NEXT.rig" work from any checkout named STEPper_NEXT.
+# The addons directory (the parent of the CADder repo root) makes
+# "import CADder.rig" work from any checkout named CADder.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
-from STEPper_NEXT.rig import shapes
+from CADder.rig import shapes
 
 
 def bounds(verts, axis):

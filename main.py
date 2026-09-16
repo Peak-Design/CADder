@@ -54,7 +54,7 @@ try:
     from . import rig as rig_mod
 except Exception as _rig_exc:
     rig_mod = None
-    print("STEPper NEXT: rig subpackage failed to load:", _rig_exc)
+    print("CADder: rig subpackage failed to load:", _rig_exc)
 
 # Same isolation for the CAD Link bridge: a bridge fault must never cost
 # STEP import.
@@ -62,7 +62,7 @@ try:
     from . import bridge as bridge_mod
 except Exception as _bridge_exc:
     bridge_mod = None
-    print("STEPper NEXT: bridge module failed to load:", _bridge_exc)
+    print("CADder: bridge module failed to load:", _bridge_exc)
 
 # Active UV options for the current import (set by load_step)
 # Per-import UV generation state (a single "UVMap" layer. The booleans are
@@ -1870,13 +1870,16 @@ def _show_import_issues_popup(failed_parts, recovered_parts):
             col.label(text="    Usually caused by unresolved references in the STEP file.", icon="INFO")
 
     icon = "ERROR" if failed_parts else "INFO"
-    bpy.context.window_manager.popup_menu(draw, title="STEPper NEXT Import Warning", icon=icon)
+    bpy.context.window_manager.popup_menu(draw, title="CADder Import Warning", icon=icon)
 
 
 # ---------------------------------------------------------------------------
 # Material Database helpers
 # ---------------------------------------------------------------------------
 
+# Keeps the old product name on purpose. This is the name of a text
+# datablock INSIDE every material database file a user already has.
+# Renaming it would make those files unreadable.
 _MATDB_TEXT_NAME = "STEPper_MaterialDB"
 _ADDON_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -1906,7 +1909,7 @@ def _get_matdb_dir():
             global _matdb_dir_warned
             if _matdb_dir_warned != d:
                 _matdb_dir_warned = d
-                print("STEPper NEXT: material database folder %r is "
+                print("CADder: material database folder %r is "
                       "unusable (%s). Using the addon's own folder" % (d, exc))
 
     d = os.path.join(_ADDON_DIR, "MaterialDB")
@@ -1986,7 +1989,7 @@ def _write_material_database(filepath, mappings_dict):
     for replacement_name in set(mappings_dict.values()):
         mat = bpy.data.materials.get(replacement_name)
         if not mat:
-            print(f"STEPper MatDB: Material '{replacement_name}' not found, skipping")
+            print(f"CADder MatDB: Material '{replacement_name}' not found, skipping")
             continue
         if mat.library or mat.override_library:
             # Create a full local copy so it can be written to the database
@@ -1997,7 +2000,7 @@ def _write_material_database(filepath, mappings_dict):
         else:
             datablocks.add(mat)
 
-    print(f"STEPper MatDB: Writing {len(datablocks)} datablocks to {filepath}")
+    print(f"CADder MatDB: Writing {len(datablocks)} datablocks to {filepath}")
     bpy.data.libraries.write(filepath, datablocks, fake_user=True)
 
     # Clean up temporary text datablock and any temporary material copies
@@ -2034,10 +2037,10 @@ def _read_matdb_mappings(filepath):
         try:
             mappings = json.loads(text.as_string())
         except json.JSONDecodeError:
-            print("STEPper MatDB: Invalid JSON in database file")
+            print("CADder MatDB: Invalid JSON in database file")
         bpy.data.texts.remove(text)
     else:
-        print("STEPper MatDB: No mapping text block found in database file")
+        print("CADder MatDB: No mapping text block found in database file")
 
     return mappings
 
@@ -2059,7 +2062,7 @@ def _append_matdb_materials(filepath):
 
     count = len(to_append)
     if count:
-        print(f"STEPper MatDB: Appended {count} material(s) from database")
+        print(f"CADder MatDB: Appended {count} material(s) from database")
     return count
 
 
@@ -2188,7 +2191,7 @@ def _cleanup_unused_step_materials(known_names=None):
             bpy.data.materials.remove(mat)
             removed += 1
     if removed:
-        print(f"STEPper MatDB: Removed {removed} unused material(s)")
+        print(f"CADder MatDB: Removed {removed} unused material(s)")
     return removed
 
 
@@ -2985,7 +2988,7 @@ def load_step(
         refresh_mod.record_import(context.scene if context else None,
                                   filepath, import_record)
     except Exception as exc:
-        print("STEPper NEXT: could not record the import:", exc)
+        print("CADder: could not record the import:", exc)
 
     wm.progress_end()
     elapsed = time.time() - start_time
@@ -2995,7 +2998,7 @@ def load_step(
     n_unique = len(created_names)
     n_linked = n_objects - n_unique
     print(f"\n{'='*50}")
-    print(f"  STEPper NEXT Import Summary")
+    print(f"  CADder Import Summary")
     print(f"{'='*50}")
     print(f"  File:    {filename}")
     print(f"  Objects: {n_objects} ({n_unique} unique, {n_linked} linked copies)")
@@ -4137,10 +4140,10 @@ class STEP_UL_MaterialMappings(bpy.types.UIList):
 
 
 class STEP_PT_MaterialDB(bpy.types.Panel):
-    bl_label = "STEPper NEXT: Material DB"
+    bl_label = "CADder: Material DB"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1004
 
     def draw(self, context):
@@ -4192,18 +4195,18 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
     Do not put HIDE_HEADER on this panel. Blender registers a headerless
     panel in front of every panel that has a header, whatever bl_order says,
     and the tab of a category sits where its first panel sits. One headerless
-    panel here therefore pulls the whole STEPper NEXT tab above Item, Tool
+    panel here therefore pulls the whole CADder tab above Item, Tool
     and View.
     """
     bl_label = ""
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1000
 
     def draw_header(self, context):
         row = self.layout.row(align=True)
-        row.label(text="STEPper NEXT v%s" % updater_mod.version_string(),
+        row.label(text="CADder v%s" % updater_mod.version_string(),
                   icon="TOOL_SETTINGS")
         # The tip jar: a heart, deliberately unlabelled so the version line
         # stays readable at narrow sidebar widths.
@@ -4225,10 +4228,10 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
-    bl_label = "STEPper NEXT: Tools"
+    bl_label = "CADder: Tools"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1001
 
     def draw(self, context):
@@ -4237,7 +4240,7 @@ class STEP_PT_STEPper(bpy.types.Panel):
         layout = self.layout
 
         # These resolution values feed the Regenerate operator below (with
-        # its "Use STEPper Panel Resolution" option, on by default)
+        # its "Use CADder Panel Resolution" option, on by default)
         box = layout.box()
         col = box.column(align=True)
         col.label(text="Regenerate Resolution:")
@@ -4260,10 +4263,10 @@ class STEP_PT_STEPper(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
-    bl_label = "STEPper NEXT: File"
+    bl_label = "CADder: File"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1003
 
     def draw(self, context):
@@ -4285,10 +4288,10 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_UV(bpy.types.Panel):
-    bl_label = "STEPper NEXT: UV"
+    bl_label = "CADder: UV"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1002
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -4309,10 +4312,10 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
 
 
 class STEP_PT_STEPper_Debug(bpy.types.Panel):
-    bl_label = "STEPper NEXT: Debug"
+    bl_label = "CADder: Debug"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "STEPper NEXT"
+    bl_category = "CADder"
     bl_order = 1005
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -4539,7 +4542,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             else:
                 bridge_mod.stop()
         except Exception as exc:
-            print("STEPper NEXT: bridge toggle failed:", exc)
+            print("CADder: bridge toggle failed:", exc)
 
     enable_bridge: bpy.props.BoolProperty(
         name="CAD Link (experimental)",
@@ -4569,7 +4572,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         if sys.version_info[:2] != must_have_python:
             box = layout.box().column(align=True)
             box.alert = True
-            box.label(text="STEPper NEXT: Python version check failure", icon="ERROR")
+            box.label(text="CADder: Python version check failure", icon="ERROR")
 
             row = box.row()
             row.label(text="Current version: " + str(".".join(str(i) for i in sys.version_info[:2])))
@@ -4631,7 +4634,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
                 text="Download %s" % update["version"])
             download.url = update["url"]
         else:
-            col.label(text="STEPper NEXT %s is up to date"
+            col.label(text="CADder %s is up to date"
                            % updater_mod.version_string(), icon="CHECKMARK")
         kofi = col.operator("wm.url_open", icon="FUND",
                             text="Support development on Ko-fi")
@@ -4647,7 +4650,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
 
 
 def menu_func_import(self, context):
-    self.layout.operator(ImportStepCADOperator.bl_idname, text="STEP/IGES/BREP CAD [STEPper NEXT]")
+    self.layout.operator(ImportStepCADOperator.bl_idname, text="STEP/IGES/BREP CAD [CADder]")
 
 
 classes = (
@@ -4692,12 +4695,12 @@ def register():
         try:
             rig_mod.register()
         except Exception as exc:
-            print("STEPper NEXT: rig registration failed:", exc)
+            print("CADder: rig registration failed:", exc)
     if bridge_mod is not None:
         try:
             bridge_mod.register()
         except Exception as exc:
-            print("STEPper NEXT: bridge registration failed:", exc)
+            print("CADder: bridge registration failed:", exc)
 
 
 def unregister():
@@ -4706,12 +4709,12 @@ def unregister():
         try:
             bridge_mod.unregister()
         except Exception as exc:
-            print("STEPper NEXT: bridge unregistration failed:", exc)
+            print("CADder: bridge unregistration failed:", exc)
     if rig_mod is not None:
         try:
             rig_mod.unregister()
         except Exception as exc:
-            print("STEPper NEXT: rig unregistration failed:", exc)
+            print("CADder: rig unregistration failed:", exc)
     for c in classes[::-1]:
         bpy.utils.unregister_class(c)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)

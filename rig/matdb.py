@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The material database, applied to a direct send.
 
-STEPper NEXT keeps databases of authored materials: a .blend holding the
+CADder keeps databases of authored materials: a .blend holding the
 replacement materials and a map from the name a CAD import gave a material
 to the name of the material that should stand in its place. A STEP import
 applies the active database on the way in. A direct send now does the

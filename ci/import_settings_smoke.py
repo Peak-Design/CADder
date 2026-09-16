@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
 import bpy
 
-bpy.ops.preferences.addon_enable(module="STEPper_NEXT")
-from STEPper_NEXT import import_ui, main as m
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder import import_ui, main as m
 
 FAILS = []
 
@@ -196,7 +196,7 @@ print("\n== settings saved by an older version come back as the same map")
 # The UV Map dropdown holds what used to be three settings. A user who last
 # imported with 2.4 Unwrap, or with a 2.5 test build, must get the same
 # UV map on the next import, not a silent fall back to the default.
-from STEPper_NEXT import uv as uv_mod
+from CADder import uv as uv_mod
 OLD = (
     ({"uv_mode": "UNWRAP"}, "ANGLE_BASED"),
     ({"uv_mode": "UNWRAP", "uv_unwrap_method": "CONFORMAL"}, "CONFORMAL"),

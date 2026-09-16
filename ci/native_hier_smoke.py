@@ -21,9 +21,9 @@ from mathutils import Vector
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
 
-from STEPper_NEXT.rig import appearance, manifest as man_mod, native_import, swmesh  # noqa: E402
-from STEPper_NEXT import rig  # noqa: E402
-from STEPper_NEXT.rig import ui as rig_ui  # noqa: E402
+from CADder.rig import appearance, manifest as man_mod, native_import, swmesh  # noqa: E402
+from CADder import rig  # noqa: E402
+from CADder.rig import ui as rig_ui  # noqa: E402
 
 
 def _t(x, y, z):
@@ -32,7 +32,7 @@ def _t(x, y, z):
 
 MANIFEST = {
     "manifest_version": "1.0.0",
-    "generator": {"name": "Peak.SwToBlender", "version": "smoke"},
+    "generator": {"name": "Peak.Cadder", "version": "smoke"},
     "units": {"length": "meter", "angle": "radian"},
     "frame": {"handedness": "right", "up_axis": "Z",
               "transform_convention": "row_major_4x4_global"},

@@ -1,4 +1,4 @@
-"""CI smoke test for an assembled STEPper NEXT addon directory.
+"""CI smoke test for an assembled CADder addon directory.
 
 Usage: python ci/smoke_test.py <assembled_addon_dir>
 

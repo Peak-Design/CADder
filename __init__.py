@@ -21,7 +21,7 @@
 #   - Fixed tessellation race conditions and corrupt STEP handling
 #   - Added ShapeFix healing for shapes with corrupted/missing geometry
 #   - Fixed crash: validate face triangulations before native C++ extraction
-#   - Renamed to STEPper NEXT, auto-apply scale, skip empty objects (v2.1.3)
+#   - Renamed to CADder, auto-apply scale, skip empty objects (v2.1.3)
 #   - Material database system, multi-user scale fix (v2.2.0)
 #   - Migrated OCC bindings from pythonocc-core to OCP (cadquery-ocp-novtk
 #     7.9.3.1.1, pybind11). Native module reworked to a BinTools serialize
@@ -179,16 +179,16 @@
 #     The worker opened the warning popup, and Blender with no window
 #     crashes on that. The worker now sends the list to the session that
 #     started it, which shows the popup
-#   - New "STEPper NEXT: UV" sidebar panel. It makes the UV map of the
+#   - New "CADder: UV" sidebar panel. It makes the UV map of the
 #     selected parts again with the same settings as the import dialog, so
 #     one part can get a treatment its neighbor does not. It replaces the
 #     Box Project UVs button, which is now one mode of its dropdown
-#   - The STEPper NEXT sidebar tab now sits after Item, Tool and View. A
+#   - The CADder sidebar tab now sits after Item, Tool and View. A
 #     panel with no header registers in front of every panel that has one,
 #     whatever bl_order says, and that pulled the whole tab to the top
 
 #   - rig/ subpackage added (CAD Link): builds a constrained armature
-#     from the .rig.json manifest written by the Peak.SwToBlender SolidWorks
+#     from the .rig.json manifest written by the Peak.Cadder SolidWorks
 #     add-in (github.com/Peak-Design/SW-To-Blender holds the exporter and
 #     the manifest schema) and parents imported STEP geometry to the bones.
 #     Registered from main.register(), guarded so a rig fault never costs
@@ -207,7 +207,7 @@
 #     hinge_Rig) instead of a fixed SW_Rig, so rigs from several
 #     assemblies coexist. Rebuilds still replace the same assembly's rig
 #   - rig/: rig placement follows the geometry. The scene frame now
-#     carries translation too (STEPper imports land at the 3D cursor), and
+#     carries translation too (CADder imports land at the 3D cursor), and
 #     name-anchored frame estimation runs even without occurrence paths. With no frame at all the rig builds at the 3D cursor, never silently
 #     at the world origin
 #   - rig/: ball-joint swing cones are symmetric about the rest pose. The
@@ -228,12 +228,12 @@
 #     browse button. The bare path field stays editable)
 
 bl_info = {
-    "name": "STEPper NEXT",
+    "name": "CADder",
     "author": "ambi, Peak-Design",
     "description": "STEP OpenCASCADE import",
     "blender": (5, 1, 0),
     "version": (2, 5, 0),
-    "location": "3D View > Tools panel > STEPper NEXT",
+    "location": "3D View > Tools panel > CADder",
     "category": "Import",
 }
 

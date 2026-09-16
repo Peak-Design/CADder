@@ -1,7 +1,7 @@
-<h1 align="center">STEPper NEXT</h1>
+<h1 align="center">CADder</h1>
 
 <p align="center">
-  <strong>STEP, IGES and BREP import for Blender, on the OpenCASCADE kernel.</strong><br>
+  <strong>Bring CAD into Blender: import the files, link the CAD application, rig the assembly.</strong><br>
   <a href="../../releases/latest">Download</a> ·
   <a href="#install">Install</a> ·
   <a href="#features">Features</a> ·
@@ -11,10 +11,18 @@
 
 ---
 
-STEPper NEXT imports STEP (`.step` / `.stp`), IGES (`.iges` / `.igs`) and BREP
+CADder imports STEP (`.step` / `.stp`), IGES (`.iges` / `.igs`) and BREP
 (`.brep` / `.brp`) files directly into Blender using the OpenCASCADE (OCC)
 geometry kernel. The produced mesh is a triangulation of the underlying CAD
 surface with smooth normals computed from the analytic shape geometry.
+
+It also holds the Blender half of **CADder Bridge**, the live link to
+SolidWorks: one button in the CAD application sends the geometry, the
+appearances and a rig manifest straight into the scene, and the CAD Link
+tab builds an armature that moves the way the mates say it should.
+
+The addon was **STEPper NEXT** up to version 2.5.0. It was renamed because
+it had outgrown the one file format it was named after.
 
 Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 **Peak Design** (Oskaras Spalvys).
@@ -50,17 +58,17 @@ Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 
 ## Install
 
-STEPper NEXT ships as a Blender **extension** (since v2.3.0). The OpenCASCADE
+CADder ships as a Blender **extension** (since v2.3.0). The OpenCASCADE
 (OCP) bindings are bundled as a wheel that Blender installs automatically.
 
 1. Download the `.zip` for your platform from the [Releases](../../releases) page.
 2. Drag & drop the `.zip` into a Blender window (or use **Edit > Preferences > Get Extensions >** drop-down menu **> Install from Disk...**).
 3. Enable it under **Add-ons** if Blender does not enable it for you.
 
-The importer panel will appear in **3D View > Tools panel > STEPper NEXT**.
+The importer panel will appear in **3D View > Tools panel > CADder**.
 
 > **Upgrading from v2.2.x or older (legacy addon):** remove the old
-> "STEPper NEXT" entry from **Preferences > Add-ons** and restart Blender
+> "CADder" entry from **Preferences > Add-ons** and restart Blender
 > before installing the extension.
 
 To remove or update: remove the extension from **Preferences > Get Extensions >
@@ -92,7 +100,7 @@ The material database lets you define mappings from the material names a CAD imp
 
 1. Import a STEP file normally. Objects load with generic STEP materials.
 2. Assign the Blender materials you want to each part (e.g., replace "GRAY" with "Stainless Steel" etc.).
-3. In the **STEPper NEXT: Material DB** sidebar panel, click **New** to create a database. The addon scans the scene and records what each original STEP material was replaced with.
+3. In the **CADder: Material DB** sidebar panel, click **New** to create a database. The addon scans the scene and records what each original STEP material was replaced with.
 4. Manually assign/tweak material mappings in the mapping table if required.
 5. The database is saved as a `.blend` file in the addon's `MaterialDB/` folder.
 
@@ -107,7 +115,7 @@ add-in and builds a rig from it. Today one add-in speaks it:
 [SW To Blender](https://github.com/Peak-Design/SW-To-Blender) for
 SolidWorks. The tab is off by default.
 
-1. Open **Edit > Preferences > Add-ons > STEPper NEXT**.
+1. Open **Edit > Preferences > Add-ons > CADder**.
 2. Tick **CAD Link (experimental)**. The addon starts a listener on
    127.0.0.1 and shows the port.
 3. In the 3D View sidebar (N), open the **CAD Link** tab.
@@ -306,7 +314,7 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 > The other UV modes and packing add a lot of time on a large model. For
 > example, Smart adds about 35% and packing each part on its own adds about
 > 86%. Use them on single parts: select the parts, then click **Apply UVs
-> to Selected** in the **STEPper NEXT: UV** panel.
+> to Selected** in the **CADder: UV** panel.
 
 The three unwrap modes are slower on large assemblies. Measured on a 182
 part assembly, by share of surface area stretched more than twice as far one
@@ -490,7 +498,7 @@ the face count from 540,000 to 285,000.
 
 ### The UV panel
 
-The **STEPper NEXT: UV** panel in the sidebar makes the UV map of the
+The **CADder: UV** panel in the sidebar makes the UV map of the
 selected parts again. It holds the same settings as the import dialog, so
 one part can get a treatment its neighbor does not. A bent bracket can be
 one flat pattern while the machined block beside it stays face by face.
@@ -511,7 +519,7 @@ made.
 
 ## Staying Up To Date
 
-You install STEPper NEXT from a zip and not from extensions.blender.org, because it ships precompiled binaries. Blender therefore does not update it for you. The addon asks GitHub once a day whether a newer release exists. If there is one, it shows a notice at the top of the **STEPper NEXT** sidebar tab. The notice has a download link for your platform. Install the downloaded zip the same way as the first time, and Blender replaces the old version.
+You install CADder from a zip and not from extensions.blender.org, because it ships precompiled binaries. Blender therefore does not update it for you. The addon asks GitHub once a day whether a newer release exists. If there is one, it shows a notice at the top of the **CADder** sidebar tab. The notice has a download link for your platform. Install the downloaded zip the same way as the first time, and Blender replaces the old version.
 
 The check sends no information about you or your files, and runs on a background thread so it never delays startup. Turn it off with **Check for updates** in the addon preferences.
 
@@ -530,7 +538,7 @@ The check sends no information about you or your files, and runs on a background
 | 2.4.0   | 5.1     | Quality presets with unit-aware deflection (physical mm in any unit system), collection-instances hierarchy mode, construction-geometry filters, per-instance color overrides, modern import dialog |
 | 2.3.0   | 5.1     | Migrated OpenCASCADE bindings from pythonocc-core to OCP (cadquery-ocp-novtk 7.9.3.1.1). Converted to Blender extension format with per-platform OCP wheels. Added macOS Intel support. Native mesh extraction reworked to a serialize handoff |
 | 2.2.0   | 5.1     | Material database system for automatic material replacement, fixed apply-scale on instanced/multi-user meshes |
-| 2.1.3   | 5.1     | Renamed to STEPper NEXT, auto-apply scale, skip empty objects, preferences now persist across sessions |
+| 2.1.3   | 5.1     | Renamed to CADder, auto-apply scale, skip empty objects, preferences now persist across sessions |
 | 2.1.x   | 5.1     | Multithreaded normal computation, performance optimizations, crash fixes for corrupt STEP files |
 | 2.1.0   | 5.1     | Updated to pythonocc-core 7.9.3 / Python 3.13, native C++ mesh extraction |
 | 2.0.0   | 5.0     | Ported to Blender 5.0 API, added import diagnostics and failed parts reporting |

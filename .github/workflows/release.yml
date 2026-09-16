@@ -72,7 +72,7 @@ jobs:
 
       - name: Assemble extension
         run: |
-          ADDON_DIR="STEPper_NEXT"
+          ADDON_DIR="CADder"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
           for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
@@ -97,20 +97,20 @@ jobs:
         run: |
           # Make OCP importable for the test by extracting the bundled wheel
           # (Blender does this via the manifest at install time)
-          cd STEPper_NEXT && 7z x -y wheels/*.whl -otest_site >/dev/null && cd ..
-          PYTHONPATH="$PWD/STEPper_NEXT/test_site" python ci/smoke_test.py STEPper_NEXT
-          rm -rf STEPper_NEXT/test_site
+          cd CADder && 7z x -y wheels/*.whl -otest_site >/dev/null && cd ..
+          PYTHONPATH="$PWD/CADder/test_site" python ci/smoke_test.py CADder
+          rm -rf CADder/test_site
 
       - name: Create zip
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('blender_manifest.toml','rb'))['version'])")
-          cd STEPper_NEXT && 7z a "../stepper_next-${VERSION}-windows_x64.zip" . && cd ..
+          cd CADder && 7z a "../cadder-${VERSION}-windows_x64.zip" . && cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: stepper_next-*-windows_x64.zip
+          path: cadder-*-windows_x64.zip
 
   # ════════════════════════════════════════════════════════════════════
   # macOS (macos-arm64 native build + macos-x64 cross-compile)
@@ -171,7 +171,7 @@ jobs:
         run: |
           assemble() {
             local plat="$1" wheel_tag="$2" build_dir="$3" occt_prefix="$4"
-            local dir="STEPper_NEXT-$plat"
+            local dir="CADder-$plat"
             mkdir -p "$dir/wheels" "$dir/native_libs"
 
             for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
@@ -233,31 +233,31 @@ jobs:
             fix_deps "$dir/stepper_native.so" "@loader_path/native_libs/"
             codesign --force --sign - "$dir/stepper_native.so" 2>/dev/null || true
           }
-          fix_tree STEPper_NEXT-macos-arm64
-          fix_tree STEPper_NEXT-macos-x64
+          fix_tree CADder-macos-arm64
+          fix_tree CADder-macos-x64
 
       - name: Smoke test (arm64 only, x64 module can't load in arm python)
         run: |
-          cd STEPper_NEXT-macos-arm64 && unzip -q wheels/*.whl -d test_site && cd ..
-          PYTHONPATH="$PWD/STEPper_NEXT-macos-arm64/test_site" python ci/smoke_test.py STEPper_NEXT-macos-arm64
-          rm -rf STEPper_NEXT-macos-arm64/test_site
+          cd CADder-macos-arm64 && unzip -q wheels/*.whl -d test_site && cd ..
+          PYTHONPATH="$PWD/CADder-macos-arm64/test_site" python ci/smoke_test.py CADder-macos-arm64
+          rm -rf CADder-macos-arm64/test_site
           # x64: structural check only
-          lipo -archs STEPper_NEXT-macos-x64/stepper_native.so | grep -q x86_64
-          for lib in STEPper_NEXT-macos-x64/native_libs/libTKernel.*.dylib; do
+          lipo -archs CADder-macos-x64/stepper_native.so | grep -q x86_64
+          for lib in CADder-macos-x64/native_libs/libTKernel.*.dylib; do
             lipo -archs "$lib" | grep -q x86_64
           done
 
       - name: Create zips
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('blender_manifest.toml','rb'))['version'])")
-          (cd STEPper_NEXT-macos-arm64 && zip -qr "../stepper_next-${VERSION}-macos_arm64.zip" .)
-          (cd STEPper_NEXT-macos-x64 && zip -qr "../stepper_next-${VERSION}-macos_x64.zip" .)
+          (cd CADder-macos-arm64 && zip -qr "../cadder-${VERSION}-macos_arm64.zip" .)
+          (cd CADder-macos-x64 && zip -qr "../cadder-${VERSION}-macos_x64.zip" .)
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-builds
-          path: stepper_next-*-macos_*.zip
+          path: cadder-*-macos_*.zip
 
   # ════════════════════════════════════════════════════════════════════
   # Linux (linux-x64)
@@ -304,7 +304,7 @@ jobs:
 
       - name: Assemble extension
         run: |
-          ADDON_DIR="STEPper_NEXT"
+          ADDON_DIR="CADder"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
           for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
@@ -342,29 +342,29 @@ jobs:
 
       - name: Fix rpaths (native module only)
         run: |
-          for so in STEPper_NEXT/native_libs/*.so*; do
+          for so in CADder/native_libs/*.so*; do
             [ -f "$so" ] || continue
             if [ -L "$so" ]; then continue; fi
             patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
           done
-          patchelf --set-rpath '$ORIGIN/native_libs' STEPper_NEXT/stepper_native.so
+          patchelf --set-rpath '$ORIGIN/native_libs' CADder/stepper_native.so
 
       - name: Smoke test
         run: |
-          cd STEPper_NEXT && unzip -q wheels/*.whl -d test_site && cd ..
-          PYTHONPATH="$PWD/STEPper_NEXT/test_site" python ci/smoke_test.py STEPper_NEXT
-          rm -rf STEPper_NEXT/test_site
+          cd CADder && unzip -q wheels/*.whl -d test_site && cd ..
+          PYTHONPATH="$PWD/CADder/test_site" python ci/smoke_test.py CADder
+          rm -rf CADder/test_site
 
       - name: Create zip
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('blender_manifest.toml','rb'))['version'])")
-          (cd STEPper_NEXT && zip -qr "../stepper_next-${VERSION}-linux_x64.zip" .)
+          (cd CADder && zip -qr "../cadder-${VERSION}-linux_x64.zip" .)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: stepper_next-*-linux_x64.zip
+          path: cadder-*-linux_x64.zip
 
   # ════════════════════════════════════════════════════════════════════
   # Create GitHub Release (runs after all builds complete)
@@ -388,19 +388,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
-          name: STEPper NEXT ${{ github.event.inputs.version || github.ref_name }}
+          name: CADder ${{ github.event.inputs.version || github.ref_name }}
           body: |
-            ## STEPper NEXT ${{ github.event.inputs.version || github.ref_name }}
+            ## CADder ${{ github.event.inputs.version || github.ref_name }}
 
             Blender **extension** packages (Blender 5.1+, Python 3.13). The
             OpenCASCADE (OCP) bindings ship as a bundled wheel that Blender
             installs automatically.
 
             ### Downloads
-            - **Windows (64-bit):** `stepper_next-*-windows_x64.zip`
-            - **macOS Apple Silicon:** `stepper_next-*-macos_arm64.zip`
-            - **macOS Intel:** `stepper_next-*-macos_x64.zip`
-            - **Linux (64-bit):** `stepper_next-*-linux_x64.zip`
+            - **Windows (64-bit):** `cadder-*-windows_x64.zip`
+            - **macOS Apple Silicon:** `cadder-*-macos_arm64.zip`
+            - **macOS Intel:** `cadder-*-macos_x64.zip`
+            - **Linux (64-bit):** `cadder-*-linux_x64.zip`
 
             ### Installation
             1. Download the `.zip` for your platform
@@ -408,7 +408,7 @@ jobs:
             3. Enable it under **Add-ons** if not enabled automatically
 
             If upgrading from a pre-2.3 legacy addon install, remove the old
-            "STEPper NEXT" addon first (Preferences > Add-ons).
+            "CADder" addon first (Preferences > Add-ons).
 
             ---
             *Built automatically by GitHub Actions*

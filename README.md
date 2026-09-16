@@ -134,7 +134,7 @@ Select a database from the dropdown in the STEP import dialog under **Material D
 
 CAD Link is the sidebar tab that receives a model straight from a CAD
 add-in and builds a rig from it. Today one add-in speaks it:
-[SW To Blender](https://github.com/Peak-Design/SW-To-Blender) for
+[CADder Bridge](https://github.com/Peak-Design/CADder-SW-Bridge) for
 SolidWorks. The tab is off by default.
 
 1. Open **Edit > Preferences > Add-ons > CADder**.

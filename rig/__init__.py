@@ -2,7 +2,7 @@
 """CAD Link rig subpackage: builds a constrained armature from the
 .rig.json manifest written by a CAD add-in (today: Peak.Cadder for
 SolidWorks)
-(schema and semantics live in the SW-To-Blender repo, schema/SCHEMA.md).
+(schema and semantics live in the CADder Bridge repo, schema/SCHEMA.md).
 
 Registered from CADder's main.register(), guarded there so a rig
 failure never costs STEP import. Importable without Blender: manifest.py

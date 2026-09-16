@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Headless smoke for the two joints that carry their own geometry: path
-(SW-To-Blender corpus 17) and surface. Both work the same way: the manifest's
+(CADder Bridge corpus 17) and surface. Both work the same way: the manifest's
 shape becomes a hidden mesh parented to the parent bone, the child bone
 carries a nearest-surface Shrinkwrap targeting it, a dragged bone lands ON
 that shape, and, in the regression that cost a live round (2026-08-23), a

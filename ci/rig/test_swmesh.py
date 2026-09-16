@@ -24,7 +24,7 @@ from CADder.rig import swmesh  # noqa: E402
 # Written by the C# test suite into its own source tree. See the module
 # docstring for why the two halves have to meet on a real file.
 GOLDEN = os.path.join(
-    "C:", os.sep, "PeakDesign", "SW-To-Blender", "sw-addin", "tests",
+    "C:", os.sep, "PeakDesign", "CADder-SW-Bridge", "sw-addin", "tests",
     "Peak.Cadder.Tests", "golden", "sample.swmesh")
 
 

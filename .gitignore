@@ -7,3 +7,9 @@ __pycache__/
 /OCP/
 /cadquery_ocp_novtk.libs/
 /OCP_licenses/
+
+# Heavy working files: CAD files, test scenes, renders, recordings.
+# Ignored on purpose, and assets/README.md says what belongs there and
+# what does not.
+/assets/*
+!/assets/README.md

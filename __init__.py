@@ -189,7 +189,7 @@
 
 #   - rig/ subpackage added (CAD Link): builds a constrained armature
 #     from the .rig.json manifest written by the Peak.Cadder SolidWorks
-#     add-in (github.com/Peak-Design/SW-To-Blender holds the exporter and
+#     add-in (github.com/Peak-Design/CADder-SW-Bridge holds the exporter and
 #     the manifest schema) and parents imported STEP geometry to the bones.
 #     Registered from main.register(), guarded so a rig fault never costs
 #     STEP import. Panel in the 3D View sidebar under "CAD Link".

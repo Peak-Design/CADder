@@ -904,7 +904,7 @@ if bpy is not None:
                     row.label(text="Listening on port %d" % bridge.port(),
                               icon="PLUGIN")
                 else:
-                    row.label(text="Not Listening", icon="UNLINKED")
+                    row.label(text="Not listening", icon="UNLINKED")
             except Exception:
                 pass
 

@@ -4361,7 +4361,7 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
                     row.label(text=repr(v))
             else:
                 row = col.row()
-                row.label(text="No Skipped Shapes")
+                row.label(text="No skipped shapes")
 
         else:
             bxp = layout.box()

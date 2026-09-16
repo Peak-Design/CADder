@@ -9,8 +9,8 @@ What it looks for:
 
   * A label that is not in title case, or that is padded with "Use",
     "Enable", "Activate" or "Is".
-  * A label that ends with a colon. A heading needs no colon, and a
-    heading row is usually better as a sub-panel.
+  * A heading row that ends with a colon. A heading needs no colon, and
+    a heading row is usually better as a sub-panel.
   * A tooltip that ends with a period, opens with "Enables" or
     "Whether", holds a pronoun, an abbreviation or a contraction.
   * A sentence in the interface that holds a pronoun, a contraction or
@@ -86,9 +86,14 @@ def title_problems(text):
 
 
 def is_heading(text):
-    """A short label with no sentence punctuation is a heading, and a
-    heading takes title case. A whole sentence does not."""
-    return len(text.split()) <= 4 and not text.endswith(".")
+    """True for a label that heads a group of widgets.
+
+    The title case rule covers labels: a panel, a button, a property, a
+    menu entry. Text drawn into a panel to say what is going on is a
+    message, and Blender writes those in sentence case ("No active
+    object"). A heading ends with a colon here only because that is the
+    habit this check exists to break."""
+    return text.endswith(":")
 
 
 def sentence_problems(text):

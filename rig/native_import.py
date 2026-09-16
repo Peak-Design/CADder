@@ -27,7 +27,7 @@ import os
 import bpy
 from mathutils import Matrix
 
-from . import appearance, matdb, matching, swmesh
+from . import appearance, matdb, matching, progress, swmesh
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -348,7 +348,7 @@ def _object_colour(obj):
 
 def build(context, path, manifest=None, collection_name=None,
           unit_scale=1.0, material_prefix="SW ", up_as="ZPOS",
-          hierarchy="FLAT", group_in_collection=False):
+          hierarchy="FLAT", group_in_collection=False, report_to=None):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
     The report is what ties this into the existing pipeline: every entry is
@@ -444,7 +444,14 @@ def build(context, path, manifest=None, collection_name=None,
     flat_groups = {}
     report = matching.MatchReport()
     report.frame_rows = frame_rows
+    # Placing the instances is the long part of a large send, so it is the
+    # part that counts itself out.
+    said = report_to or progress.NONE
+    said.stage("placing the parts", 20, 85, len(scene.instances))
+    placed = 0
     for inst in scene.instances:
+        placed += 1
+        said.step(placed)
         me = meshes.get(inst.definition_id)
         if me is None:
             report.unmatched.append(inst.component_id)

@@ -423,7 +423,7 @@ def _leave_object_modes():
 
 
 def _run_job(payload: dict) -> dict:
-    from .rig import matching, ui as rig_ui
+    from .rig import progress as rig_progress
 
     stages = {}
     log = []
@@ -439,14 +439,34 @@ def _run_job(payload: dict) -> dict:
     if have_manifest and not os.path.isfile(manifest_path):
         return {"ok": False, "error": "manifest not found: %s" % manifest_path}
 
+    # What the job is doing, in the status bar. A send of a large
+    # assembly is minutes of work inside one call, and Blender draws
+    # nothing meanwhile. The stage names match the ones the add-in shows
+    # in SolidWorks.
+    said = rig_progress.JobProgress(bpy.context)
+    try:
+        return _run_stages(payload, stages, log, manifest_path, step_path,
+                           mesh_path, want, have_manifest, said)
+    finally:
+        said.close()
+
+
+def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
+                want, have_manifest, said):
+    """The stages themselves. Split out so the reporter closes whatever
+    ends the job."""
+    from .rig import matching, ui as rig_ui
+
     with _ops_context():
         scene = bpy.context.scene
 
+        said.stage("preparing the scene", 0, 5)
         left = _leave_object_modes()
         if left:
             log.append("left non-object mode on: %s" % ", ".join(left))
 
         if have_manifest:
+            said.stage("reading the manifest", 5, 10)
             scene.cad_link.manifest_path = manifest_path
             if "FINISHED" not in bpy.ops.cadlink.load_manifest():
                 return {"ok": False,
@@ -476,6 +496,7 @@ def _run_job(payload: dict) -> dict:
             if want("replace"):
                 # A STEP import of the same assembly goes too, or the scene
                 # holds every part twice.
+                said.stage("replacing the last import", 10, 20)
                 _remove_previous_import(mesh_path, stages, by_stem=True)
             try:
                 opts = payload.get("import_options") or {}
@@ -485,7 +506,8 @@ def _run_job(payload: dict) -> dict:
                     manifest=rig_ui._STATE.get("manifest"),
                     up_as=opts.get("up_as") or "ZPOS",
                     hierarchy=opts.get("hierarchy_types") or "FLAT",
-                    group_in_collection=bool(opts.get("group_in_collection")))
+                    group_in_collection=bool(opts.get("group_in_collection")),
+                    report_to=said)
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
@@ -503,7 +525,9 @@ def _run_job(payload: dict) -> dict:
                 return {"ok": False, "error": "STEP file not found: %s" % step_path,
                         "stages": stages}
             if want("replace"):
+                said.stage("replacing the last import", 10, 20)
                 _remove_previous_import(step_path, stages)
+            said.stage("importing the STEP file", 20, 80)
             opts = payload.get("import_options") or {}
             kwargs = {k: v for k, v in opts.items() if k in _IMPORT_OPTION_KEYS}
             ignored = sorted(set(opts) - set(kwargs))
@@ -525,6 +549,7 @@ def _run_job(payload: dict) -> dict:
             bpy.context.view_layer.update()
 
         if have_manifest and not mesh_path and want("match"):
+            said.stage("matching the parts to the manifest", 80, 85)
             if "FINISHED" not in bpy.ops.cadlink.match_geometry():
                 return {"ok": False, "error": "matching failed", "stages": stages}
             rep = rig_ui._STATE["match_report"]
@@ -540,6 +565,7 @@ def _run_job(payload: dict) -> dict:
         # stage below runs only when its precondition actually holds.
         if have_manifest and want("sync_poses") \
                 and rig_ui._STATE.get("match_report") is not None:
+            said.stage("syncing the poses", 85, 88)
             if "FINISHED" in bpy.ops.cadlink.sync_poses():
                 rep = rig_ui._STATE["pose_report"]
                 if rep is not None:
@@ -552,6 +578,7 @@ def _run_job(payload: dict) -> dict:
                     }
 
         if have_manifest and want("build_rig"):
+            said.stage("building the rig", 88, 96)
             if "FINISHED" not in bpy.ops.cadlink.build_rig():
                 return {"ok": False,
                         "error": rig_ui._STATE["error"] or "rig build failed",
@@ -563,6 +590,7 @@ def _run_job(payload: dict) -> dict:
                 "warnings": list(build.warnings),
             }
 
+        said.stage("attaching the parts to the rig", 96, 100)
         if have_manifest and want("relink") \
                 and bpy.ops.cadlink.relink_geometry.poll():
             if "FINISHED" in bpy.ops.cadlink.relink_geometry():

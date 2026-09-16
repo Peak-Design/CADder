@@ -658,7 +658,7 @@ if bpy is not None:
             return bool(_linked_objects())
 
         def execute(self, context):
-            from . import native_import, cad_link
+            from . import native_import, cad_link, progress
             ids = []
             for obj in _scope_objects(context, self.scope):
                 cid = obj.get("RIG_component_id")
@@ -673,8 +673,13 @@ if bpy is not None:
                 if pid and pid not in persistent:
                     persistent.append(pid)
             changed, moved = [], 0
+            # The CAD application takes seconds to minutes to answer, and
+            # Blender holds still meanwhile, so the status bar says which
+            # part of the update is running.
+            said = progress.JobProgress(context, title="Update from CAD")
             try:
                 if self.what == "EVERYTHING":
+                    said.stage("asking the CAD application for the assembly", 0, 90)
                     stages = _resend_everything(context)
                     if stages.get("error"):
                         self.report({"ERROR"}, stages["error"])
@@ -684,7 +689,9 @@ if bpy is not None:
                                 .format(stages.get("objects", 0), stages.get("rig", "no rig")))
                     return {"FINISHED"}
                 if self.what != "POSES":
+                    said.stage("asking the CAD application for the geometry", 0, 60)
                     reply = cad_link.retessellate(ids, self.quality, persistent_ids=persistent)
+                    said.stage("replacing the geometry", 60, 90, len(ids))
                     changed = native_import.refine(context, reply["mesh"])
                     if not changed:
                         self.report({"WARNING"},
@@ -692,6 +699,7 @@ if bpy is not None:
                                     "are not in this scene")
                         return {"CANCELLED"}
                 if self.what != "GEOMETRY":
+                    said.stage("moving the parts to where the CAD has them", 90, 100)
                     moved = _apply_poses(
                         context, cad_link.poses(ids, persistent_ids=persistent))
             except cad_link.CadLinkError as exc:
@@ -701,6 +709,8 @@ if bpy is not None:
             except (OSError, ValueError) as exc:
                 self.report({"ERROR"}, "Could not read what the CAD application sent: %s" % exc)
                 return {"CANCELLED"}
+            finally:
+                said.close()
             if self.what == "POSES":
                 self.report({"INFO"}, "Moved {} part(s) onto the CAD poses".format(moved))
             elif self.what == "GEOMETRY":

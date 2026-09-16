@@ -17,7 +17,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))))
+    os.path.dirname(os.path.abspath(__file__))))))
 
 from CADder.rig import swmesh  # noqa: E402
 
@@ -37,6 +37,7 @@ def test_reads_the_scene_the_addin_wrote():
     assert len(scene.materials) == 2
     assert len(scene.definitions) == 1
     assert len(scene.instances) == 1
+    assert len(scene.nodes) == 1
 
     grey, red = scene.materials
     assert grey.name == "grey"
@@ -67,11 +68,23 @@ def test_reads_the_scene_the_addin_wrote():
     inst = scene.instances[0]
     assert inst.definition_id == 3
     assert inst.component_id == "c007"
-    assert inst.name == "bracket-1"
+    assert inst.name == "bracket"
+    # Version 3: the occurrence path, which is what the tree is built from,
+    # and the part's own place inside its component.
+    assert inst.path == "lifter-2/bracket-1"
+    assert [inst.local[i] for i in (3, 7, 11)] == pytest.approx([0.25, 1.0, 1.75])
     # Row-major: the translation is the fourth COLUMN, so elements 3, 7, 11.
     assert [inst.transform[i] for i in (3, 7, 11)] == pytest.approx([0.5, 1.5, 2.5])
     assert scene.definition(3) is d
     assert scene.definition(99) is None
+
+    # The branch the part hangs under. It carries the DOCUMENT name, not
+    # the occurrence name, because that is what the STEP route calls it.
+    node = scene.nodes[0]
+    assert node.path == "lifter-2"
+    assert node.name == "lifter"
+    assert node.component_id == "c007"
+    assert [node.transform[i] for i in (3, 7, 11)] == pytest.approx([0.25, 0.5, 0.75])
 
 
 def test_rejects_a_file_that_is_not_swmesh():
@@ -90,15 +103,15 @@ def test_rejects_a_truncated_file():
     # A plausible header promising far more than the file holds: the reader
     # must refuse rather than build half a scene, because the missing half
     # is invisible once it is in the viewport.
-    header = struct.pack("<IIIdIII", swmesh.MAGIC, swmesh.VERSION, 0,
-                         0.001, 0, 1, 0)
+    header = struct.pack("<IIIdIIII", swmesh.MAGIC, swmesh.VERSION, 0,
+                         0.001, 0, 1, 0, 0)
     with pytest.raises(swmesh.SwMeshError):
         swmesh.parse(header + b"\x00" * 8)
 
 
 def test_rejects_triangles_that_index_missing_vertices():
-    body = struct.pack("<IIIdIII", swmesh.MAGIC, swmesh.VERSION, 0,
-                       0.001, 0, 1, 0)
+    body = struct.pack("<IIIdIIII", swmesh.MAGIC, swmesh.VERSION, 0,
+                       0.001, 0, 1, 0, 0)
     body += struct.pack("<i", 0)                 # definition id
     body += struct.pack("<H", 0)                 # empty name
     body += struct.pack("<II", 3, 1)             # 3 vertices, 1 triangle
@@ -108,6 +121,24 @@ def test_rejects_triangles_that_index_missing_vertices():
     with pytest.raises(swmesh.SwMeshError) as excinfo:
         swmesh.parse(body)
     assert "indexes a vertex" in str(excinfo.value)
+
+
+def test_still_reads_version_2():
+    """A file from an add-in built before the assembly tree travelled: the
+    instance record ends at its transform, and there is no node table."""
+    body = struct.pack("<IIIdIII", swmesh.MAGIC, 2, 0, 0.001, 0, 0, 1)
+    body += struct.pack("<i", 0)                 # definition id
+    body += struct.pack("<H", 4) + b"c001"       # component id
+    body += struct.pack("<H", 3) + b"rod"        # name
+    body += struct.pack("<16d", *([1, 0, 0, 0,
+                                   0, 1, 0, 0,
+                                   0, 0, 1, 0,
+                                   0, 0, 0, 1]))
+    scene = swmesh.parse(body)
+    assert scene.instances[0].name == "rod"
+    assert scene.instances[0].path == ""
+    assert scene.instances[0].local is None
+    assert scene.nodes == []
 
 
 def test_still_reads_version_1():

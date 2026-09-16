@@ -15,12 +15,23 @@ in the first place.
               2) the SolidWorks appearance as JSON, uint32-length-prefixed
   definitions id, name, counts, positions, normals?, uvs?, triangles,
               one material index per triangle
-  instances   definition id, component id, name, 4x4 row-major transform
+  instances   definition id, component id, name, path (version 3), 4x4
+              row-major transform, and (version 3) one byte that says
+              whether a second 4x4 follows: where the placement sits
+              inside its component
+  nodes       (version 3) path, name, component id, 4x4 row-major transform
 
 A definition is a part tessellated once. An instance is one placement of
 it. The component id is the same one the rig manifest uses, that is what
 ties the two files together, and why nothing here has to be matched up by
 name or position afterwards.
+
+A node is a subassembly occurrence: a branch of the tree that holds
+instances rather than geometry. The path is the occurrence path from the
+root ("lifter-1/rod-2"), which says what hangs under what. Several
+instances share one component id where a rigid subassembly holds several
+parts: the rig moves the subassembly as one body, and the tree still shows
+the parts.
 """
 
 import array
@@ -30,8 +41,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 MAGIC = 0x484D5753          # 'SWMH'
-VERSION = 2
-READABLE_VERSIONS = (1, 2)
+VERSION = 3
+READABLE_VERSIONS = (1, 2, 3)
 FLAG_NORMALS = 1
 FLAG_UVS = 2
 
@@ -73,6 +84,23 @@ class Instance:
     component_id: str
     name: str
     transform: List[float] = field(default_factory=list)   # 16, row-major
+    # The occurrence path from the root, version 3 and later. Empty in an
+    # older file, where the assembly tree could only be read from the rig
+    # manifest.
+    path: str = ""
+    # Where this placement sits inside its component, 16 numbers. None for
+    # a part that IS its component, which is every part outside a rigid
+    # subassembly.
+    local: Optional[List[float]] = None
+
+
+@dataclass
+class Node:
+    """One subassembly occurrence: a branch of the assembly tree."""
+    path: str
+    name: str
+    component_id: str = ""
+    transform: List[float] = field(default_factory=list)   # 16, row-major
 
 
 @dataclass
@@ -81,6 +109,7 @@ class Scene:
     materials: List[Material] = field(default_factory=list)
     definitions: List[Definition] = field(default_factory=list)
     instances: List[Instance] = field(default_factory=list)
+    nodes: List[Node] = field(default_factory=list)
 
     def definition(self, def_id):
         for d in self.definitions:
@@ -102,6 +131,9 @@ class _Reader:
         chunk = self._data[self._at:end]
         self._at = end
         return chunk
+
+    def u8(self):
+        return self._take(1)[0]
 
     def u16(self):
         return struct.unpack_from("<H", self._take(2))[0]
@@ -151,6 +183,7 @@ def parse(data) -> Scene:
     material_count = r.u32()
     definition_count = r.u32()
     instance_count = r.u32()
+    node_count = r.u32() if version >= 3 else 0
     has_normals = bool(flags & FLAG_NORMALS)
     has_uvs = bool(flags & FLAG_UVS)
 
@@ -185,10 +218,27 @@ def parse(data) -> Scene:
             triangle_materials=triangle_materials))
 
     for _ in range(instance_count):
+        definition_id = r.i32()
+        component_id = r.text()
+        name = r.text()
+        path = r.text() if version >= 3 else ""
+        transform = [r.f64() for _ in range(16)]
+        local = None
+        if version >= 3 and r.u8():
+            local = [r.f64() for _ in range(16)]
         scene.instances.append(Instance(
-            definition_id=r.i32(),
-            component_id=r.text(),
+            definition_id=definition_id,
+            component_id=component_id,
+            name=name,
+            transform=transform,
+            path=path,
+            local=local))
+
+    for _ in range(node_count):
+        scene.nodes.append(Node(
+            path=r.text(),
             name=r.text(),
+            component_id=r.text(),
             transform=[r.f64() for _ in range(16)]))
 
     return scene

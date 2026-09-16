@@ -42,6 +42,13 @@ _TAG_DEFINITION = "SWMESH_definition"
 # same occurrence after the assembly has been edited.
 _TAG_PERSISTENT = "SWMESH_persistent_id"
 _TAG_TOLERANCE = "SWMESH_tolerance_m"
+# The occurrence path from the root of the assembly ("lifter-1/rod-2"):
+# unique, and the same on the next send, so it identifies one placement
+# where the component id cannot (a rigid subassembly is one component and
+# many parts).
+_TAG_PATH = "SWMESH_path"
+# This placement inside its component's frame, 16 floats, row-major.
+_TAG_LOCAL = "SWMESH_local"
 
 
 def _material(spec, name_prefix, unit_scale=1.0):
@@ -331,6 +338,46 @@ def _paths(manifest):
     return by_id, by_path
 
 
+class _Branch(object):
+    """One node of the assembly tree: what to call it and where it sits."""
+
+    def __init__(self, name, transform=None):
+        self.name = name
+        self.transform = transform
+
+
+def _branches(scene, by_path, unit_scale):
+    """path -> _Branch for every subassembly the file names.
+
+    The geometry file carries the tree from version 3 on, which is what
+    lets a send with no rig build a hierarchy at all. An older file has
+    only the manifest, and the manifest only knows the occurrences the
+    walk visited, so a part inside a rigid subassembly is not in it."""
+    out = {}
+    for node in getattr(scene, "nodes", []):
+        if not node.path:
+            continue
+        out[node.path] = _Branch(
+            node.name or node.path.rpartition("/")[2],
+            _matrix(node.transform, unit_scale) if node.transform else None)
+    for path, comp in by_path.items():
+        if path in out:
+            continue
+        rows = [v for row in comp.transform for v in row] if comp.transform else None
+        out[path] = _Branch(path.rpartition("/")[2],
+                            _matrix(rows, unit_scale) if rows else None)
+    return out
+
+
+def _instance_path(inst, by_id):
+    """Where this placement hangs in the assembly tree.
+
+    The file says so from version 3. Before that the manifest had to, and
+    a component the walk never visited fell back to its own name, which is
+    a leaf at the top: flat, but never wrong."""
+    return inst.path or by_id.get(inst.component_id) or inst.name or inst.component_id
+
+
 def _object_colour(obj):
     """The viewport colour, so a Solid view set to Object colour matches
     the CAD, as the STEP importer does."""
@@ -412,14 +459,25 @@ def build(context, path, manifest=None, collection_name=None,
         _exclude(context, components)
 
     # Subassembly nodes for the tree modes: every path prefix above a part.
+    # A node is named after the DOCUMENT it references, as the STEP route
+    # names its products, and not after the occurrence ("lifter", not
+    # "lifter-2"): the tree then reads the same whichever route brought it.
+    branches = _branches(scene, by_path, unit_scale)
     tree_cols = {"": root}
     empties = {}
+
+    def branch_name(sw_path):
+        branch = branches.get(sw_path)
+        if branch is not None and branch.name:
+            return branch.name
+        return sw_path.rpartition("/")[2]
 
     def node_col(sw_path):
         if sw_path in tree_cols:
             return tree_cols[sw_path]
         parent_path = sw_path.rpartition("/")[0]
-        col = _collection(sw_path.rpartition("/")[2], stem, "node", node_col(parent_path))
+        col = _collection(branch_name(sw_path), stem, "node", node_col(parent_path))
+        col["SWMESH_path"] = sw_path
         tree_cols[sw_path] = col
         return col
 
@@ -429,14 +487,17 @@ def build(context, path, manifest=None, collection_name=None,
         if sw_path in empties:
             return empties[sw_path]
         parent = node_empty(sw_path.rpartition("/")[0])
-        emp = bpy.data.objects.new(sw_path.rpartition("/")[2], None)
+        emp = bpy.data.objects.new(branch_name(sw_path), None)
         emp.empty_display_size = 2
         emp.empty_display_type = "PLAIN_AXES"
         emp[_TAG_FILE] = stem
+        emp[_TAG_PATH] = sw_path
         comp = by_path.get(sw_path)
         if comp is not None:
             emp[_TAG_COMPONENT] = comp.id
-            emp.matrix_world = frame @ _matrix([v for row in comp.transform for v in row], unit_scale)
+        branch = branches.get(sw_path)
+        if branch is not None and branch.transform is not None:
+            emp.matrix_world = frame @ branch.transform
         root.objects.link(emp)
         if parent is not None:
             emp.parent = parent
@@ -468,7 +529,8 @@ def build(context, path, manifest=None, collection_name=None,
             obj.empty_display_size = 0.01
         else:
             obj = bpy.data.objects.new(name, me)
-        obj.matrix_world = frame @ _matrix(inst.transform, unit_scale)
+        placement = _matrix(inst.transform, unit_scale)
+        obj.matrix_world = frame @ placement
         obj[_TAG_FILE] = stem
         obj[_TAG_COMPONENT] = inst.component_id
         gid = group_of.get(inst.component_id)
@@ -480,7 +542,17 @@ def build(context, path, manifest=None, collection_name=None,
         if persistent:
             obj[_TAG_PERSISTENT] = persistent
 
-        sw_path = by_id.get(inst.component_id, name)
+        sw_path = _instance_path(inst, by_id)
+        obj[_TAG_PATH] = sw_path
+        # Where this part sits INSIDE its component, as the file states it.
+        # A part that is its own component carries nothing; a part inside a
+        # rigid subassembly carries its place in it, because the
+        # subassembly is the component. Pose sync moves a component to
+        # where the CAD says it is now, and without this it would stack
+        # every part of a subassembly on that one point.
+        if inst.local:
+            obj[_TAG_LOCAL] = list(inst.local)
+
         parent_path = sw_path.rpartition("/")[0]
         if hierarchy == "FLAT":
             key = me.name
@@ -592,16 +664,25 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
 
     by_component = {}
+    by_path = {}
     for obj in bpy.data.objects:
         cid = obj.get(_TAG_COMPONENT)
         if cid:
             by_component.setdefault(cid, []).append(obj)
+        path = obj.get(_TAG_PATH)
+        if path:
+            by_path.setdefault(path, []).append(obj)
 
     meshes = {}
     replaced = []
     retired = set()
     for inst in scene.instances:
-        targets = by_component.get(inst.component_id)
+        # By PATH first: a rigid subassembly is one component and several
+        # parts, and the component id alone would give every part of it the
+        # same mesh.
+        targets = by_path.get(inst.path) if inst.path else None
+        if not targets:
+            targets = by_component.get(inst.component_id)
         if not targets:
             continue
         me = meshes.get(inst.definition_id)

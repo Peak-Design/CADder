@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .manifest import Manifest
-from .matching import (MatchReport, _component_rows_units, _frame_agrees,
+from .matching import (MatchReport, _frame_agrees,
                        _matrix_rows, _rotation_columns, _scene_scale,
                        apply_frame, identity_frame)
 
@@ -95,6 +95,39 @@ def _retarget_rows(pred, cur) -> Optional[List[List[float]]]:
     return out
 
 
+def _local_rows(obj):
+    """The part's own place inside its component, as native_import recorded
+    it: 16 numbers, row-major, in the CAD's own units. None for a part that
+    IS its component, which is every part outside a rigid subassembly."""
+    raw = obj.get("SWMESH_local") if obj is not None else None
+    if raw is None:
+        return None
+    values = [float(v) for v in raw]
+    if len(values) != 16:
+        return None
+    return [values[i * 4:(i + 1) * 4] for i in range(4)]
+
+
+def _mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)]
+            for i in range(4)]
+
+
+def _target_rows(comp, obj, unit_scale):
+    """Where this object belongs when its component is at the pose the
+    manifest gives: the component's transform, then the object's own place
+    inside it. A rigid subassembly is ONE component holding several parts,
+    so without the second step every part of it would land on the
+    subassembly's origin."""
+    rows = [list(comp.transform[i]) for i in range(4)]
+    local = _local_rows(obj)
+    if local is not None:
+        rows = _mul(rows, local)
+    for i in range(3):
+        rows[i][3] *= unit_scale
+    return rows
+
+
 def _depth(obj) -> int:
     d = 0
     p = getattr(obj, "parent", None)
@@ -151,7 +184,7 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
         comp = comps.get(entry.component_id)
         if obj is None or comp is None:
             continue
-        crows = _component_rows_units(comp, unit_scale)
+        crows = _target_rows(comp, obj, unit_scale)
         cur = _matrix_rows(obj)
         if _frame_agrees(frame, cur, crows, scene_scale):
             out.already_ok += 1

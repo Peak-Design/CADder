@@ -12,6 +12,7 @@ broken file can never take the UI down with it.
 
 import json
 import os
+import re
 
 from . import (graph, inputs, joining, manifest as manifest_mod, matching,
                parenting, pose_sync, rig_build)
@@ -216,6 +217,11 @@ def quality_dial(settings):
     if settings.update_quality == "CUSTOM":
         return settings.update_quality_factor
     return QUALITY_DIAL.get(settings.update_quality, 0.75)
+
+
+# ".body003" at the end of an occurrence path: a part that came in as one
+# object per solid body.
+_BODY_SUFFIX = re.compile(r"\.body\d+$")
 
 
 def _find_rig(context):
@@ -698,10 +704,16 @@ if bpy is not None:
                 self.report({"WARNING"}, "Select parts that came in over CAD Link")
                 return {"CANCELLED"}
             persistent = []
+            split = False
             for obj in _scope_objects(context, self.scope):
                 pid = obj.get("SWMESH_persistent_id")
                 if pid and pid not in persistent:
                     persistent.append(pid)
+                # A part that came in as one object per solid body. The
+                # geometry has to come back in the same pieces, so the CAD
+                # application is told which it was.
+                if _BODY_SUFFIX.search(str(obj.get("SWMESH_path") or "")):
+                    split = True
             changed, moved = [], 0
             # The CAD application takes seconds to minutes to answer, and
             # Blender holds still meanwhile, so the status bar says which
@@ -720,7 +732,9 @@ if bpy is not None:
                     return {"FINISHED"}
                 if self.what != "POSES":
                     said.stage("asking the CAD application for the geometry", 0, 60)
-                    reply = cad_link.retessellate(ids, self.quality, persistent_ids=persistent)
+                    reply = cad_link.retessellate(
+                        ids, self.quality, persistent_ids=persistent,
+                        separate_solids=split or None)
                     said.stage("replacing the geometry", 60, 90, len(ids))
                     changed = native_import.refine(context, reply["mesh"])
                     if not changed:

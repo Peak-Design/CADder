@@ -676,6 +676,7 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     meshes = {}
     replaced = []
     retired = set()
+    mismatched = []
     for inst in scene.instances:
         # By PATH first: a rigid subassembly is one component and several
         # parts, and the component id alone would give every part of it the
@@ -683,6 +684,14 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
         targets = by_path.get(inst.path) if inst.path else None
         if not targets:
             targets = by_component.get(inst.component_id)
+            # The component owns several objects (its bodies, or the parts
+            # of a rigid subassembly) and this geometry does not say which
+            # one it is. Putting it on all of them draws the whole part
+            # over itself once per object, which is worse than leaving the
+            # geometry as it is and saying so.
+            if targets and len(targets) > 1:
+                mismatched.append(inst.path or inst.component_id)
+                continue
         if not targets:
             continue
         me = meshes.get(inst.definition_id)
@@ -711,6 +720,11 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
             obj[_TAG_TOLERANCE] = scene.tolerance
             if obj not in replaced:
                 replaced.append(obj)
+
+    if mismatched:
+        print("[CADLink native] %d piece(s) of geometry did not name an object "
+              "in this scene and were left out: %s"
+              % (len(mismatched), ", ".join(mismatched[:5])))
 
     matdb.apply(replaced, "refine")
 

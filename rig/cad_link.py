@@ -142,10 +142,20 @@ def poses(component_ids=None, persistent_ids=None, instance=None):
                    persistent_ids=list(persistent_ids or []))
 
 
-def retessellate(component_ids, quality, persistent_ids=None, instance=None):
+def retessellate(component_ids, quality, persistent_ids=None, instance=None,
+                 separate_solids=None):
     """Asks for those components again at `quality` (0..1). The reply names
     a .swmesh on disk. Persistent ids name the same occurrences after an
-    edit; see `poses`."""
-    return request("retessellate", instance=instance,
-                   components=list(component_ids), quality=float(quality),
+    edit; see `poses`.
+
+    separate_solids says whether this scene holds a multibody part as one
+    object per body. The geometry has to come back in the same pieces it
+    went out in: the whole part arriving as one piece put the whole part on
+    every body object, drawn over itself once per body (Oscar,
+    2026-09-16). None leaves the CAD application to use its own export
+    setting, which is what an older scene has to fall back on."""
+    payload = dict(components=list(component_ids), quality=float(quality),
                    persistent_ids=list(persistent_ids or []))
+    if separate_solids is not None:
+        payload["separate_solids"] = bool(separate_solids)
+    return request("retessellate", instance=instance, **payload)

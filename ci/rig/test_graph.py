@@ -41,6 +41,78 @@ class TestImportGuards(unittest.TestCase):
             main.register()
 
 
+def five_bar_manifest(mobility=2):
+    """The shape of the live wrench: a ring of five pins round four moving
+    bodies. Five freedoms, three spent closing the ring, so two inputs."""
+    data = base_manifest()
+    data["components"] = [component("c%03d" % i, n) for i, n in
+                          enumerate(["Ground", "A", "B", "C", "D"], 1)]
+    data["rigid_groups"] = [
+        {"id": "g000", "name": "ground", "components": ["c001"],
+         "grounded": True, "frame": identity4(), "bbox_diag": 0.5},
+    ] + [{"id": "g%03d" % i, "name": n, "components": ["c%03d" % (i + 1)],
+          "grounded": False, "frame": None, "bbox_diag": 0.1}
+         for i, n in enumerate(["a", "b", "c", "d"], 1)]
+
+    def rev(jid, parent, child, origin):
+        return {"id": jid, "type": "revolute",
+                "parent_group": parent, "child_group": child,
+                "origin": origin, "axis": [0.0, 0.0, 1.0],
+                "secondary_axis": [1.0, 0.0, 0.0], "limits": None}
+
+    # ground -j001- a -j003- b -j004- c -j005- d, and d back to ground at
+    # j002. j002 drives and j005 is the cut, so the driver side is d alone
+    # and the driven branch runs c, b, a: three bodies for two freedoms,
+    # the shape of the live wrench.
+    data["joints"] = [
+        rev("j001", "g000", "g001", [0.0, 0.0, 0.0]),
+        rev("j002", "g000", "g004", [0.4, 0.0, 0.0]),
+        rev("j003", "g001", "g002", [0.1, 0.1, 0.0]),
+        rev("j004", "g002", "g003", [0.2, 0.15, 0.0]),
+        rev("j005", "g003", "g004", [0.3, 0.1, 0.0]),
+    ]
+    data["loops"] = [{
+        "id": "L1",
+        "member_joints": ["j001", "j002", "j003", "j004", "j005"],
+        "closure_joint": "j005",
+        "suggested_driver_joint": "j002",
+        "planar": True,
+        "plane_normal": [0.0, 0.0, 1.0],
+        "mobility": mobility,
+    }]
+    return data
+
+
+class TestLoopMobility(unittest.TestCase):
+    """A loop that takes more than one input must leave a bone out of the
+    solve for each spare input, or the user has nothing to pose with.
+
+    Live wrench.sldasm (2026-09-16, Oscar): "there should be an additional
+    revolute joint". Five pins round one ring is a five-bar, and the whole
+    driven side was being solved from one input."""
+
+    def test_a_five_bar_keeps_one_bone_out_of_the_solve(self):
+        plan = plan_of(five_bar_manifest(mobility=2))
+        lplan = plan.loops[0]
+        # The driven branch is c, b, a: tip first. With two inputs the
+        # root-most of them stays posable.
+        self.assertEqual(lplan.driven_chain, ["g003", "g002"])
+        self.assertEqual(lplan.chain_count, 2)
+        self.assertTrue(any("stays posable" in w for w in plan.warnings),
+                        plan.warnings)
+
+    def test_one_input_solves_the_whole_driven_side(self):
+        plan = plan_of(five_bar_manifest(mobility=1))
+        lplan = plan.loops[0]
+        self.assertEqual(lplan.driven_chain, ["g003", "g002", "g001"])
+        self.assertEqual(lplan.chain_count, 3)
+
+    def test_a_manifest_without_the_field_reads_as_one_input(self):
+        data = five_bar_manifest()
+        del data["loops"][0]["mobility"]
+        self.assertEqual(manifest.parse(data).loops[0].mobility, 1)
+
+
 class TestHingePlan(unittest.TestCase):
 
     def test_ordering_and_assignment(self):

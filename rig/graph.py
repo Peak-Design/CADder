@@ -642,6 +642,24 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
                 i = 1
             driven_groups = driven_groups[:i]
             break
+        # A loop with more than one input must not have every driven body
+        # solved: the solver would spend a freedom the user is meant to
+        # pose, and then fight whatever the user did with it. One bone per
+        # spare input stays out of the chain, taken from the ROOT end,
+        # where it drives the most.
+        #
+        # Live wrench.sldasm (2026-09-16, Oscar): four pins and a screw
+        # around one ring is a five-bar with two inputs. Solved whole from
+        # the screw, "the arm2 assembly can rotate around a pin on clamp2"
+        # in SolidWorks and nothing in Blender could.
+        spare = max(0, lp.mobility - 1)
+        if spare and len(driven_groups) > spare:
+            freed = driven_groups[len(driven_groups) - spare:]
+            driven_groups = driven_groups[:len(driven_groups) - spare]
+            plan.warnings.append(
+                "loop {}: it takes {} inputs, so {} stays posable beside "
+                "the driver".format(lp.id, lp.mobility,
+                                    ", ".join(freed)))
         for gid in driven_groups:
             solved_by[gid] = lp.id
         slides = []

@@ -152,6 +152,12 @@ class Loop:
     suggested_driver_joint: Optional[str] = None
     planar: bool = False
     plane_normal: Optional[Vec3] = None
+    # How many inputs this loop takes: its joints' freedom less the three a
+    # planar closure spends. A loop of mobility m must leave m-1 bones of
+    # the driven chain OUT of the solve, nearest the root, for the user to
+    # pose. 1 for almost every loop, and for every manifest written before
+    # the field.
+    mobility: int = 1
     # Every input the exporter weighed, the chosen one first. Empty for
     # manifests written before the field.
     driver_candidates: List[DriverCandidate] = field(default_factory=list)
@@ -520,6 +526,7 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
             closure_kind=_closure_kind(lp),
             planar=bool(lp.get("planar", False)),
             plane_normal=_opt_vec3(lp.get("plane_normal"), f"loop {lp['id']} plane normal"),
+            mobility=max(1, int(lp.get("mobility", 1) or 1)),
             driver_candidates=candidates,
         )
 

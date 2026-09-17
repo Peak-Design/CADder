@@ -355,7 +355,7 @@ if bpy is not None:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "CADder"
-        bl_order = 1002
+        bl_order = 1003
         bl_options = {"DEFAULT_CLOSED"}
 
         def draw(self, context):

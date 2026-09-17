@@ -593,6 +593,13 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             from .rig import native_import, rig_update
             opts = payload.get("import_options") or {}
             rig_ui._STATE["import_options"] = dict(opts)
+            # The CAD application asks for quads or does not, and the scene
+            # then holds that answer: a later rebuild or regenerate here
+            # gives the same mesh as the send did.
+            if "tris_to_quads" in opts and hasattr(bpy.context.scene,
+                                                   "stepper"):
+                bpy.context.scene.stepper.tris_to_quads = bool(
+                    opts["tris_to_quads"])
             # An UPDATE keeps the scene and changes what changed. A send
             # replaces it. The rig snapshot has to be taken before either
             # touches the parts: it reads the group ids of the export the
@@ -640,6 +647,9 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
             rig_ui._STATE["match_report"] = report
+            made = native_import.quads(objects)
+            if made:
+                log.append("tris to quads: %d mesh(es)" % made)
             stages["mesh"] = {
                 "file": os.path.basename(mesh_path),
                 "objects": len(objects),

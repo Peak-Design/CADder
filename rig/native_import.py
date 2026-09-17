@@ -1016,6 +1016,22 @@ def _mesh_holders(obj):
     return [o for o in collection.all_objects if o.type == "MESH"]
 
 
+def quads(objects):
+    """Pair the tessellation triangles back into quads, when the scene asks.
+
+    A part from the live link arrives as triangles, the same as a part from
+    a STEP file, and the same setting decides what happens to them. It is
+    read from the scene rather than passed in, because a send, a rebuild
+    and a regenerate all have to give the same answer. Returns how many
+    meshes were changed.
+    """
+    prg = getattr(bpy.context.scene, "stepper", None)
+    if prg is None or not prg.tris_to_quads or not objects:
+        return 0
+    from .. import main as main_mod
+    return main_mod._tris_to_quads_objects(objects) or 0
+
+
 def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     """Swaps in finer geometry for objects that are already in the scene.
 
@@ -1100,5 +1116,6 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
         if old is not None and old.users == 0:
             bpy.data.meshes.remove(old)
 
+    quads(replaced)
     context.view_layer.update()
     return replaced

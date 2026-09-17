@@ -51,7 +51,7 @@ Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 - Non-blocking background import: Blender stays responsive, Esc cancels
 - Viewport drag & drop (single or multiple files) and recursive folder batch import
 - Pre-import analyzer with per-machine import-time estimates
-- Regenerate parts at a different quality, Prune/Restore hierarchy, mesh cleanup
+- Rebuild parts at a different quality, Prune/Restore hierarchy, mesh cleanup
 - Import options remembered between Blender sessions
 - Part hierarchy preserved as flat collection, nested collections, parented empties, or collection instances
 - Native C++ mesh extraction with multithreaded normal computation, up to 10x faster than v1.x
@@ -148,31 +148,18 @@ pose, builds the armature and parents the geometry, all without a file
 dialog. The listener accepts connections only from this machine, and only
 with the token the add-in reads from the user's own app data.
 
-The **CADder** tab holds the link at the top and the STEP import
-panels below it. The link is one panel with three sub-panels, two of
-them closed:
+The **CADder** tab holds **Mesh Quality** at the top, then the link and
+the panels that work on any part. Mesh Quality asks one question for both
+routes: how fine the mesh is, and the button to read the CAD again. See
+[Mesh Quality](#mesh-quality) below.
 
-- **SolidWorks Bridge**: **Quality**, **Rebuild from CAD**, and **Lock
-  Rig**. The four quality
-  names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
-  and Custom takes a chord of its own. Rebuild from CAD asks the CAD
-  application for the geometry again at that quality, and swaps it in
-  without losing the pose, the materials or the rig. Press F9 after it for
-  its purpose (Geometry, Geometry and Poses,
-  Poses, or Everything). Everything asks for the
-  assembly again and rebuilds the scene from it, which is what catches
-  parts added or removed and mates changed. One dropdown per mechanism
-  that offers a choice of input sits in the **Mechanism Input**
-  sub-panel below. Changing the input rebuilds the rig for that choice.
+The link is one panel with three sub-panels, two of them closed:
 
-  **Lock Rig** keeps the rig that is standing. A send still replaces the
-  geometry and still attaches it to the bones, and the rig itself is left
-  alone: bones renamed, controls added, constraints changed, all of it
-  survives. The lock is saved with the file, and it is on the armature, so
-  a rig that goes to somebody else arrives locked as it was left. What it
-  costs: the rest pose stays as it was built, so a part that moved in the
-  CAD application follows its bone until the rig is unlocked and built
-  again.
+- **SolidWorks Bridge**: whether the listener is running and on which
+  port, and **Join Rigs** when the scene holds more than one rig. One
+  dropdown per mechanism that offers a choice of input sits in the
+  **Mechanism Input** sub-panel below. Changing the input rebuilds the rig
+  for that choice.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
   Build Rig, Relink Geometry). A direct send runs all of it, so this
@@ -183,9 +170,47 @@ them closed:
   pose and rig reports of the last run.
 
 Below the bridge come **Defeature** and **UV**, which work on any part
-whichever way it came in, then **Material Database** and the STEP import
-panels: **STEP - Tools** and **STEP - File**. **STEP - Debug** joins them
-when **Debug Options** is on in the addon preferences.
+whichever way it came in, then **Material Database**, **Hierarchy** and
+**STEP - File**. **STEP - Debug** joins them when **Debug Options** is on
+in the addon preferences.
+
+### Mesh Quality
+
+How fine the mesh of a part is, whichever way the part came in. A part
+from a STEP file and a part from the live link are tessellated by
+different programs, but the question is the same one, so it is asked in
+one place.
+
+The panel shows the controls of the route the parts in scope came in by.
+For a part from the live link that is **Quality**: the four names the CAD
+add-in uses (Draft, Balanced, Fine, Ultra), with Custom taking a chord of
+its own. For a part from a file it is **Linear** and **Angular**
+deflection, or **Detail** with **Simpler Parameters** on.
+
+The button says which file it is going to read again: **Rebuild from
+CAD**, **Rebuild from STEP**, **Rebuild from IGES**. With parts of both
+kinds in scope there is a button for each. Rebuild from CAD asks the CAD
+application for the geometry again and swaps it in without losing the
+pose, the materials or the rig. Press F9 after it for its purpose
+(Geometry, Geometry and Poses, Poses, or Everything). Everything asks for
+the assembly again and rebuilds the scene from it, which is what catches
+parts added or removed and mates changed.
+
+**Triangles to Quads** pairs the tessellation triangles back into quads.
+A flat or lightly curved CAD face comes out as long thin pairs that go
+back together cleanly. Nothing is joined across a material, a UV island, a
+seam or a sharp edge. It is on by default, and it holds for both routes:
+a send, a rebuild and a regenerate all give the same mesh. The CAD add-in
+sends its own answer with the geometry, which sets this one.
+
+**Clean Up Meshes** removes the loose vertices and the zero area faces a
+tessellation can leave.
+
+The rig that is standing can be LOCKED, so a send replaces the geometry
+and attaches it to the bones while the rig itself is left alone. The
+button for it is not drawn: a send asks what to do with the rig it finds,
+which is the same question. The operator is `cadlink.lock_rig` and it
+still works from the search menu.
 
 ### What a button covers
 
@@ -638,11 +663,11 @@ one flat pattern while the machined block beside it stays face by face.
 
 Box Project reads the mesh and nothing else, so it runs on the parts as they
 are. The other modes need the parametric surfaces, so the addon reads the
-source CAD file again and replaces the mesh, the same way **Regenerate**
-does. Work you did on the mesh itself does not survive that. Transforms,
+source CAD file again and replaces the mesh, the same way **Rebuild from
+STEP** does. Work you did on the mesh itself does not survive that. Transforms,
 parenting, modifiers, materials and custom properties do.
 
-The settings go on to each object. A **Regenerate** or a **Refresh from
+The settings go on to each object. A **Rebuild** or a **Refresh from
 disk** later makes the UV map you chose in the panel, not the one the import
 made.
 

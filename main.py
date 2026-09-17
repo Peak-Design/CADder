@@ -1021,6 +1021,7 @@ def _tris_to_quads_objects(objs):
             me.update()
     if meshes:
         print(f"Tris to quads: {meshes} mesh(es), {tris} faces -> {quads}")
+    return meshes
 
 
 def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
@@ -3160,6 +3161,14 @@ class PG_Stepper(bpy.types.PropertyGroup):
         # max=2.0,
     )
 
+    tris_to_quads: bpy.props.BoolProperty(
+        name="Triangles to Quads",
+        description="Pair the tessellation triangles back into quads. A "
+                    "flat or lightly curved CAD face comes out as long thin "
+                    "pairs that go back together cleanly. Nothing is joined "
+                    "across a material, a UV island, a seam or a sharp edge",
+        default=True)
+
     fix_ascii_file: bpy.props.StringProperty(
         name="File",
         description="Path to problematic STEP file",
@@ -4252,7 +4261,7 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1004
+    bl_order = 1005
 
     def draw(self, context):
         layout = self.layout
@@ -4335,39 +4344,122 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
         box.label(text="Install the zip as usual to update.")
 
 
-class STEP_PT_STEPper(bpy.types.Panel):
-    bl_label = "STEP - Tools"
+# What a part was read from, by the name of the file it came from. The
+# button that reads it again says which, because a person reaching for it
+# is thinking of the file and not of the addon.
+_SOURCE_NAMES = {".iges": "IGES", ".igs": "IGES",
+                 ".brep": "BREP", ".brp": "BREP"}
+
+# How many objects the panel looks at to find out which routes the scope
+# holds. It stops as soon as it has seen both, and the answer only decides
+# which controls to draw, so a huge scene must not cost a walk of every
+# object on every redraw.
+_ROUTE_SCAN = 500
+
+
+def _routes(context):
+    """Which routes the parts in scope came in by: (live, step name).
+
+    live is True when a part came over the live link. The step name is the
+    format of the file the STEP parts were read from, or None when there
+    are none. The scope is the selection, and the active collection when
+    nothing is selected, which is the rule every button here follows.
+    """
+    live, step = False, None
+    found = context.selected_objects
+    if not found:
+        holder = context.collection
+        found = holder.all_objects if holder is not None else ()
+    for i, obj in enumerate(found):
+        if i >= _ROUTE_SCAN:
+            break
+        if step is None and tools_mod.from_step(obj):
+            ext = ntpath.splitext(str(obj.get("STEP_file") or ""))[1].lower()
+            step = _SOURCE_NAMES.get(ext, "STEP")
+        elif not live and tools_mod.from_cad_link(obj):
+            live = True
+        if live and step:
+            break
+    return live, step
+
+
+class CADLINK_PT_quality(bpy.types.Panel):
+    """How fine the mesh of a part is, whichever way the part came in.
+
+    A part from a STEP file and a part from the live link are tessellated
+    by different programs, but the question is the same one and the answer
+    is asked for in the same place. The panel shows the controls of the
+    route the parts in scope came in by, and the button says which file it
+    is going to read again.
+    """
+
+    bl_label = "Mesh Quality"
+    bl_idname = "CADLINK_PT_quality"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1005
+    bl_order = 1001
 
     def draw(self, context):
-        prg = context.scene.stepper
-
         layout = self.layout
+        prg = context.scene.stepper
+        live, step = _routes(context)
+        settings = getattr(context.scene, "cad_link", None)
+        if settings is None:
+            live = False
+        # With nothing in scope there is still a panel to draw. It shows the
+        # live link when there is one, because that is the route that is set
+        # up, and the STEP controls otherwise.
+        if not live and step is None:
+            live = settings is not None
+            step = None if live else "STEP"
 
-        # The resolution feeds the Regenerate operator below, so the two
-        # sit together. A heading beats a label row with a colon.
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
-        if _get_addon_prefs().simpler_parameters:
-            col.prop(prg, "detail_level", text="Detail")
-        else:
-            col.prop(prg, "lin_deflection", text="Linear")
-            col.prop(prg, "ang_deflection", text="Angular")
-        layout.operator("stepper.regenerate", text="Regenerate Selected",
-                        icon='FILE_REFRESH')
+        if live:
+            col.prop(settings, "update_quality", text="Quality")
+            if settings.update_quality == "CUSTOM":
+                col.prop(settings, "update_quality_factor", text="Chord")
+        if step:
+            if _get_addon_prefs().simpler_parameters:
+                col.prop(prg, "detail_level", text="Detail")
+            else:
+                col.prop(prg, "lin_deflection", text="Linear")
+                col.prop(prg, "ang_deflection", text="Angular")
+        col.prop(prg, "tris_to_quads")
 
-        layout.separator()
+        tools_mod.scope_hint(layout, context)
+        if live:
+            rebuild = layout.operator("cadlink.update_from_cad",
+                                      text="Rebuild from CAD",
+                                      icon="FILE_REFRESH")
+            try:
+                from .rig import ui as rig_ui
+                rebuild.quality = rig_ui.quality_dial(settings)
+            except Exception:
+                pass
+        if step:
+            layout.operator("stepper.regenerate",
+                            text="Rebuild from %s" % step,
+                            icon="FILE_REFRESH")
+        layout.operator("stepper.mesh_cleanup", text="Clean Up Meshes")
 
-        col = layout.column(align=True)
-        row = col.row(align=True)
+
+class STEP_PT_STEPper(bpy.types.Panel):
+    """What the tree of a STEP import holds, and what it does not need."""
+
+    bl_label = "Hierarchy"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "CADder"
+    bl_order = 1006
+
+    def draw(self, context):
+        row = self.layout.row(align=True)
         row.operator("stepper.prune_hierarchy", text="Prune Hierarchy",
                      icon='X')
         row.operator("stepper.prune_restore", text="Restore")
-        col.operator("stepper.mesh_cleanup", text="Clean Up Meshes")
 
 
 class STEP_PT_STEPper_Reload(bpy.types.Panel):
@@ -4375,7 +4467,7 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1006
+    bl_order = 1007
 
     def draw(self, context):
         layout = self.layout
@@ -4409,7 +4501,7 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1003
+    bl_order = 1004
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -4433,7 +4525,7 @@ class STEP_PT_STEPper_Debug(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
-    bl_order = 1007
+    bl_order = 1008
     bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
@@ -4813,6 +4905,7 @@ classes = (
     STEP_OT_MatDBApply,
     STEP_UL_MaterialMappings,
     STEP_PT_STEPper_Info,
+    CADLINK_PT_quality,
     STEP_PT_STEPper,
     STEP_PT_STEPper_Reload,
     STEP_PT_MaterialDB,

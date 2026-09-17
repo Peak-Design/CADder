@@ -122,6 +122,9 @@ def _check(cond, msg):
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.preferences.addon_enable(module="CADder")
+    # This counts triangles, so the quad pass stays off. It is
+    # tested in refine_smoke.
+    bpy.context.scene.stepper.tris_to_quads = False
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     server.seen = []

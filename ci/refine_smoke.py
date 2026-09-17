@@ -139,6 +139,9 @@ def main():
     # The operator is the thing under test here, so the add-on has to be
     # registered rather than just imported.
     bpy.ops.preferences.addon_enable(module="CADder")
+    # What comes back is counted in triangles here, so the quad pass is
+    # off for that. It has a section of its own at the end.
+    bpy.context.scene.stepper.tris_to_quads = False
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     server.seen = []
@@ -409,6 +412,7 @@ def main():
         #     2026-09-16), so this holds that route open.
         bpy.ops.wm.read_factory_settings(use_empty=True)
         bpy.ops.preferences.addon_enable(module="CADder")
+        bpy.context.scene.stepper.tris_to_quads = False
         rig_ui._STATE["manifest"] = None
         coarse = write_mesh(
             os.path.join(tempfile.gettempdir(), "refine_coarse_ci.swmesh"),
@@ -434,6 +438,21 @@ def main():
         assert (empty.matrix_world.translation
                 - before_world.translation).length < 1e-9
         assert empty["SWMESH_tolerance_m"] == 0.00002
+
+        # 11. Triangles to quads. The setting is the scene's, so a part
+        #     from the live link comes back the same way a part from a STEP
+        #     file does: the four triangles pair into two quads.
+        bpy.context.scene.stepper.tris_to_quads = True
+        fine = write_mesh(
+            os.path.join(tempfile.gettempdir(), "refine_fine_ci.swmesh"),
+            FINE_TRIS, 0.00002)
+        native_import.refine(bpy.context, fine)
+        holder = next(o for o in empty.instance_collection.all_objects
+                      if o.type == "MESH")
+        sides = [len(f.vertices) for f in holder.data.polygons]
+        assert sides and all(n == 4 for n in sides), sides
+        assert len(sides) == FINE_TRIS // 2, sides
+        bpy.context.scene.stepper.tris_to_quads = False
 
         print("refine_smoke: OK: %d -> %d triangles, object kept its bone "
               "parent and world pose, a pose update moved it onto the new CAD "

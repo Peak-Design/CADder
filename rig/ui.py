@@ -832,10 +832,12 @@ if bpy is not None:
         return bool(getattr(prefs, "cad_link_advanced", False))
 
     class CADLINK_PT_bridge(bpy.types.Panel):
-        """The live link, at the top of the CADder tab.
+        """The live link.
 
-        What a user needs while working is one button: bring the CAD
-        model over again. Everything else is in a sub-panel, closed.
+        How fine the geometry is, and the button that asks for it again,
+        are in Mesh Quality above: the question is the same one for a part
+        from a STEP file, so it is asked in one place. What is left here is
+        what only the live link has.
         """
 
         bl_label = "SolidWorks Bridge"
@@ -843,7 +845,7 @@ if bpy is not None:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "CADder"
-        bl_order = 1001
+        bl_order = 1002
 
         @classmethod
         def poll(cls, context):
@@ -851,31 +853,25 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
-            settings = context.scene.cad_link
 
-            col = layout.column(align=True)
-            col.use_property_split = True
-            col.use_property_decorate = False
-            col.prop(settings, "update_quality", text="Quality")
-            if settings.update_quality == "CUSTOM":
-                col.prop(settings, "update_quality_factor", text="Chord")
+            # Whether the CAD application can reach this Blender at all.
+            # Color is never the only signal, so each state has its own
+            # icon as well as its own words.
+            row = layout.row()
+            try:
+                from .. import bridge
+                if bridge.is_running():
+                    row.label(text="Listening on port %d" % bridge.port(),
+                              icon="PLUGIN")
+                else:
+                    row.label(text="Not listening", icon="UNLINKED")
+            except Exception:
+                pass
 
-            from .. import tools as tools_mod
-            tools_mod.scope_hint(layout, context)
-            update = layout.operator("cadlink.update_from_cad",
-                                     icon="FILE_REFRESH")
-            update.quality = quality_dial(settings)
-
-            # The lock: what a send does to the rig standing in the scene.
-            # Only shown when there is a rig, because that is the only time
-            # it means anything.
-            arm = _find_rig(context)
-            if arm is not None:
-                locked = rig_build.is_locked(arm)
-                row = layout.row()
-                row.operator("cadlink.lock_rig", text="Lock Rig",
-                             icon="LOCKED" if locked else "UNLOCKED",
-                             depress=locked)
+            # The lock is not drawn. A send from the CAD application asks
+            # what to do with the rig that is standing, so there is nothing
+            # left for the lock to answer. The operator stays registered,
+            # because the question could come back (Oscar, 2026-09-17).
 
             # Joining is offered only when there is something to join, and
             # the count is the whole message, so the button carries it.
@@ -975,17 +971,6 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
-
-            row = layout.row()
-            try:
-                from .. import bridge
-                if bridge.is_running():
-                    row.label(text="Listening on port %d" % bridge.port(),
-                              icon="PLUGIN")
-                else:
-                    row.label(text="Not listening", icon="UNLINKED")
-            except Exception:
-                pass
 
             selected = [o for o in context.selected_objects
                         if o.get("RIG_component_id")]

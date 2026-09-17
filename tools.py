@@ -194,8 +194,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     use_scene_settings: bpy.props.BoolProperty(
-        name="CADder Panel Resolution",
-        description="Use the resolution values from the CADder panel. Turn "
+        name="Mesh Quality Panel",
+        description="Use the quality set in the Mesh Quality panel. Turn "
                     "this off to use the original import settings of each "
                     "object",
         default=True,
@@ -203,9 +203,15 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == "OBJECT" and any(
-            o.type == "MESH" and "STEP_file" in o and "STEP_tag" in o
-            for o in context.selected_objects)
+        # Not "is something selected": with nothing selected the scope is
+        # the collection that is active in the outliner.
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        if not any(from_step(o) for o in context.scene.objects):
+            cls.poll_message_set("This scene holds no parts from a file")
+            return False
+        return True
 
     def execute(self, context):
         from . import main as m
@@ -214,11 +220,11 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         # Unique mesh datablocks (multi-user meshes regenerate once and all
         # users update automatically since geometry is replaced in place).
         targets = {}
-        for obj in context.selected_objects:
-            if obj.type == "MESH" and "STEP_file" in obj and "STEP_tag" in obj:
-                targets.setdefault(obj.data, obj)
+        for obj in scope_objects(context, from_step):
+            targets.setdefault(obj.data, obj)
         if not targets:
-            self.report({"WARNING"}, "No STEP objects selected")
+            self.report({"WARNING"},
+                        "Select parts that came from a file on disk")
             return {"CANCELLED"}
 
         prefs = m._get_addon_prefs()
@@ -354,7 +360,10 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     })
                 # The passes the import runs once the mesh exists, in the
                 # same order: quads, then Smart, then the unwrap.
-                if stored.get("tris_to_quads") and uv_mode != "BOX":
+                quads = (context.scene.stepper.tris_to_quads
+                         if self.use_scene_settings
+                         else stored.get("tris_to_quads"))
+                if quads and uv_mode != "BOX":
                     quad_objs.append(obj)
                 if uv_mode in uv_mod.UNWRAP_MODES:
                     unwrap_objs.setdefault(uv_mode, []).append(obj)

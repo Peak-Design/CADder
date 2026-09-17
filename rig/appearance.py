@@ -185,8 +185,9 @@ def projection(g, mapping, unit_scale, x0, y0):
     N = _unit(_cross(U, V), (0.0, 0.0, 1.0))
     c = m.get("centre") or (0.0, 0.0, 0.0)
     s = float(unit_scale) if unit_scale else 1.0
-    width = max(float(m.get("width") or 1.0), 1e-9) * s
-    height = max(float(m.get("height") or m.get("width") or 1.0), 1e-9) * s
+    width = max(number(m.get("width"), 1.0), 1e-9) * s
+    height = max(number(m.get("height"), number(m.get("width"), 1.0)),
+                 1e-9) * s
     kind = int(m.get("type", AUTOMATIC))
 
     coord = g.node("ShaderNodeTexCoord", x0, y0)
@@ -219,7 +220,7 @@ def projection(g, mapping, unit_scale, x0, y0):
 
     # Rotation (degrees, SolidWorks turns the image, so the coordinates
     # turn the other way), then tiling, offset and mirror.
-    rot = math.radians(float(m.get("rotation") or 0.0))
+    rot = math.radians(number(m.get("rotation")))
     cos_r, sin_r = math.cos(rot), math.sin(rot)
     if abs(sin_r) > 1e-9:
         ur = g.math("ADD", g.math("MULTIPLY", u, cos_r, x1, y0 + 100),
@@ -426,11 +427,13 @@ def decal_projection(g, decal, unit_scale, x0, y0):
     H = _unit([float(V[i]) - P[i] * dot for i in range(3)], (1.0, 0.0, 0.0))
     Vt = _cross(P, H)
     c = m.get("centre") or (0.0, 0.0, 0.0)
-    y_off = float(m.get("y") or 0.0)
+    y_off = number(m.get("y"))
     origin = tuple((float(c[i]) + y_off * H[i]) * s for i in range(3))
-    width = max(float(m.get("width") or 1.0), 1e-9) * s
-    height = max(float(m.get("height") or m.get("width") or 1.0), 1e-9) * s
-    theta = math.radians(float(m.get("rotation") or 0.0) - float(face.get("angle") or 0.0))
+    width = max(number(m.get("width"), 1.0), 1e-9) * s
+    height = max(number(m.get("height"), number(m.get("width"), 1.0)),
+                 1e-9) * s
+    theta = math.radians(number(m.get("rotation"))
+                         - number(face.get("angle")))
 
     mirror = -1.0 if (m.get("width_mirror") or face.get("mirrored")) else 1.0
 
@@ -445,6 +448,30 @@ def decal_projection(g, decal, unit_scale, x0, y0):
     frame.inputs["Height"].default_value =         height * (-1.0 if m.get("height_mirror") else 1.0)
     frame.inputs["Rotation"].default_value = theta
     return frame.outputs["Vector"], frame.outputs["Facing"], x0 + 2 * _X_STEP
+
+
+def number(value, fallback=0.0):
+    """A number out of whatever an appearance carries.
+
+    Most of what is here is written by the CAD add-in and is a number
+    already. The library block is not: it is the lines of the appearance
+    file of the CAD application, as they are written there, and one dialect
+    of that file separates its settings with commas, so a value arrives as
+    "0 ," (Conveyor12k-A00, Oscar, 2026-09-17). It can also be a word, a colour
+    of three numbers, or empty. So the first number in it is taken, and
+    anything with no number in it is the fallback. An appearance must never
+    stop an import.
+    """
+    if isinstance(value, bool) or value is None:
+        return fallback
+    if isinstance(value, (int, float)):
+        return float(value)
+    for piece in str(value).replace(",", " ").split():
+        try:
+            return float(piece)
+        except ValueError:
+            continue
+    return fallback
 
 
 def build(mat, spec, rgba, unit_scale=1.0):
@@ -463,8 +490,8 @@ def build(mat, spec, rgba, unit_scale=1.0):
     library = spec.get("library") or {}
     colour = linear(spec.get("colour") or rgba[:3])
     alpha = float(rgba[3]) if len(rgba) > 3 else 1.0
-    roughness = float(blender.get("roughness", 0.5))
-    metallic = float(blender.get("metallic", 0.0))
+    roughness = number(blender.get("roughness"), 0.5)
+    metallic = number(blender.get("metallic"), 0.0)
     glass = bool(blender.get("glass", False))
 
     _set(bsdf, "Base Color", (colour[0], colour[1], colour[2], 1.0))
@@ -472,28 +499,30 @@ def build(mat, spec, rgba, unit_scale=1.0):
     _set(bsdf, "Roughness", roughness)
     specular = spec.get("specular")
     if specular is not None and metallic < 0.5:
-        _set(bsdf, "Specular IOR Level", max(0.0, min(1.0, float(specular))))
+        _set(bsdf, "Specular IOR Level",
+             max(0.0, min(1.0, number(specular))))
     tint = spec.get("specular_colour")
     if tint and metallic >= 0.5:
         tint = linear(tint)
         _set(bsdf, "Specular Tint", (tint[0], tint[1], tint[2], 1.0))
-    reflectivity = float(spec.get("reflectivity") or 0.0)
+    reflectivity = number(spec.get("reflectivity"))
     if metallic < 0.5 and not glass and reflectivity > 0.02:
         _set(bsdf, "Coat Weight", max(0.0, min(1.0, reflectivity * 2.0)))
         _set(bsdf, "Coat Roughness", min(roughness, 0.1))
 
-    transparency = float(spec.get("transparency") or 0.0)
+    transparency = number(spec.get("transparency"))
     if glass:
         _set(bsdf, "Transmission Weight", 1.0 if transparency > 0.0 else 0.0)
-        ior = float(library.get("mtl_ior") or spec.get("ior") or 1.5)
+        ior = number(library.get("mtl_ior"),
+                     number(spec.get("ior"), 1.5))
         _set(bsdf, "IOR", ior if ior > 1.0 else 1.5)
     elif alpha < 0.999:
         _set(bsdf, "Alpha", alpha)
         if hasattr(mat, "surface_render_method"):
             mat.surface_render_method = "BLENDED"
 
-    emission = max(float(spec.get("emission") or 0.0),
-                   float(library.get("luminousIntensity") or 0.0))
+    emission = max(number(spec.get("emission")),
+                   number(library.get("luminousIntensity")))
     if emission > 0.0:
         _set(bsdf, "Emission Color", (colour[0], colour[1], colour[2], 1.0))
         _set(bsdf, "Emission Strength", emission)
@@ -529,7 +558,8 @@ def build(mat, spec, rgba, unit_scale=1.0):
         else:
             bn = g.node("ShaderNodeBump", 1800, y)
             g.link(tex.outputs["Color"], bn.inputs["Height"])
-            distance = float(library.get("displacementDistance") or 0.001) * float(unit_scale or 1.0)
+            distance = (number(library.get("displacementDistance"), 0.001)
+                        * float(unit_scale or 1.0))
             _set(bn, "Distance", distance)
             g.link(bn.outputs["Normal"], bsdf.inputs["Normal"])
         y -= 500

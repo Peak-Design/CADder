@@ -178,6 +178,23 @@ def main():
     plate.cad_defeature.enabled = True
     plate.cad_defeature.size = 0.008
 
+    # 6d. The panel points where the button does. With nothing selected
+    #     the button covers the active collection, so that is what the
+    #     panel has to be about: otherwise the switch the button just set
+    #     cannot be cleared, because the panel is still showing the part
+    #     that was active before.
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    bpy.context.view_layer.objects.active = plate
+    view = bpy.context.view_layer
+    view.active_layer_collection = view.layer_collection.children[
+        assembly.name]
+    assert defeature.target(bpy.context) is assembly, \
+        "with nothing selected the panel is about the collection"
+    plate.select_set(True)
+    assert defeature.target(bpy.context) is plate, \
+        "with a part selected the panel is about the part"
+
     # 7. A rebuild of the whole assembly replaces every object and every
     #    collection. The settings are written down first and put back on
     #    what arrives, matched by component and by collection name.

@@ -295,15 +295,20 @@ if bpy is not None:
         column.use_property_split = True
         column.use_property_decorate = False
         if inherited is not None:
-            # Color is never the only signal, so the row that says a setting
-            # is out of reach carries the reason in words as well.
+            # One rule decides, and it is the collection's. So what is shown
+            # is the collection's own controls, and they work: the switch
+            # that covers this part can be cleared from the part, which is
+            # where the person looking at it is. Color is never the only
+            # signal, so the label says whose setting it is, because
+            # changing it here changes it for the rest of that collection.
             column.label(text='Defeature is set on the collection "%s"'
                               % inherited.name, icon="OUTLINER_COLLECTION")
+            holder = _set(inherited)
+            column.prop(holder, "enabled")
             body = column.column()
-            body.enabled = False
-            body.prop(settings, "enabled")
-            body.prop(_set(inherited), "size")
-            body.prop(_set(inherited), "curved")
+            body.enabled = holder.enabled
+            body.prop(holder, "size")
+            body.prop(holder, "curved")
             return
         column.prop(settings, "enabled")
         body = column.column()
@@ -311,19 +316,30 @@ if bpy is not None:
         body.prop(settings, "size")
         body.prop(settings, "curved")
 
+    def _from_cad(obj):
+        """Whether the panel can be about this object."""
+        return obj is not None and (
+            obj.get("RIG_component_id") or "STEP_tag" in obj) and (
+            obj.type == "MESH" or obj.instance_collection is not None)
+
     def target(context):
-        """What the Defeature panel is about: the active part when it came
-        from CAD, and otherwise the active collection."""
+        """What the Defeature panel is about.
+
+        The rule the button uses: with parts selected it is the active
+        part, and with none selected it is the collection that is active in
+        the outliner. The panel and the button under it must point at one
+        thing. They did not, and a collection set by the button could not be
+        cleared from the panel, because the panel was still showing the part
+        that was active before (Oscar, 2026-09-17).
+        """
         obj = context.object
-        if obj is not None and (
-                obj.get("RIG_component_id") or "STEP_tag" in obj) and (
-                obj.type == "MESH" or obj.instance_collection is not None):
+        if context.selected_objects and _from_cad(obj):
             return obj
         collection = context.collection
         if collection is not None and context.scene is not None \
                 and collection is not context.scene.collection:
             return collection
-        return None
+        return obj if _from_cad(obj) else None
 
     class CADLINK_PT_defeature(bpy.types.Panel):
         """Which parts travel without their small features.

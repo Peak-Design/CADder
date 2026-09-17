@@ -878,7 +878,9 @@ class STEPPER_OT_apply_defeature(bpy.types.Operator):
         # set once and covers everything below it, which also survives a
         # rebuild that replaces every object.
         groups, parts = defeature_mod.turn_on(holder, covered, context.scene)
-        turned = "set on %d collection(s) and %d part(s)" % (groups, parts)             if groups else "set on %d part(s)" % parts
+        turned = ("set on %d collection(s) and %d part(s)"
+                  % (groups, parts) if groups
+                  else "set on %d part(s)" % parts)
 
         step = [o for o in covered if from_step(o)]
         # A part is asked of the CAD application when it can be,

@@ -1439,16 +1439,23 @@ def fit_charts(me, faces, before=None, limit=SMART_STRAIN,
 
 
 def mark_seams(me):
-    """Put a seam on every edge where the UV map steps.
+    """Add a seam on every edge where the UV map steps.
 
     That is the boundary of every chart, and the cut a closed surface
     carries. An unwrap needs both: without them it welds two charts into
     one island, and it has nowhere to cut a face that closes on itself.
+
+    What is already marked stays marked. A mesh from the live link carries
+    the boundaries of its CAD faces as seams, and they are worth more than
+    this test can work out.
     """
     r = _Read(me)
     if not r.ok:
         return False
-    me.edges.foreach_set("use_seam", _seams(r.ne, r.man, ~r.joined(r.uv)))
+    was = np.zeros(r.ne, dtype=bool)
+    me.edges.foreach_get("use_seam", was)
+    me.edges.foreach_set("use_seam",
+                         was | _seams(r.ne, r.man, ~r.joined(r.uv)))
     return True
 
 

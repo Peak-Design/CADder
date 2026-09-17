@@ -58,7 +58,7 @@ _IMPORT_OPTION_KEYS = {
     "lin_deflection", "ang_deflection", "lin_deflection_len",
     "ang_deflection_rot", "tessellation_relative", "lin_deflection_rel",
     "uv_mode", "uv_normalize", "uv_closed_seams", "uv_smart_distortion",
-    "uv_smart_sharp", "uv_smart_split", "uv_smart_unwrap", "uv_pack", "uv_pack_tiles",
+    "uv_smart_sharp", "uv_smart_split", "uv_unwrap_compound", "uv_pack", "uv_pack_tiles",
     "uv_pack_margin", "box_uv_scale", "tris_to_quads",
     "eng_materials", "material_database", "import_curves",
     "skip_construction", "group_in_collection", "separate_solids",
@@ -596,10 +596,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # The CAD application asks for quads or does not, and the scene
             # then holds that answer: a later rebuild or regenerate here
             # gives the same mesh as the send did.
-            if "tris_to_quads" in opts and hasattr(bpy.context.scene,
-                                                   "stepper"):
-                bpy.context.scene.stepper.tris_to_quads = bool(
-                    opts["tris_to_quads"])
+            prg = getattr(bpy.context.scene, "stepper", None)
+            for key in ("tris_to_quads", "uv_unwrap_compound"):
+                if key in opts and prg is not None:
+                    setattr(prg, key, bool(opts[key]))
             # An UPDATE keeps the scene and changes what changed. A send
             # replaces it. The rig snapshot has to be taken before either
             # touches the parts: it reads the group ids of the export the
@@ -650,6 +650,15 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             made = native_import.quads(objects)
             if made:
                 log.append("tris to quads: %d mesh(es)" % made)
+            # A compound surface has no chart one scale can hold, and the
+            # CAD application has none to send. The unwrap is Blender's, so
+            # it runs here, on what just arrived.
+            if prg is None or prg.uv_unwrap_compound:
+                from . import main as main_mod
+                faces, islands = main_mod._unwrap_compound_objects(objects)
+                if faces:
+                    log.append("unwrapped %d compound face(s) into %d "
+                               "island(s)" % (faces, islands))
             stages["mesh"] = {
                 "file": os.path.basename(mesh_path),
                 "objects": len(objects),
@@ -845,6 +854,20 @@ def _remove_registry():
         except OSError:
             pass
         _state["registry_path"] = None
+
+
+def status():
+    """What each CAD bridge is doing, as (text, icon) rows.
+
+    One row today, because there is one bridge. A second CAD application
+    would add a row of its own, so the panel that draws this does not have
+    to change when one arrives.
+    """
+    if not is_running():
+        return [("SolidWorks bridge is off", "UNLINKED")]
+    if _state["last_job"] is not None:
+        return [("SolidWorks bridge is active", "LINKED")]
+    return [("SolidWorks bridge is waiting for a connection", "PLUGIN")]
 
 
 def is_running() -> bool:

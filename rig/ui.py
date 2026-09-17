@@ -832,15 +832,16 @@ if bpy is not None:
         return bool(getattr(prefs, "cad_link_advanced", False))
 
     class CADLINK_PT_bridge(bpy.types.Panel):
-        """The live link.
+        """The rig, and what the live link does to it.
 
-        How fine the geometry is, and the button that asks for it again,
-        are in Mesh Quality above: the question is the same one for a part
-        from a STEP file, so it is asked in one place. What is left here is
-        what only the live link has.
+        Not "SolidWorks Bridge" any more. How fine the geometry is, and the
+        button that asks for it again, are in Mesh Quality above, and
+        whether the link is up is on the line under the name of the addon.
+        What is left is the rig, which is what the link is for, and a name
+        that stays right when a second CAD application arrives.
         """
 
-        bl_label = "SolidWorks Bridge"
+        bl_label = "Rig"
         bl_idname = "CADLINK_PT_bridge"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
@@ -853,20 +854,6 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
-
-            # Whether the CAD application can reach this Blender at all.
-            # Color is never the only signal, so each state has its own
-            # icon as well as its own words.
-            row = layout.row()
-            try:
-                from .. import bridge
-                if bridge.is_running():
-                    row.label(text="Listening on port %d" % bridge.port(),
-                              icon="PLUGIN")
-                else:
-                    row.label(text="Not listening", icon="UNLINKED")
-            except Exception:
-                pass
 
             # The lock is not drawn. A send from the CAD application asks
             # what to do with the rig that is standing, so there is nothing
@@ -971,6 +958,16 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
+
+            # The line under the name of the addon says whether the link is
+            # up. The port is the detail behind it, so it lives here.
+            try:
+                from .. import bridge
+                if bridge.is_running():
+                    layout.label(text="Listening on port %d" % bridge.port(),
+                                 icon="PLUGIN")
+            except Exception:
+                pass
 
             selected = [o for o in context.selected_objects
                         if o.get("RIG_component_id")]

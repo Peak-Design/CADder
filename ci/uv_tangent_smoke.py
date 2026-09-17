@@ -893,7 +893,7 @@ check(len(whole_shared) == 2,
 # the way to the pole, where the real distance round it has gone to nothing,
 # so no one scale can hold a texture on it. A plane next to it unrolls
 # exactly, and has to come out of this untouched.
-print("\n== Smart unwraps the faces one scale cannot flatten")
+print("\n== Smart unwraps the compound surfaces")
 
 
 def ball_and_plate(lat=math.radians(75.0), steps=16):
@@ -950,7 +950,7 @@ check(mask is not None and mask[:flat].all() and not mask[flat],
       "the sphere is picked out and the plane is not (%d of %d face(s))"
       % (0 if mask is None else int(mask.sum()), len(me.polygons)))
 
-faces, made = m._unwrap_awkward_objects([obj])
+faces, made = m._unwrap_compound_objects([obj])
 after = uv_mod.read_uvs(me)
 left = uv_mod.strained(me)
 check(faces == flat and made == 1,

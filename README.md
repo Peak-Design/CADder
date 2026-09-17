@@ -153,13 +153,16 @@ the panels that work on any part. Mesh Quality asks one question for both
 routes: how fine the mesh is, and the button to read the CAD again. See
 [Mesh Quality](#mesh-quality) below.
 
-The link is one panel with three sub-panels, two of them closed:
+The line under the name of the addon says what the link is doing: the
+bridge is off, waiting for a connection, or active. A second CAD
+application would add a line of its own there.
 
-- **SolidWorks Bridge**: whether the listener is running and on which
-  port, and **Join Rigs** when the scene holds more than one rig. One
-  dropdown per mechanism that offers a choice of input sits in the
-  **Mechanism Input** sub-panel below. Changing the input rebuilds the rig
-  for that choice.
+The rig is one panel with three sub-panels, two of them closed:
+
+- **Rig**: **Join Rigs** when the scene holds more than one rig, and
+  whatever the last run had to report. One dropdown per mechanism that
+  offers a choice of input sits in the **Mechanism Input** sub-panel below.
+  Changing the input rebuilds the rig for that choice.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
   Build Rig, Relink Geometry). A direct send runs all of it, so this
@@ -169,9 +172,10 @@ The link is one panel with three sub-panels, two of them closed:
   loop counts of the manifest, the exporter's warnings, and the match,
   pose and rig reports of the last run.
 
-Below the bridge come **Defeature** and **UV**, which work on any part
-whichever way it came in, then **Material Database**, **Hierarchy** and
-**STEP - File**. **STEP - Debug** joins them when **Debug Options** is on
+Below it come **Defeature** and **UV**, which work on any part whichever
+way it came in, then **Material Database** and the STEP panels: **STEP -
+Hierarchy** (Prune Hierarchy reads what the STEP importer writes, so a part
+from the live link is not in it) and **STEP - File**. **STEP - Debug** joins them when **Debug Options** is on
 in the addon preferences.
 
 ### Mesh Quality
@@ -184,7 +188,8 @@ one place.
 The panel shows the controls of the route the parts in scope came in by.
 For a part from the live link that is **Quality**: the four names the CAD
 add-in uses (Draft, Balanced, Fine, Ultra), with Custom taking a chord of
-its own. For a part from a file it is **Linear** and **Angular**
+its own. Balanced is the default, and it is the default of the CAD add-in
+too, so the same name gives the same triangles over either route. For a part from a file it is **Linear** and **Angular**
 deflection, or **Detail** with **Simpler Parameters** on.
 
 The button says which file it is going to read again: **Rebuild from
@@ -545,8 +550,8 @@ longer. **Into UDIM tiles** shares the import over the tiles you ask for. A
 tile is never smaller than the longest single face, because the addon never
 splits a CAD face.
 
-**Unwrap awkward faces** gives Blender's own unwrap the faces that no one
-scale can flatten. A plane, a cylinder and a cone unroll with no error at
+**Unwrap compound surfaces** gives Blender's own unwrap the faces that no
+one scale can flatten. A plane, a cylinder and a cone unroll with no error at
 all, and their chart carries a texture at one size all over. A sphere, a
 torus and a spline do not unroll, so their chart is right over the middle of
 the face and wrong at its corners. The addon measures each face against its
@@ -557,6 +562,11 @@ the chart of its surface when the unwrap does not beat it. The option is on
 by default. It costs about two seconds on a gearbox, and it is what takes
 the last of the worm wheel from 96 to 100 percent of its surface inside a
 factor of two.
+
+A send from the CAD application runs the same pass over what it brings, so
+a compound surface arrives ready whichever UV mode the scene is set to. The
+CAD add-in carries the option as **Unwrap compound surfaces** in its Export
+Options.
 
 Smart makes its own cuts, so the **Closed surfaces** setting does not apply
 to it. A turn does not change the texel density, and a bend changes it only

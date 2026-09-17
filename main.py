@@ -1093,58 +1093,79 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             pass
 
 
-def _unwrap_awkward_objects(targets, method="MINIMUM_STRETCH"):
-    """Give Blender's unwrap the faces that no one scale can flatten.
+def _unwrap_compound_objects(targets, method="MINIMUM_STRETCH"):
+    """Give Blender's unwrap the compound surfaces of these parts.
 
     CAD Surfaces gives every face the chart of its own surface. A plane, a
     cylinder and a cone unroll into that chart with no error at all. A
     sphere, a torus and a spline do not unroll, so their chart stretches
     wherever the surface does, and no scale puts it right. Those faces, and
-    only those, go to the unwrap here, before Smart starts to join
-    anything: it is what a user does by hand today, and Smart then treats
-    the island it makes like any other chart.
+    only those, go to the unwrap here: it is what a user does by hand
+    today, and what comes back is treated like any other chart.
+
+    The work is per MESH, not per object. An assembly holds one mesh in
+    many places, and a large one holds it in thousands (Conveyor12k-A00: 11761
+    objects over 140 meshes, Oscar, 2026-09-17).
+
+    The unwrap operator needs edit mode, and a mesh here may belong to no
+    object in the view layer at all, such as the prototype inside a
+    collection an empty instances. So each mesh is put in a holder of its
+    own for the length of the unwrap. Nothing the user had selected moves.
 
     Returns (faces, islands).
     """
+    meshes = []
+    seen = set()
+    for o in targets or []:
+        for holder in tools_mod.mesh_parts([o]):
+            me = getattr(holder, "data", None)
+            if not isinstance(me, bpy.types.Mesh) or me.name in seen:
+                continue
+            seen.add(me.name)
+            meshes.append(me)
+
     picked = []
-    for o in targets:
+    for me in meshes:
         try:
-            mask = uv_mod.strained(o.data)
+            mask = uv_mod.strained(me)
         except Exception as e:
-            print(f"UV strain test failed on {o.name}: {e}")
+            print(f"UV strain test failed on {me.name}: {e}")
             continue
         if mask is None or not mask.any():
             continue
         # The unwrap reads the seams. Without one on every chart boundary
         # it welds two charts into one island, and without the cut a closed
         # face already carries it has nowhere to open that face.
-        uv_mod.mark_seams(o.data)
-        picked.append((o, mask, uv_mod.read_uvs(o.data)))
+        uv_mod.mark_seams(me)
+        picked.append((me, mask, uv_mod.read_uvs(me)))
     if not picked:
         return 0, 0
 
     view_layer = bpy.context.view_layer
     tool = bpy.context.tool_settings
-    was = tuple(tool.mesh_select_mode)
+    select_mode = tuple(tool.mesh_select_mode)
+    held = [o for o in view_layer.objects if o.select_get()]
+    active = view_layer.objects.active
+    holders = []
     faces = 0
     try:
-        for o in view_layer.objects:
-            try:
-                o.select_set(False)
-            except RuntimeError:
-                pass
-        for o, _mask, _was in picked:
-            o.select_set(True)
-        view_layer.objects.active = picked[0][0]
+        for o in held:
+            o.select_set(False)
+        for me, _mask, _was in picked:
+            holder = bpy.data.objects.new("CADder UV", me)
+            bpy.context.scene.collection.objects.link(holder)
+            holder.select_set(True)
+            holders.append(holder)
+        view_layer.objects.active = holders[0]
         bpy.ops.object.mode_set(mode="EDIT")
         tool.mesh_select_mode = (False, False, True)
         bpy.ops.mesh.select_all(action="DESELECT")
-        for o, mask, _was in picked:
-            bm = bmesh.from_edit_mesh(o.data)
+        for me, mask, _was in picked:
+            bm = bmesh.from_edit_mesh(me)
             bm.faces.ensure_lookup_table()
             for i in np.flatnonzero(mask).tolist():
                 bm.faces[i].select_set(True)
-            bmesh.update_edit_mesh(o.data, loop_triangles=False,
+            bmesh.update_edit_mesh(me, loop_triangles=False,
                                    destructive=False)
             faces += int(mask.sum())
         try:
@@ -1155,20 +1176,30 @@ def _unwrap_awkward_objects(targets, method="MINIMUM_STRETCH"):
                               correct_aspect=False)
         bpy.ops.object.mode_set(mode="OBJECT")
     except Exception as e:
-        print(f"UV unwrap of the awkward faces failed: {e}")
+        print(f"UV unwrap of the compound surfaces failed: {e}")
         try:
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
-        return 0, 0
+        faces = 0
     finally:
-        tool.mesh_select_mode = was
+        tool.mesh_select_mode = select_mode
+        for holder in holders:
+            bpy.data.objects.remove(holder)
+        for o in held:
+            try:
+                o.select_set(True)
+            except RuntimeError:
+                pass
+        view_layer.objects.active = active
+    if not faces:
+        return 0, 0
 
     # The unwrap packs what it made into the 0 to 1 square. Put each island
     # back at the size the CAD charts of the part are in.
     islands = 0
-    for o, mask, was in picked:
-        islands += uv_mod.fit_charts(o.data, mask, was)
+    for me, mask, was in picked:
+        islands += uv_mod.fit_charts(me, mask, was)
     return faces, islands
 
 
@@ -1201,7 +1232,7 @@ def _smart_merge_objects(objs, pack="NONE", tiles=4,
         return
     if unwrap:
         t_un = time.time()
-        faces, made = _unwrap_awkward_objects(targets)
+        faces, made = _unwrap_compound_objects(targets)
         if faces:
             print("UV smart unwrap: %d face(s) that one scale cannot "
                   "flatten into %d island(s) in %.2fs"
@@ -2405,7 +2436,7 @@ def load_step(
     uv_smart_distortion=UV_SMART_DISTORTION,
     uv_smart_sharp=False,
     uv_smart_split=True,
-    uv_smart_unwrap=True,
+    uv_unwrap_compound=True,
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
@@ -2558,7 +2589,7 @@ def load_step(
         "uv_smart_distortion": uv_smart_distortion,
         "uv_smart_sharp": uv_smart_sharp,
         "uv_smart_split": uv_smart_split,
-        "uv_smart_unwrap": uv_smart_unwrap,
+        "uv_unwrap_compound": uv_unwrap_compound,
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
@@ -2880,7 +2911,7 @@ def load_step(
     if uv_mode == "SMART":
         _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
                              uv_smart_distortion, uv_smart_sharp,
-                             uv_smart_split, uv_smart_unwrap)
+                             uv_smart_split, uv_unwrap_compound)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -3216,10 +3247,10 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "fills little of the rectangle around it. Clear this "
                     "option to keep every island whole",
         default=True)
-    uv_smart_unwrap: bpy.props.BoolProperty(
-        name="Unwrap Awkward Faces",
+    uv_unwrap_compound: bpy.props.BoolProperty(
+        name="Unwrap Compound Surfaces",
         description="Give Blender's unwrap the faces that no one scale can "
-                    "flatten, such as a sphere, a blend corner or a spline "
+                    "flatten: a sphere, a torus, a blend corner or a spline "
                     "surface. A plane, a cylinder and a cone keep the exact "
                     "chart of the CAD surface",
         default=True)
@@ -3472,10 +3503,10 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
-    uv_smart_unwrap: bpy.props.BoolProperty(
-        name="Unwrap Awkward Faces",
+    uv_unwrap_compound: bpy.props.BoolProperty(
+        name="Unwrap Compound Surfaces",
         description="Give Blender's unwrap the faces that no one scale can "
-                    "flatten, such as a sphere, a blend corner or a spline "
+                    "flatten: a sphere, a torus, a blend corner or a spline "
                     "surface. A plane, a cylinder and a cone keep the exact "
                     "chart of the CAD surface",
         default=True,
@@ -3621,7 +3652,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_smart_distortion": self.uv_smart_distortion,
             "uv_smart_sharp": self.uv_smart_sharp,
             "uv_smart_split": self.uv_smart_split,
-            "uv_smart_unwrap": self.uv_smart_unwrap,
+            "uv_unwrap_compound": self.uv_unwrap_compound,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
@@ -3703,7 +3734,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_smart_distortion=self.uv_smart_distortion,
                 uv_smart_sharp=self.uv_smart_sharp,
                 uv_smart_split=self.uv_smart_split,
-                uv_smart_unwrap=self.uv_smart_unwrap,
+                uv_unwrap_compound=self.uv_unwrap_compound,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,
@@ -4331,6 +4362,15 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
                      icon="FUND").url = updater_mod.KOFI_URL
 
     def draw(self, context):
+        # What the link to the CAD application is doing. It is here, under
+        # the name of the addon, because it is true of the whole tab and
+        # not of one panel in it, and because a second CAD application
+        # would put a line of its own beside this one.
+        prefs = _get_addon_prefs()
+        if bridge_mod is not None and getattr(prefs, "enable_bridge", False):
+            for text, icon in bridge_mod.status():
+                self.layout.label(text=text, icon=icon)
+
         update = updater_mod.available_update()
         if not update:
             return
@@ -4447,9 +4487,15 @@ class CADLINK_PT_quality(bpy.types.Panel):
 
 
 class STEP_PT_STEPper(bpy.types.Panel):
-    """What the tree of a STEP import holds, and what it does not need."""
+    """What the tree of a STEP import holds, and what it does not need.
 
-    bl_label = "Hierarchy"
+    A part from the live link is not in it: Prune Hierarchy reads the
+    STEP_uuid the STEP importer writes, and the empties it takes out are
+    the ones a STEP tree carries. So the panel says STEP, like the two
+    below it.
+    """
+
+    bl_label = "STEP - Hierarchy"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "CADder"
@@ -4468,6 +4514,7 @@ class STEP_PT_STEPper_Reload(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "CADder"
     bl_order = 1007
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout

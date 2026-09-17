@@ -46,7 +46,7 @@ PERSISTED_PROPS = (
     "ang_deflection_rot", "lin_deflection_rel", "detail_level",
     "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
     "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
-    "uv_smart_unwrap",
+    "uv_unwrap_compound",
     "box_uv_scale", "uv_pack", "uv_pack_tiles",
     "uv_pack_margin", "tris_to_quads",
     "skip_construction", "import_curves",
@@ -199,7 +199,7 @@ def draw_uv_mode(owner, layout):
     sub.prop(owner, "uv_smart_split")
     sub = layout.row()
     sub.active = mode == "SMART"
-    sub.prop(owner, "uv_smart_unwrap")
+    sub.prop(owner, "uv_unwrap_compound")
     sub = layout.row()
     sub.active = mode == "SURFACE" or mode in uv_mod.UNWRAP_MODES
     sub.prop(owner, "uv_closed_seams")
@@ -338,7 +338,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "uv_closed_seams": "SINGLE", "box_uv_scale": 1.0,
                 "uv_smart_distortion": _main.UV_SMART_DISTORTION,
                 "uv_smart_sharp": False, "uv_smart_split": True,
-                "uv_smart_unwrap": True,
+                "uv_unwrap_compound": True,
                 "tris_to_quads": True, "uv_pack": "NONE",
                 "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
                 "import_curves": False, "eng_materials": True,
@@ -353,7 +353,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 for key in ("apply_scale", "skip_construction", "uv_mode",
                             "uv_normalize", "uv_closed_seams",
                             "uv_smart_distortion", "uv_smart_sharp",
-                            "uv_smart_split", "uv_smart_unwrap",
+                            "uv_smart_split", "uv_unwrap_compound",
                             "box_uv_scale", "tris_to_quads", "uv_pack",
                             "uv_pack_tiles", "uv_pack_margin",
                             "import_curves",

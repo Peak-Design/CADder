@@ -120,7 +120,7 @@ WANT = {
     "uv_smart_distortion": 12.0,
     "uv_smart_sharp": True,
     "uv_smart_split": False,
-    "uv_smart_unwrap": False,
+    "uv_unwrap_compound": False,
     "box_uv_scale": 2.5,
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,

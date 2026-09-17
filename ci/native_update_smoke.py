@@ -164,10 +164,10 @@ def main():
          (3, "c003", "guard", "guard-1", 0.8),
          (4, "c004", "lift", "lift-4", 0.6),
          (5, "c005", "cam", "cam-1", 1.0)])
-    # The same file name, because the update finds the import by it.
-    mesh2 = os.path.join(tmp, "upd2.swmesh")
-    os.replace(mesh2, os.path.join(tmp, "upd.swmesh"))
-    mesh2 = os.path.join(tmp, "upd.swmesh")
+    # A NEW file name, because the assembly was renamed: a revision was
+    # cut and a letter went on the end. The update has to find the import
+    # that is standing all the same, or it rebuilds the scene and throws
+    # away the work above (Oscar, 2026-09-17).
 
     objects, report, out = native_import.update(
         bpy.context, mesh2, manifest=m2, hierarchy="TREE")
@@ -228,9 +228,20 @@ def main():
            "the update removed an object of the user's own")
     _check(out.structural, "the update did not report a structural change")
 
+    # The import took the new name of the document, so the next update
+    # finds it by name again.
+    root = bpy.data.collections.get("upd2")
+    _check(root is not None and root.get("SWMESH_file") == "upd2",
+           "the import kept the old name of the document")
+    _check(bpy.data.collections.get("upd") is None,
+           "the old name is still on a collection")
+    _check(by_path("base-1").get("SWMESH_file") == "upd2",
+           "a part kept the old name of the document")
+
     print("native_update_smoke: OK: %s, a renamed occurrence stayed one "
           "part, the untouched parts kept their meshes and modifiers, and "
-          "an object of the user's own was left alone" % out.describe())
+          "an object of the user's own was left alone, and the renamed "
+          "assembly was recognized" % out.describe())
 
 
 main()

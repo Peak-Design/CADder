@@ -37,7 +37,7 @@ if bpy is not None:
             description="How fine the CAD application cuts the parts that "
                         "Rebuild from CAD brings over",
             items=ui.QUALITY_ITEMS,
-            default="FINE",
+            default="BALANCED",
         )
         update_quality_factor: bpy.props.FloatProperty(
             name="Chord",

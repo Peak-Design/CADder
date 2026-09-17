@@ -199,6 +199,71 @@ def _own_collections(stem):
     return sorted(mine, key=lambda c: -d(c))
 
 
+def _renamed(root, stem):
+    """Puts the new name of the document on everything the import that is
+    standing tagged with the old one."""
+    was = root.get(_TAG_FILE)
+    if not was or was == stem:
+        return
+    for coll in bpy.data.collections:
+        if coll.get(_TAG_FILE) == was:
+            coll[_TAG_FILE] = stem
+            if coll.name == was or coll.name.startswith(was + "."):
+                coll.name = stem + coll.name[len(was):]
+    for obj in bpy.data.objects:
+        if obj.get(_TAG_FILE) == was:
+            obj[_TAG_FILE] = stem
+    print("[CADLink native] the assembly was renamed: %s is now %s"
+          % (was, stem))
+
+
+def standing(stem, scene):
+    """The import in the scene that an export is an update OF, or None.
+
+    By name, when a name matches. But a document gets RENAMED, most often
+    when a revision is cut and a letter goes on the end, and the scene
+    still holds that same assembly (Oscar, 2026-09-17). An update that did
+    not find it would build the whole thing again and throw away
+    everything done in Blender since, which is the one thing an update
+    exists to avoid.
+
+    So otherwise it is the import that holds most of what this export
+    holds, by the occurrence paths, which are the names of the components
+    INSIDE the assembly and do not change when the assembly is renamed. It
+    then takes the new name.
+    """
+    roots = [c for c in bpy.data.collections
+             if c.get(_TAG_FILE) is not None
+             and c.get("SWMESH_role") in ("flat", "hierarchy")]
+    for coll in roots:
+        if coll.get(_TAG_FILE) == stem:
+            return coll
+
+    known = {i.path for i in scene.instances if i.path}
+    tag = _TAG_PATH
+    if not known:
+        known = {i.component_id for i in scene.instances if i.component_id}
+        tag = _TAG_COMPONENT
+    if not known:
+        return None
+
+    best, score = None, 0
+    for coll in roots:
+        held = [o for o in coll.all_objects if o.get(_TAG_FILE) is not None]
+        if not held:
+            continue
+        hit = sum(1 for o in held if (o.get(tag) or "") in known)
+        # Half of what is standing has to be in the export. A revision
+        # changes some of an assembly, never most of it, and a scene that
+        # holds a DIFFERENT assembly must not be adopted by this one.
+        if hit > score and hit * 2 >= len(held):
+            best, score = coll, hit
+    if best is None:
+        return None
+    _renamed(best, stem)
+    return best
+
+
 def remove_previous(stem=None, scene_collection=None):
     """Clears the previous native import so a send replaces rather than
     accumulates: one direct send stands in a scene at a time, whatever
@@ -799,12 +864,7 @@ def update(context, path, manifest=None, unit_scale=1.0,
         hierarchy = "FLAT"
     said = report_to or progress.NONE
 
-    root = None
-    for col in bpy.data.collections:
-        if col.get(_TAG_FILE) == stem and col.get("SWMESH_role") in (
-                "flat", "hierarchy"):
-            root = col
-            break
+    root = standing(stem, scene)
     if root is None:
         # Nothing of this assembly is in the scene: an update of nothing is
         # an import.

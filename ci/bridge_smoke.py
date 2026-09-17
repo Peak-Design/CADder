@@ -298,7 +298,7 @@ def check_option_parity():
     sent_by_addin = {
         "hierarchy_types", "quality_preset", "up_as", "fw_as",
         "import_curves", "group_in_collection", "separate_solids",
-        "tris_to_quads",
+        "tris_to_quads", "uv_unwrap_compound",
     }
     dropped = sorted(sent_by_addin - allowed)
     assert not dropped, (

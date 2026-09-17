@@ -794,6 +794,19 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
         if want("cleanup", False):
             _cleanup_leftover_empties(stages)
 
+        # Where the CAD application is looking from, when the user asked
+        # for it. It comes last, so the view frames what the whole job
+        # left in the scene.
+        if payload.get("view"):
+            from .rig import native_import as native_mod, viewport
+            opts = payload.get("import_options") or {}
+            moved = viewport.match(
+                payload["view"],
+                native_mod.up_frame(opts.get("up_as") or "ZPOS"))
+            if moved:
+                log.append("view: %d 3D view(s) turned to the CAD angle"
+                           % moved)
+
         bpy.context.view_layer.update()
 
     ok = True

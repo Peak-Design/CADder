@@ -107,6 +107,11 @@ def main():
                 "manifest": manifest_path,
                 "steps": {"import": False, "sync_poses": False,
                           "cleanup": True},
+                # Where SolidWorks was looking. A background Blender has no
+                # 3D view to turn, so this asks only that a job carries it
+                # through without tripping over it.
+                "view": {"orientation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+                         "box": [-0.1, -0.1, -0.1, 0.1, 0.1, 0.1]},
             })
 
         t = threading.Thread(target=client, daemon=True)

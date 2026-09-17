@@ -157,6 +157,12 @@ The line under the name of the addon says what the link is doing: the
 bridge is off, waiting for a connection, or active. A second CAD
 application would add a line of its own there.
 
+**Match the Blender view**, in the CAD add-in's Export Options, turns every 3D view of Blender to the angle the CAD view is at
+once the parts arrive, and frames them. The angle is the CAD
+application's; the pan and the zoom are not, so Blender frames what it
+holds, which is what you want to see after an import. It is off by
+default, because a send should not move a view somebody is working in.
+
 The rig is one panel with three sub-panels, two of them closed:
 
 - **Rig**: **Join Rigs** when the scene holds more than one rig, and

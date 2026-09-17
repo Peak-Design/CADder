@@ -143,7 +143,7 @@ def poses(component_ids=None, persistent_ids=None, instance=None):
 
 
 def retessellate(component_ids, quality, persistent_ids=None, instance=None,
-                 separate_solids=None):
+                 separate_solids=None, simplify=None):
     """Asks for those components again at `quality` (0..1). The reply names
     a .swmesh on disk. Persistent ids name the same occurrences after an
     edit; see `poses`.
@@ -153,9 +153,15 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
     went out in: the whole part arriving as one piece put the whole part on
     every body object, drawn over itself once per body (Oscar,
     2026-09-16). None leaves the CAD application to use its own export
-    setting, which is what an older scene has to fall back on."""
+    setting, which is what an older scene has to fall back on.
+
+    simplify names the components this scene holds without their small
+    features, one entry each. The CAD application holds no such setting of
+    its own, so saying nothing gets the geometry as it is."""
     payload = dict(components=list(component_ids), quality=float(quality),
                    persistent_ids=list(persistent_ids or []))
     if separate_solids is not None:
         payload["separate_solids"] = bool(separate_solids)
+    if simplify:
+        payload["simplify"] = list(simplify)
     return request("retessellate", instance=instance, **payload)

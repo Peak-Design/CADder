@@ -152,15 +152,18 @@ The **CADder** tab holds the link at the top and the STEP import
 panels below it. The link is one panel with three sub-panels, two of
 them closed:
 
-- **SolidWorks Bridge**: **Quality**, **Update from CAD**, and **Lock
-  Rig**. The four quality
+- **SolidWorks Bridge**: **Quality**, **Scope**, **Rebuild from CAD**,
+  and **Lock Rig**. The four quality
   names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
-  and Custom takes a chord of its own. Update from CAD asks the CAD
-  application for the geometry of the selected parts again at that
-  quality, and swaps it in without losing the pose, the materials or the
-  rig. Press F9 after it for its scope (the selected parts, the
-  collections they are in, or the whole send) and its purpose (Geometry,
-  Geometry and poses, Poses, or Everything). Everything asks for the
+  and Custom takes a chord of its own. Rebuild from CAD asks the CAD
+  application for the geometry again at that quality, and swaps it in
+  without losing the pose, the materials or the rig. Scope says how much
+  of the assembly it covers: the selected parts, a collection and
+  everything below it, or the whole send. With nothing selected, the
+  collection scope takes the collection that is active in the outliner,
+  so one level of a tree can be rebuilt on its own. Press F9 after it for
+  the scope again and for its purpose (Geometry, Geometry and Poses,
+  Poses, or Everything). Everything asks for the
   assembly again and rebuilds the scene from it, which is what catches
   parts added or removed and mates changed. One dropdown per mechanism
   that offers a choice of input sits in the **Mechanism Input**

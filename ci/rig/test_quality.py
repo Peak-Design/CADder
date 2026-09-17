@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The quality dial of Update from CAD.
+"""The quality dial of Rebuild from CAD.
 
 The CAD Link panel offers the same four names as the Export Options of
 the CAD add-in. A name must mean the same chord over either route, or a

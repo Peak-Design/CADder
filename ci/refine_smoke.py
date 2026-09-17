@@ -224,6 +224,23 @@ def main():
         result = bpy.ops.cadlink.update_from_cad(quality=0.5, scope="WHOLE")
         assert "FINISHED" in result, result
         assert server.seen[-1]["components"] == ["c009"], server.seen[-1]
+        # A rebuild that said nothing about simplifying leaves the key out,
+        # because a CAD application told nothing sends the geometry as it is.
+        assert "simplify" not in server.seen[-1], server.seen[-1]
+
+        # 7b. A part marked to be simplified says so on every rebuild. This
+        # is what keeps a scene consistent: the setting is Blender's, and it
+        # has to ride the request or the holes come quietly back.
+        obj.cad_simplify.enabled = True
+        obj.cad_simplify.size = 0.008
+        obj.cad_simplify.curved = True
+        result = bpy.ops.cadlink.update_from_cad(quality=0.5, scope="WHOLE")
+        assert "FINISHED" in result, result
+        asked = server.seen[-1].get("simplify")
+        assert asked and asked[0]["component"] == "c009", server.seen[-1]
+        assert abs(asked[0]["size_m"] - 0.008) < 1e-6, asked
+        assert asked[0]["curved"] is True, asked
+        obj.cad_simplify.enabled = False
 
         # 8. Poses: the CAD side says the part has moved, and the object
         #    follows. The manifest keeps the new transform, so a rig built

@@ -10,7 +10,7 @@ and graph.py run under plain Python in CI. The bpy-dependent classes only
 exist inside Blender."""
 
 from . import constraints, drivers, graph, loops  # noqa: F401
-from . import manifest, matching, parenting, rig_build, ui  # noqa: F401
+from . import manifest, matching, parenting, rig_build, simplify, ui  # noqa: F401
 
 try:
     import bpy
@@ -29,13 +29,13 @@ if bpy is not None:
             # and two file buttons with different behavior reads as a bug.
             default="",
         )
-        # How fine Update from CAD asks the CAD application to tessellate.
+        # How fine Rebuild from CAD asks the CAD application to tessellate.
         # The four names are the names of its own Export Options, so the
         # same name gives the same triangles over either route.
         update_quality: bpy.props.EnumProperty(
             name="Quality",
             description="How fine the CAD application cuts the parts that "
-                        "Update from CAD brings over",
+                        "Rebuild from CAD brings over",
             items=ui.QUALITY_ITEMS,
             default="FINE",
         )
@@ -45,21 +45,35 @@ if bpy is not None:
                         "0 is a coarse preview, 1 is a smooth close-up",
             default=0.75, min=0.0, max=1.0, subtype="FACTOR",
         )
+        # How much of the assembly the Rebuild button covers. On the
+        # panel rather than in the redo panel alone, so the button says
+        # what it will do before it is pressed.
+        rebuild_scope: bpy.props.EnumProperty(
+            name="Scope",
+            description="How much of the assembly Rebuild from CAD asks for",
+            items=ui.SCOPE_ITEMS,
+            default="SELECTED",
+        )
         # One entry per mechanism that offers a choice of input
         # (inputs.py); filled on manifest load, drawn as dropdowns.
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)
 
-    _classes = (ui.CADLINK_MechanismChoice, CadLinkSettings) + ui.classes
+    _classes = ((ui.CADLINK_MechanismChoice, CadLinkSettings)
+                + simplify.classes + ui.classes)
 
     def register():
         for cls in _classes:
             bpy.utils.register_class(cls)
         bpy.types.Scene.cad_link = bpy.props.PointerProperty(
             type=CadLinkSettings)
+        # Per part and per collection, so the classes above have to be
+        # registered first.
+        simplify.register()
 
     def unregister():
         # The pointer references the PropertyGroup class, so it must be
         # gone before the class it points at.
+        simplify.unregister()
         del bpy.types.Scene.cad_link
         for cls in reversed(_classes):
             bpy.utils.unregister_class(cls)

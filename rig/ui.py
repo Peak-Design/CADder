@@ -15,7 +15,7 @@ import os
 import re
 
 from . import (graph, inputs, joining, manifest as manifest_mod, matching,
-               parenting, pose_sync, rig_build)
+               parenting, pose_sync, rig_build, simplify)
 from .manifest import ManifestError
 
 try:
@@ -32,7 +32,7 @@ _STATE = {
     "parent_report": None,
     "join_report": None,
     # The import options of the last send (hierarchy, up axis, quality), so
-    # an Update from CAD that asks for the whole assembly again lands it the
+    # an Rebuild from CAD that asks for the whole assembly again lands it the
     # same way round and in the same shape.
     "import_options": None,
     # Which bone drove which parts, taken before an update moves the parts
@@ -212,9 +212,20 @@ QUALITY_ITEMS = [
     ("CUSTOM", "Custom", "The chord set below, not one of the four names"),
 ]
 
+#: How much of the assembly Rebuild from CAD covers. Shared by the panel and
+#: the operator, so the dropdown and the redo panel offer the same three.
+SCOPE_ITEMS = [
+    ("SELECTED", "Selected Parts", "The parts that are selected"),
+    ("COLLECTION", "Collection",
+     "Every part in the collections the selection sits in, and in the "
+     "collections below them. With nothing selected, the collection that is "
+     "active in the outliner"),
+    ("WHOLE", "Whole Assembly", "Every part of this send"),
+]
+
 
 def quality_dial(settings):
-    """The chord dial for Update from CAD: 0 is coarse, 1 is fine.
+    """The chord dial for Rebuild from CAD: 0 is coarse, 1 is fine.
 
     The CAD application turns it into a chord tolerance against the size
     of each part, so one dial suits a bracket and a chassis alike."""
@@ -243,6 +254,17 @@ def _find_rig(context):
 
 
 if bpy is not None:
+
+    def _simplify_target(context):
+        """What the Simplify panel is about: the active part when it came in
+        over CAD Link, and otherwise the active collection."""
+        obj = context.object
+        if obj is not None and obj.get("RIG_component_id"):
+            return obj
+        collection = context.collection
+        if collection is not None and context.scene is not None                 and collection is not context.scene.collection:
+            return collection
+        return None
 
     class CADLINK_MechanismChoice(bpy.types.PropertyGroup):
         """One mechanism's input, as a dropdown of its candidate joints."""
@@ -599,22 +621,44 @@ if bpy is not None:
         """Every object that came in over CAD Link."""
         return [o for o in bpy.data.objects if o.get("RIG_component_id")]
 
+    def _under(collection):
+        """A collection and every collection inside it, however deep."""
+        found = [collection]
+        stack = [collection]
+        guard = 0
+        while stack and guard < 10000:
+            guard += 1
+            here = stack.pop()
+            for child in here.children:
+                if child in found:
+                    continue
+                found.append(child)
+                stack.append(child)
+        return found
+
     def _scope_objects(context, scope):
-        """The objects an update covers. Selected parts is what is selected.
-        Collection widens that to everything in the same collections, which
-        is a subassembly in the tree modes. Whole assembly is every object
-        of the same send."""
+        """The objects a rebuild covers. Selected parts is what is selected.
+        Collection widens that to the collections the selection sits in AND
+        everything below them, which is a subassembly and its subassemblies
+        in the tree modes. With nothing selected it is the collection that
+        is active in the outliner, so one level of the tree can be rebuilt
+        on its own. Whole assembly is every object of the same send."""
         selected = [o for o in context.selected_objects if o.get("RIG_component_id")]
         if scope == "SELECTED":
             return selected
         if scope == "COLLECTION":
-            collections = set()
+            holders = []
             for o in selected:
-                collections.update(c.name for c in o.users_collection)
-            if not collections and context.collection is not None:
-                collections.add(context.collection.name)
+                for c in o.users_collection:
+                    if c not in holders:
+                        holders.append(c)
+            if not holders and context.collection is not None:
+                holders = [context.collection]
+            wanted = set()
+            for c in holders:
+                wanted.update(_under(c))
             return [o for o in _linked_objects()
-                    if any(c.name in collections for c in o.users_collection)]
+                    if any(c in wanted for c in o.users_collection)]
         files = {o.get("SWMESH_file") for o in selected}
         files.discard(None)
         if not files:
@@ -669,12 +713,18 @@ if bpy is not None:
         the geometry alone can see.
 
         The import options of the last send are reused, so the assembly
-        lands the same way round and in the same shape."""
-        from . import cad_link, manifest as man_mod
+        lands the same way round and in the same shape. So are the parts and
+        collections the scene holds simplified: the CAD application is told
+        which they are, and the settings are put back on what arrives,
+        because this replaces every object and collection in the send."""
+        from . import cad_link, manifest as man_mod, simplify
         from .. import bridge
         out = {}
+        held = simplify.snapshot(context.scene)
+        asked = simplify.orders(_linked_objects(), context.scene)
         try:
-            reply = cad_link.request("export", mesh=True)
+            reply = cad_link.request(
+                "export", mesh=True, **({"simplify": asked} if asked else {}))
         except cad_link.CadLinkError as exc:
             return {"error": str(exc)}
         mesh = reply.get("mesh")
@@ -701,31 +751,28 @@ if bpy is not None:
         out["objects"] = (stages.get("mesh") or {}).get("objects", 0)
         rig = stages.get("rig")
         out["rig"] = ("%d bone(s)" % rig["bones"]) if rig else "no rig"
+        out["simplify"] = simplify.restore(held, context.scene)
         return out
 
     class CADLINK_OT_update_from_cad(bpy.types.Operator):
+        # The idname stays as it was. It is what a keymap, a macro or
+        # another addon calls, and a rename would break those for a label.
         bl_idname = "cadlink.update_from_cad"
-        bl_label = "Update from CAD"
+        bl_label = "Rebuild from CAD"
         bl_description = ((
             "Ask the CAD application for the geometry of these parts again, at the "
             "quality set here. The addon swaps the new geometry in and keeps the "
-            "pose, the materials and the rig"
+            "pose, the materials, the rig and which parts are simplified"
         ))
         bl_options = {"REGISTER", "UNDO"}
 
         scope: bpy.props.EnumProperty(
-            name="Scope",
-            items=[
-                ("SELECTED", "Selected parts", "The parts that are selected"),
-                ("COLLECTION", "Collection", "Every part in the same collections as the selection"),
-                ("WHOLE", "Whole assembly", "Every part of this send"),
-            ],
-            default="SELECTED")
+            name="Scope", items=SCOPE_ITEMS, default="SELECTED")
         what: bpy.props.EnumProperty(
             name="What",
             items=[
                 ("GEOMETRY", "Geometry", "The shape of the parts, at the quality below"),
-                ("GEOMETRY_POSES", "Geometry and poses",
+                ("GEOMETRY_POSES", "Geometry and Poses",
                  "The shape of the parts, and where they now sit in the CAD assembly. "
                  "The rig is rebuilt so its rest pose follows"),
                 ("POSES", "Poses", "Only where the parts now sit in the CAD assembly"),
@@ -745,7 +792,7 @@ if bpy is not None:
             return bool(_linked_objects())
 
         def execute(self, context):
-            from . import native_import, cad_link, progress
+            from . import native_import, cad_link, progress, simplify
             ids = []
             for obj in _scope_objects(context, self.scope):
                 cid = obj.get("RIG_component_id")
@@ -756,7 +803,8 @@ if bpy is not None:
                 return {"CANCELLED"}
             persistent = []
             split = False
-            for obj in _scope_objects(context, self.scope):
+            covered = _scope_objects(context, self.scope)
+            for obj in covered:
                 pid = obj.get("SWMESH_persistent_id")
                 if pid and pid not in persistent:
                     persistent.append(pid)
@@ -769,7 +817,7 @@ if bpy is not None:
             # The CAD application takes seconds to minutes to answer, and
             # Blender holds still meanwhile, so the status bar says which
             # part of the update is running.
-            said = progress.JobProgress(context, title="Update from CAD")
+            said = progress.JobProgress(context, title="Rebuild from CAD")
             try:
                 if self.what == "EVERYTHING":
                     said.stage("asking the CAD application for the assembly", 0, 90)
@@ -777,15 +825,24 @@ if bpy is not None:
                     if stages.get("error"):
                         self.report({"ERROR"}, stages["error"])
                         return {"CANCELLED"}
+                    parts, groups = stages.get("simplify") or (0, 0)
+                    kept = (", {} part(s) and {} collection(s) still simplified"
+                            .format(parts, groups)) if parts or groups else ""
                     self.report({"INFO"},
-                                "Brought the whole assembly over again: {} object(s), {}"
-                                .format(stages.get("objects", 0), stages.get("rig", "no rig")))
+                                "Brought the whole assembly over again: {} object(s), {}{}"
+                                .format(stages.get("objects", 0),
+                                        stages.get("rig", "no rig"), kept))
                     return {"FINISHED"}
                 if self.what != "POSES":
                     said.stage("asking the CAD application for the geometry", 0, 60)
+                    # Which parts travel without their small features is
+                    # this scene's decision, so it is sent every time. A
+                    # rebuild that left it out would quietly put the holes
+                    # back.
                     reply = cad_link.retessellate(
                         ids, self.quality, persistent_ids=persistent,
-                        separate_solids=split or None)
+                        separate_solids=split or None,
+                        simplify=simplify.orders(covered, context.scene))
                     said.stage("replacing the geometry", 60, 90, len(ids))
                     changed = native_import.refine(context, reply["mesh"])
                     if not changed:
@@ -858,10 +915,12 @@ if bpy is not None:
             col.prop(settings, "update_quality", text="Quality")
             if settings.update_quality == "CUSTOM":
                 col.prop(settings, "update_quality_factor", text="Chord")
+            col.prop(settings, "rebuild_scope", text="Scope")
 
             update = layout.operator("cadlink.update_from_cad",
                                      icon="FILE_REFRESH")
             update.quality = quality_dial(settings)
+            update.scope = settings.rebuild_scope
 
             # The lock: what a send does to the rig standing in the scene.
             # Only shown when there is a rig, because that is the only time
@@ -888,6 +947,42 @@ if bpy is not None:
                 box = layout.box()
                 box.alert = True
                 box.label(text=_STATE["error"], icon="ERROR")
+
+    class CADLINK_PT_simplify(bpy.types.Panel):
+        """Which parts travel without their small features.
+
+        The same settings as the object and collection properties, put
+        beside the button that sends them, because that is where the
+        decision is made. A collection is offered when nothing that came in
+        over CAD Link is active, which is how a whole subassembly is covered
+        at once.
+        """
+
+        bl_label = "Simplify"
+        bl_idname = "CADLINK_PT_simplify"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "CADder"
+        bl_parent_id = "CADLINK_PT_bridge"
+        bl_options = {"DEFAULT_CLOSED"}
+
+        @classmethod
+        def poll(cls, context):
+            return _simplify_target(context) is not None
+
+        def draw(self, context):
+            target = _simplify_target(context)
+            if target is None:
+                return
+            layout = self.layout
+            if isinstance(target, bpy.types.Collection):
+                layout.label(text=target.name, icon="OUTLINER_COLLECTION")
+                simplify.draw_for(layout, target,
+                                  simplify.above(target, context.scene))
+                return
+            layout.label(text=target.name, icon="OBJECT_DATA")
+            simplify.draw_for(layout, target,
+                              simplify.source_of(target, context.scene))
 
     class CADLINK_PT_mechanism(bpy.types.Panel):
         """Which joint drives a mechanism.
@@ -1102,6 +1197,7 @@ if bpy is not None:
         CADLINK_OT_join_rigs,
         CADLINK_OT_update_from_cad,
         CADLINK_PT_bridge,
+        CADLINK_PT_simplify,
         CADLINK_PT_mechanism,
         CADLINK_PT_step,
         CADLINK_PT_info,

@@ -422,6 +422,38 @@ def _leave_object_modes():
     return left
 
 
+def _ask_again_without_small_features(asked, preset, separate_solids):
+    """Asks the CAD application for the marked parts again, AFTER the send
+    this is answering has finished.
+
+    A send arrives from the CAD application, which is sitting on the HTTP
+    call and waiting for the answer. Calling back into it from here would
+    ask it to run a COM operation on a thread it has blocked, and both
+    sides would wait for each other until one timed out. So this goes on a
+    one-shot timer: the send is answered first, the CAD application is free
+    again, and the marked parts come back a moment later.
+
+    The quality is the one the send itself used, which the import options
+    carry by name, so the parts that come back match the ones beside them.
+    """
+    def run():
+        from .rig import cad_link, native_import, ui as rig_ui
+        try:
+            dial = rig_ui.QUALITY_DIAL.get(preset or "FINE", 0.75)
+            reply = cad_link.retessellate(
+                [row["component"] for row in asked], dial,
+                separate_solids=separate_solids, simplify=asked)
+            changed = native_import.refine(bpy.context, reply["mesh"])
+            print("[CADLink simplify] %d part(s) came back without their "
+                  "small features" % len(changed))
+        except Exception as exc:                       # noqa: BLE001
+            print("[CADLink simplify] the marked parts could not be asked "
+                  "for again: %s" % exc)
+        return None
+
+    bpy.app.timers.register(run, first_interval=0.1)
+
+
 def _run_job(payload: dict) -> dict:
     from .rig import progress as rig_progress
 
@@ -453,7 +485,7 @@ def _run_job(payload: dict) -> dict:
 
 def _apply_poses_from(poses: dict) -> int:
     """Moves the scene onto the poses the CAD application pushed. The same
-    path an Update from CAD takes, so one rule decides how a pose reaches
+    path an Rebuild from CAD takes, so one rule decides how a pose reaches
     the objects."""
     from .rig import ui as rig_ui
 
@@ -572,6 +604,12 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             rig_ui._STATE["rig_snapshot"] = (
                 rig_update.snapshot(standing, bpy.data.objects)
                 if updating and standing is not None else {})
+            # Which parts the scene holds without their small features is
+            # this scene's own decision, and a send replaces every object
+            # and collection that carries it. So it is written down here
+            # and put back on what arrives.
+            from .rig import simplify as rig_simplify
+            held = None if updating else rig_simplify.snapshot()
             if want("replace") and not updating:
                 # A STEP import of the same assembly goes too, or the scene
                 # holds every part twice.
@@ -612,6 +650,23 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 "unmatched": list(report.unmatched),
             }
             bpy.context.view_layer.update()
+            if held is not None:
+                parts, groups = rig_simplify.restore(held)
+                if parts or groups:
+                    log.append(
+                        "simplify: %d part(s) and %d collection(s) kept their "
+                        "settings" % (parts, groups))
+            # The CAD application holds no such setting, so a send always
+            # brings the small features back. The marked parts are asked for
+            # again, which is what keeps the scene saying one thing.
+            asked = rig_simplify.orders(objects)
+            if asked:
+                stages["mesh"]["simplify"] = len(asked)
+                log.append("simplify: asking again for %d part(s) without "
+                           "their small features" % len(asked))
+                _ask_again_without_small_features(
+                    asked, opts.get("quality_preset"),
+                    opts.get("separate_solids"))
 
         if not mesh_path and want("import", bool(step_path)):
             if not step_path or not os.path.isfile(step_path):

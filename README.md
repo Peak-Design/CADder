@@ -18,8 +18,8 @@ surface with smooth normals computed from the analytic shape geometry.
 
 It also holds the Blender half of **CADder Bridge**, the live link to
 SolidWorks: one button in the CAD application sends the geometry, the
-appearances and a rig manifest straight into the scene, and the CAD Link
-tab builds an armature that moves the way the mates say it should.
+appearances and a rig manifest straight into the scene, and the addon
+builds an armature that moves the way the mates say it should.
 
 The addon was **STEPper NEXT** up to version 2.5.0. It was renamed because
 it had outgrown the one file format it was named after.
@@ -192,7 +192,7 @@ leaves it alone.
 
 ## Material Database
 
-The material database lets you define mappings from the material names a CAD import gives (the STEP colour names such as "GRAY", an engineering material such as `AISI 304 Steel`, or a SolidWorks appearance such as `SW polished gold` over CAD Link) to authored Blender materials. Once configured, materials are replaced every time you import a STEP file or receive a direct send.
+The material database lets you define mappings from the material names a CAD import gives (the STEP colour names such as "GRAY", an engineering material such as `AISI 304 Steel`, or a SolidWorks appearance such as `SW polished gold` over the live link) to authored Blender materials. Once configured, materials are replaced every time you import a STEP file or receive a direct send.
 
 ![Material Mappings Panel](docs/material_mappings.png)
 
@@ -208,15 +208,15 @@ The material database lets you define mappings from the material names a CAD imp
 
 Select a database from the dropdown in the STEP import dialog under **Material DB**. The selected database persists between sessions. When importing, all matching STEP materials are automatically replaced.
 
-## CAD Link
+## The live link
 
-CAD Link is the sidebar tab that receives a model straight from a CAD
-add-in and builds a rig from it. Today one add-in speaks it:
+The addon can receive a model straight from a CAD add-in and build a rig
+from it. Today one add-in speaks to it:
 [CADder Bridge](https://github.com/Peak-Design/CADder-SW-Bridge) for
-SolidWorks. The tab is off by default.
+SolidWorks. The link is off by default.
 
 1. Open **Edit > Preferences > Add-ons > CADder**.
-2. Tick **CAD Link (Experimental)**. The addon starts a listener on
+2. Tick **SolidWorks Bridge**. The addon starts a listener on
    127.0.0.1 and shows the port.
 3. In the 3D View sidebar (N), open the **CADder** tab.
 

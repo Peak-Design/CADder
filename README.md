@@ -29,32 +29,110 @@ Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 
 ## Features
 
-**Geometry**
+### Live link to SolidWorks
 
-- Direct STEP, IGES and BREP import via OpenCASCADE
-- Analytic surface normals give smooth shading across curved surfaces
-- Sharp edges marked from the CAD topology, with custom split normals
-- Quality presets with unit-aware deflection (a physical 0.8 mm stays 0.8 mm whatever units the file uses), plus relative (adaptive) tessellation
-- Corrupted geometry: the addon imports what it can instead of skipping a whole part, and repairs damaged shapes with ShapeFix
-- Free edges and sketches optionally imported as curve objects
+- One button in SolidWorks sends the open assembly into a running Blender:
+  geometry, appearances, the tree and the rig. No file, no dialog.
+- **Refresh Model** brings the scene up to date part by part: new parts
+  arrive, deleted parts go, and the parts that stayed keep their objects,
+  materials and modifiers.
+- **Rebuild from CAD**, from Blender, asks for the geometry again at
+  another quality, or for the poses, or for the whole assembly.
+- Sends only the selected components when you ask, and a multibody part as
+  one object per body when you ask.
+- Triangles become quads and compound surfaces are unwrapped on arrival,
+  both set in the CAD add-in.
+- **Match the Blender view** turns the Blender viewport to the angle the
+  SolidWorks view is at.
+- The listener takes connections from this machine only, with a token the
+  add-in reads from your own app data.
 
-**Materials & UVs**
+### STEP, IGES and BREP import
 
-- Per-face vertex colors and automatic material creation from STEP color data
-- The CAD color is also written to the object color, so a Solid viewport set to Object color matches the file
-- Engineering material metadata (AP242/AP214 name, description, density) imported as custom properties, and optionally as named Blender materials
-- Material database system for automatic material replacement on import
-- UV generation from CAD surfaces (face by face, or joined into larger islands), Blender unwrap, or box projection, with optional real-world UV scale and automatic seams on cylindrical/closed faces
+- Direct import through the OpenCASCADE kernel, no conversion step.
+- Analytic surface normals, so a curved face shades smoothly.
+- Sharp edges marked from the CAD topology, with custom split normals.
+- Quality presets in real units (0.8 mm stays 0.8 mm whatever the file is
+  in), or relative tessellation that follows the size of each part.
+- Damaged geometry is repaired where it can be and imported as far as it
+  goes, rather than dropping the part.
+- Free edges and sketches as curve objects, when you want them.
+- The tree arrives as a flat collection, nested collections, parented
+  empties or collection instances.
+- Background import: Blender stays responsive and Esc cancels. Drag and
+  drop, and a folder at a time.
+- An analyzer that reads a file before you import it and estimates what it
+  will cost on your machine.
 
-**Workflow**
+### Rig generation
 
-- Non-blocking background import: Blender stays responsive, Esc cancels
-- Viewport drag & drop (single or multiple files) and recursive folder batch import
-- Pre-import analyzer with per-machine import-time estimates
-- Rebuild parts at a different quality, Prune/Restore hierarchy, mesh cleanup
-- Import options remembered between Blender sessions
-- Part hierarchy preserved as flat collection, nested collections, parented empties, or collection instances
-- Native C++ mesh extraction with multithreaded normal computation, up to 10x faster than v1.x
+- The mates of the assembly become an armature: components with no freedom
+  between them merge into one bone, and what is left over becomes a joint.
+- Fixed, revolute, prismatic, cylindrical, ball, planar, pin slot, screw,
+  path, surface and free joints.
+- Mate limits become constraints, drawn to the real numbers: a dial spans
+  the angle a joint may turn, a rail is as long as the travel.
+- Gears, rack and pinion, screws, symmetry, cams and universal joints are
+  carried as couplings, so driving one half moves the other.
+- A mechanism with more than one way to drive it offers the choice, and
+  rebuilds for it.
+- Kinematic loops are cut by the exporter and closed again in Blender.
+- Bones are sorted into what you pose, what the limits say, what follows
+  and what is scaffolding.
+- **Join Rigs** puts a subassembly's rig inside a machine's, on the bone
+  you name, without moving anything.
+- A send can keep the rig you have, bring its bones up to date while
+  keeping your animation, or build a new one.
+
+### Materials and appearances
+
+- SolidWorks appearances arrive as Principled shaders: colour, finish,
+  textures and decals, projected the way SolidWorks projects them.
+- STEP colours become per face colours and materials, and the object
+  colour, so a Solid viewport matches the file.
+- Engineering material data (name, description, density) as custom
+  properties, and as named materials when you want them.
+- A material database maps CAD material names to shaders of your own, and
+  applies them on every import.
+
+### UV maps
+
+- **CAD Surfaces**: one island per CAD face, straight from the surface. A
+  plane, a cylinder and a cone are exact, at real world size.
+- **CAD Surfaces (Smart)** joins faces that meet smoothly into one island,
+  so a sheet metal part comes out as its flat pattern, and hands the faces
+  no one scale can flatten to Blender's unwrap.
+- Blender's own unwrap methods and a box projection, for the parts that
+  want them.
+- Real world UV scale, island packing with a margin, and UDIM tiles.
+- Seams on closed faces, so a hole unrolls instead of smearing.
+- The UV panel makes the map again for the selected parts, so one part can
+  get a treatment its neighbour does not.
+
+### Mesh quality and topology
+
+- One **Mesh Quality** panel for both routes: the button reads the CAD
+  again, whether the part came from the live link, a STEP file or an IGES
+  file.
+- **Triangles to Quads** pairs the tessellation back into quads without
+  crossing a material, a UV island, a seam or a sharp edge.
+- **Defeature** leaves the small features out of the parts you choose, set
+  on a part or on a collection, by how wide a feature is and whether it
+  breaks into a curved face. Nothing in the CAD document changes.
+- **Clean Up Meshes** takes out the loose vertices and the zero area faces
+  a tessellation can leave.
+- Prune and restore the empties a STEP tree carries.
+
+### In the scene
+
+- Every button reads what it covers from the selection, and takes the
+  collection that is active in the outliner when nothing is selected.
+- What a part was imported with is stored on the part, so a rebuild or a
+  refresh makes the same thing again.
+- Import settings are remembered between sessions.
+- Native C++ mesh extraction with threaded normals, about ten times faster
+  than version 1.
+- The addon says when a new version is out.
 
 ## Install
 

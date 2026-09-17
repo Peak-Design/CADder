@@ -799,8 +799,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
     ok = True
     match = stages.get("match")
     if match and (match["unmatched"] or match["ambiguous"]):
-        log.append("some components did not match: see the CAD Link "
-                   "panel in Blender")
+        log.append("some components did not match: see the SolidWorks "
+                   "Bridge panel in Blender")
     return {"ok": ok, "stages": stages, "log": log}
 
 

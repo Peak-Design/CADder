@@ -99,9 +99,8 @@ def first():
     instances = discover()
     if not instances:
         raise CadLinkError(
-            "No CAD application with a CAD Link add-in was found. Start the "
-            "CAD application (SolidWorks with SW To Blender), open the "
-            "assembly, and make sure the add-in is enabled.")
+            "No CAD application was found. Start SolidWorks with the CADder "
+            "Bridge add-in enabled, and open the assembly.")
     return instances[0]
 
 

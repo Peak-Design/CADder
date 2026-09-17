@@ -32,7 +32,7 @@ class JobProgress:
     gives the number of steps and reports them as they finish.
     """
 
-    def __init__(self, context=None, title="CAD Link"):
+    def __init__(self, context=None, title="CADder"):
         self.title = title
         self.stage_label = None
         self.percent = 0.0
@@ -118,7 +118,7 @@ class _Silent(JobProgress):
     sites stay free of "if progress is not None"."""
 
     def __init__(self):
-        self.title = "CAD Link"
+        self.title = "CADder"
         self.stage_label = None
         self.percent = 0.0
         self._first = 0.0

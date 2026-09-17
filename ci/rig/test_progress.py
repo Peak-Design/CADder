@@ -86,8 +86,8 @@ def test_the_status_text_names_the_stage_and_counts_its_steps():
     said, _, ws = _reporter()
     said.stage("placing the parts", 20, 85, 10)
     said.step(7)
-    assert ws.texts[0] == "CAD Link: placing the parts (1 of 10)" \
-        or ws.texts[0] == "CAD Link: placing the parts (0 of 10)"
+    assert ws.texts[0] == "CADder: placing the parts (1 of 10)" \
+        or ws.texts[0] == "CADder: placing the parts (0 of 10)"
     assert "placing the parts (7 of 10)" in ws.texts[-1]
 
 

@@ -4812,23 +4812,21 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
             print("CADder: bridge toggle failed:", exc)
 
     enable_bridge: bpy.props.BoolProperty(
-        name="CAD Link (Experimental)",
-        description="Show the CAD Link sidebar tab. The addon also listens on"
-                    " localhost so a CAD add-in (today: SW To Blender for "
-                    "SolidWorks) can send exports into this Blender instance."
-                    " This is off by default because the feature is "
-                    "experimental. The listener accepts connections only "
-                    "from this machine",
+        name="SolidWorks Bridge",
+        description="Listen for the CADder Bridge add-in, so SolidWorks can "
+                    "send an assembly into this Blender session, and show the "
+                    "SolidWorks Bridge panel. The listener accepts "
+                    "connections only from this computer",
         default=False,
         update=_enable_bridge_changed,
     )
 
     cad_link_advanced: bpy.props.BoolProperty(
         name="STEP Rig Panel",
-        description="Show the STEP Rig panel in the CAD Link tab: the "
-                    "manifest file and the rig pipeline run by hand. A "
-                    "direct send from the CAD add-in does all of that "
-                    "itself, so most users never need it",
+        description="Show the STEP Rig panel, which holds the manifest file "
+                    "and the stages of the rig run by hand. A direct send "
+                    "from the CAD add-in does all of that itself, so most "
+                    "users never need it",
         default=False,
     )
 

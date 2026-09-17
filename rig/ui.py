@@ -797,7 +797,7 @@ if bpy is not None:
                 if cid and cid not in ids:
                     ids.append(cid)
             if not ids:
-                self.report({"WARNING"}, "Select parts that came in over CAD Link")
+                self.report({"WARNING"}, "Select parts that came from the CAD application")
                 return {"CANCELLED"}
             persistent = []
             split = False

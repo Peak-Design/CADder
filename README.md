@@ -177,6 +177,34 @@ them closed:
   costs: the rest pose stays as it was built, so a part that moved in the
   CAD application follows its bone until the rig is unlocked and built
   again.
+- **Simplify**: which parts travel without their small features. A bolt
+  hole costs far more triangles than the plate it is in, and a model for a
+  game engine rarely wants it: the bolts are modelled and the holes are
+  not visible. **Smaller Than** sets how wide a feature may be and still
+  be left out, measured across the hole it makes in the face it breaks
+  into, so one size covers round holes, slots, keyways and small cutouts.
+  **Curved Faces** takes in a feature that breaks into a face that is not
+  flat, such as a hole drilled into a boss.
+
+  The switch is on the PART, and on the collection above it when the
+  assembly came in as a tree. A part inside a collection that is set
+  follows the collection: its own switch is greyed, with a line saying
+  which collection decides. The nearest collection wins, so a subassembly
+  can differ from the assembly it sits in. The same settings are in the
+  object and collection properties, under **CAD Simplify**.
+
+  Nothing in the CAD document is changed and no feature is written into
+  anybody's file. A feature is left in unless the whole of it can be
+  accounted for, and a part that would come back with a hole in its side
+  is sent exactly as it was. The export log says how many features went
+  and how many were left alone.
+
+  The setting goes to the CAD application with every request for geometry,
+  so Rebuild from CAD gives back what the scene had. It also survives a
+  rebuild of the whole assembly, and a fresh send from the CAD
+  application: the CAD side holds no such setting, so a send brings the
+  small features back, and the marked parts are asked for again straight
+  after.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
   Build Rig, Relink Geometry). A direct send runs all of it, so this

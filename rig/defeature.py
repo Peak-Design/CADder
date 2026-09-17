@@ -50,6 +50,27 @@ def _parents(scene):
     return parent
 
 
+def _holders(scene):
+    """Every object mapped to the collections that hold it.
+
+    Asking an OBJECT which collections it is in (users_collection) scans
+    every collection of the file, so asking each part of a large assembly
+    costs a walk per part: 11.5 seconds on an assembly of 11761 parts in
+    2938 collections (Conveyor12k-A00, Oscar, 2026-09-17). Walking the
+    collections once answers for every part at once.
+    """
+    out = {}
+    if bpy is None:
+        return out
+    for collection in bpy.data.collections:
+        for obj in collection.objects:
+            out.setdefault(obj.name, []).append(collection)
+    if scene is not None:
+        for obj in scene.collection.objects:
+            out.setdefault(obj.name, []).append(scene.collection)
+    return out
+
+
 def _chain(collection, parents):
     """A collection and everything above it, nearest first."""
     chain = []
@@ -68,24 +89,31 @@ def _set(target):
     return getattr(target, "cad_defeature", None) if target is not None else None
 
 
-def source_of(obj, scene=None):
+def source_of(obj, scene=None, parents=None, holders=None):
     """The collection whose setting an object follows, or None when the
     object answers for itself.
 
     An object can sit in more than one collection and a collection can be
     linked in more than one place, so the nearest collection that is set
     wins: the level someone reached for last is the level they meant.
+
+    `parents` is the map of the scene's collections and `holders` the map
+    of which collections hold each object, both for a caller that asks
+    about many parts: working either out per part costs a walk of every
+    collection each time.
     """
     if bpy is None or obj is None:
         return None
     scene = scene or bpy.context.scene
     if scene is None:
         return None
-    parents = _parents(scene)
+    parents = _parents(scene) if parents is None else parents
     known = set(parents)
     known.add(scene.collection)
     best, depth = None, None
-    for holder in obj.users_collection:
+    mine = obj.users_collection if holders is None \
+        else holders.get(obj.name, ())
+    for holder in mine:
         if holder not in known:
             continue
         for step, collection in enumerate(_chain(holder, parents)):
@@ -118,7 +146,7 @@ def above(collection, scene=None):
     return None
 
 
-def settings_for(obj, scene=None):
+def settings_for(obj, scene=None, parents=None, holders=None):
     """What an object travels as: (enabled, size in metres, curved).
 
     A collection above it that is set to defeature decides for it. Otherwise
@@ -126,7 +154,7 @@ def settings_for(obj, scene=None):
     """
     if bpy is None or obj is None:
         return False, DEFAULT_SIZE, False
-    holder = source_of(obj, scene)
+    holder = source_of(obj, scene, parents, holders)
     settings = _set(holder or obj)
     if settings is None:
         return False, DEFAULT_SIZE, False
@@ -144,11 +172,13 @@ def orders(objects, scene=None):
     CAD application, so the first that asks for anything decides.
     """
     rows, seen = [], set()
+    here = scene or (bpy.context.scene if bpy else None)
+    parents, holders = _parents(here), _holders(here)
     for obj in objects or []:
         component = obj.get("RIG_component_id")
         if not component or component in seen:
             continue
-        enabled, size, curved = settings_for(obj, scene)
+        enabled, size, curved = settings_for(obj, scene, parents, holders)
         if not enabled or not size > 0.0:
             continue
         seen.add(component)
@@ -183,8 +213,9 @@ def turn_on(collection, objects, scene=None):
         if settings is not None:
             groups = 1
     parts = 0
+    parents, holders = _parents(scene), _holders(scene)
     for obj in objects or []:
-        if settings_for(obj, scene)[0]:
+        if settings_for(obj, scene, parents, holders)[0]:
             continue
         settings = _set(obj)
         if settings is None:

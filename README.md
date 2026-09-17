@@ -196,10 +196,13 @@ The button says which file it is going to read again: **Rebuild from
 CAD**, **Rebuild from STEP**, **Rebuild from IGES**. With parts of both
 kinds in scope there is a button for each. Rebuild from CAD asks the CAD
 application for the geometry again and swaps it in without losing the
-pose, the materials or the rig. Press F9 after it for its purpose
-(Geometry, Geometry and Poses, Poses, or Everything). Everything asks for
-the assembly again and rebuilds the scene from it, which is what catches
-parts added or removed and mates changed.
+pose, the materials or the rig. Press F9 after it to choose what
+it brings. Geometry, Geometry and Poses and Poses all ask for the parts the
+scene ALREADY HOLDS, and nothing else about the scene changes. Whole
+Assembly asks for the assembly itself, which is the only way to pick up a
+part added or deleted in CAD and a mate that changed: it takes the whole
+assembly whatever is selected, and it builds the scene again, so work done
+in Blender on those objects goes with the old ones.
 
 **Triangles to Quads** pairs the tessellation triangles back into quads.
 A flat or lightly curved CAD face comes out as long thin pairs that go

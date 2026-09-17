@@ -712,18 +712,32 @@ if bpy is not None:
         ))
         bl_options = {"REGISTER", "UNDO"}
 
+        # One choice, not three switches. The first three ask the CAD
+        # application for the parts THIS SCENE ALREADY HOLDS and change
+        # nothing else; the fourth asks for the assembly itself and builds
+        # the scene again from it. Checkboxes would offer "neither", which
+        # does nothing, and would read as though the fourth were the other
+        # two together, which it is not (Oscar, 2026-09-17).
         what: bpy.props.EnumProperty(
-            name="What",
+            name="Bring",
             items=[
-                ("GEOMETRY", "Geometry", "The shape of the parts, at the quality below"),
+                ("GEOMETRY", "Geometry",
+                 "The shape of the parts, at the quality below. Nothing "
+                 "moves, and the parts the scene holds stay the parts it "
+                 "holds"),
                 ("GEOMETRY_POSES", "Geometry and Poses",
-                 "The shape of the parts, and where they now sit in the CAD assembly. "
-                 "The rig is rebuilt so its rest pose follows"),
-                ("POSES", "Poses", "Only where the parts now sit in the CAD assembly"),
-                ("EVERYTHING", "Everything",
-                 "Ask the CAD application for the whole assembly again: parts added or "
-                 "removed, mates changed, the rig rebuilt. Always the whole assembly, "
-                 "whatever is selected"),
+                 "The shape of the parts, and where they now sit in the CAD "
+                 "assembly. The rig is rebuilt so its rest pose follows. "
+                 "Still only the parts the scene already holds"),
+                ("POSES", "Poses",
+                 "Only where the parts now sit in the CAD assembly"),
+                ("EVERYTHING", "Whole Assembly",
+                 "Ask the CAD application for the assembly ITSELF again, "
+                 "which is the only way to pick up a part added or deleted "
+                 "in CAD and a mate that changed. Always the whole "
+                 "assembly, whatever is selected, and it builds the scene "
+                 "again: work done in Blender on these objects goes with "
+                 "the old ones"),
             ],
             default="GEOMETRY")
         quality: bpy.props.FloatProperty(

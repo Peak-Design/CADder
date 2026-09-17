@@ -1116,7 +1116,11 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
             by_path.setdefault(path, []).append(obj)
 
     meshes = {}
-    replaced = []
+    # A list answers "is this one already in?" by walking itself, which on
+    # an assembly of 11761 parts is 69 million comparisons and most of the
+    # time a rebuild takes (Conveyor12k-A00, Oscar, 2026-09-17). The names go
+    # in a set beside it, and the list keeps the order.
+    replaced, already = [], set()
     retired = set()
     mismatched = []
     for inst in scene.instances:
@@ -1156,11 +1160,13 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
                     retired.add(holder.data.name)
                 holder.data = me
                 _material_names(holder)
-                if holder not in replaced:
+                if holder.name not in already:
+                    already.add(holder.name)
                     replaced.append(holder)
             obj[_TAG_DEFINITION] = inst.definition_id
             obj[_TAG_TOLERANCE] = scene.tolerance
-            if obj not in replaced:
+            if obj.name not in already:
+                already.add(obj.name)
                 replaced.append(obj)
 
     if mismatched:

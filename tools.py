@@ -16,14 +16,16 @@ from . import uv as uv_mod
 def under(collection):
     """A collection and every collection inside it, however deep."""
     found = [collection]
+    seen = {collection.name}
     stack = [collection]
     guard = 0
     while stack and guard < 10000:
         guard += 1
         here = stack.pop()
         for child in here.children:
-            if child in found:
+            if child.name in seen:
                 continue
+            seen.add(child.name)
             found.append(child)
             stack.append(child)
     return found
@@ -48,9 +50,13 @@ def scope_of(context, keep=None):
         found = selected
     else:
         holder = context.collection
-        wanted = set(under(holder)) if holder is not None else set()
-        found = [o for o in context.scene.objects
-                 if keep(o) and any(c in wanted for c in o.users_collection)]
+        # all_objects is the collection and everything below it, asked for
+        # once. Asking each object of the scene which collections it is in
+        # instead costs a scan of every collection per object: 10 seconds
+        # before a rebuild had asked for anything, on an assembly of 11761
+        # parts in 2938 collections (Conveyor12k-A00, Oscar, 2026-09-17).
+        found = [o for o in holder.all_objects
+                 if keep(o)] if holder is not None else []
     seen = set()
     kept = []
     for obj in found:

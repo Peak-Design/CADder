@@ -29,49 +29,91 @@ def under(collection):
     return found
 
 
-SCOPE_ITEMS = [
-    ("SELECTED", "Selected Parts", "The parts that are selected"),
-    ("COLLECTION", "Collection",
-     "Every part in the collections the selection sits in, and in the "
-     "collections below them. With nothing selected, the collection that is "
-     "active in the outliner"),
-]
+def scope_of(context, keep=None):
+    """What an operator covers, and where it came from.
 
-
-def scope_objects(context, scope, keep=None):
-    """The meshes an operator covers.
-
-    Selected Parts is what is selected. Collection widens that to the
-    collections the selection sits in AND everything below them, which is a
-    subassembly and its subassemblies in the tree modes. With nothing
-    selected it is the collection that is active in the outliner, so one
-    level of a tree can be worked on its own.
+    Returns (parts, collection). The scope is READ from the selection
+    rather than set on a panel, because the selection already says it.
+    Parts that are selected are the parts the operator covers. With no part
+    selected it is the collection that is active in the outliner, and every
+    collection below it, so a whole subassembly is treated at once without
+    picking its parts out. collection is that collection, and None when the
+    parts came from the selection.
     """
-    selected = [o for o in context.selected_objects if o.type == "MESH"]
-    if scope != "COLLECTION":
+    if keep is None:
+        keep = _is_mesh
+    selected = [o for o in context.selected_objects if keep(o)]
+    holder = None
+    if selected:
         found = selected
     else:
-        holders = []
-        for obj in selected:
-            for collection in obj.users_collection:
-                if collection not in holders:
-                    holders.append(collection)
-        if not holders and context.collection is not None:
-            holders = [context.collection]
-        wanted = set()
-        for collection in holders:
-            wanted.update(under(collection))
+        holder = context.collection
+        wanted = set(under(holder)) if holder is not None else set()
         found = [o for o in context.scene.objects
-                 if o.type == "MESH"
-                 and any(c in wanted for c in o.users_collection)]
+                 if keep(o) and any(c in wanted for c in o.users_collection)]
     seen = set()
     kept = []
     for obj in found:
-        if obj.name in seen or (keep is not None and not keep(obj)):
+        if obj.name in seen:
             continue
         seen.add(obj.name)
         kept.append(obj)
-    return kept
+    return kept, holder
+
+
+def _is_mesh(obj):
+    return obj.type == "MESH"
+
+
+def scope_objects(context, keep=None):
+    """The parts an operator covers. See scope_of."""
+    return scope_of(context, keep)[0]
+
+
+def linked_parts(context, objects):
+    """Those parts, and every other part of the scene that shares a mesh
+    with one of them.
+
+    Two placements of one part are ONE piece of geometry in Blender: both
+    objects point at the same mesh, and that link is most of what makes a
+    large assembly workable. Asking for one of them defeatured and not the
+    other gives them two meshes, so the link is the unit: what is asked for
+    is asked for together (Oscar, 2026-09-17).
+    """
+    shared = {_geometry_of(o) for o in objects}
+    shared.discard(None)
+    if not shared:
+        return list(objects)
+    found = list(objects)
+    seen = {o.name for o in objects}
+    for obj in context.scene.objects:
+        if obj.name in seen or _geometry_of(obj) not in shared:
+            continue
+        if not (from_step(obj) or from_cad_link(obj)):
+            continue
+        seen.add(obj.name)
+        found.append(obj)
+    return found
+
+
+def _geometry_of(obj):
+    """What decides whether two parts are one piece of geometry: the mesh
+    they share, or the collection they both instance."""
+    collection = getattr(obj, "instance_collection", None)
+    return collection if collection is not None else obj.data
+
+
+def scope_hint(layout, context):
+    """Says what the button below will cover, when that is not the
+    selection. The scope is read from the selection rather than set, so the
+    one case that needs saying is the one where nothing is selected."""
+    if any(o.type == "MESH" for o in context.selected_objects):
+        return
+    holder = context.collection
+    if holder is None:
+        return
+    layout.label(text='Covers the collection "%s"' % holder.name,
+                 icon="OUTLINER_COLLECTION")
 
 
 def simplify_settings(obj, scene):
@@ -94,8 +136,42 @@ def from_step(obj):
 
 
 def from_cad_link(obj):
-    """A part the CAD application sent over the live link."""
-    return obj.type == "MESH" and bool(obj.get("RIG_component_id"))
+    """A part the CAD application sent over the live link.
+
+    In the collection instance hierarchy mode the object that carries the
+    component is an EMPTY: the geometry sits on a prototype inside the
+    collection it instances, shared by every placement of that part. That
+    empty is the part as far as the CAD application is concerned, so it
+    counts here and mesh_parts finds the geometry when geometry is wanted.
+    """
+    if not obj.get("RIG_component_id"):
+        return False
+    return obj.type == "MESH" or (
+        obj.type == "EMPTY" and obj.instance_collection is not None)
+
+
+def mesh_parts(objects):
+    """The objects whose MESH is the geometry of these parts, once each.
+
+    A part sent as a collection instance is an empty, and its geometry is
+    on the prototypes inside the collection it instances. Every placement
+    of that part instances the same collection, so the prototype is reached
+    once however many placements there are.
+    """
+    found, seen = [], set()
+    for obj in objects or []:
+        if obj.type == "MESH":
+            here = [obj]
+        else:
+            collection = getattr(obj, "instance_collection", None)
+            here = [o for o in collection.all_objects
+                    if o.type == "MESH"] if collection is not None else []
+        for mesh_object in here:
+            if mesh_object.name in seen:
+                continue
+            seen.add(mesh_object.name)
+            found.append(mesh_object)
+    return found
 
 
 def _scale_mesh_verts(me, factor):
@@ -320,7 +396,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
 
         note = ""
         if simplified:
-            note = (", %d simplified (%d feature(s) out, %d left alone)"
+            note = (", %d defeatured (%d feature(s) out, %d left alone)"
                     % (simplified, features[0], features[1]))
         if failed:
             self.report({"WARNING"},
@@ -651,9 +727,6 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
     bl_label = "Apply UVs"
     bl_options = {"REGISTER", "UNDO"}
 
-    scope: bpy.props.EnumProperty(
-        name="Scope", items=SCOPE_ITEMS, default="SELECTED")
-
     # Every UV key of the import record this panel is allowed to change.
     KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
             "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
@@ -661,8 +734,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        # Not "is something selected": the Collection scope works from the
-        # outliner with nothing selected at all.
+        # Not "is something selected": with nothing selected the scope is
+        # the collection that is active in the outliner.
         if context.mode != "OBJECT":
             cls.poll_message_set("Leave edit mode first")
             return False
@@ -677,9 +750,11 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
         prg = context.scene.stepper
         want = {k: getattr(prg, k) for k in self.KEYS}
 
+        covered = scope_objects(
+            context, lambda o: _is_mesh(o) or from_cad_link(o))
         targets = []
         seen = set()
-        for obj in scope_objects(context, self.scope):
+        for obj in mesh_parts(covered):
             if obj.data is None or obj.data in seen:
                 continue
             seen.add(obj.data)
@@ -717,8 +792,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             # CAD data is its own: a STEP file on disk, or the CAD
             # application holding the live model. Both come back with one
             # island per CAD face, which is what every mode below builds on.
-            step = [o for o in targets if from_step(o)]
-            live = [o for o in targets if from_cad_link(o) and o not in step]
+            step = [o for o in covered if from_step(o)]
+            live = [o for o in covered if from_cad_link(o) and o not in step]
             if not step and not live:
                 self.report({"WARNING"},
                             "This mode needs the CAD data. Select parts that "
@@ -742,8 +817,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             # SolidWorks gave it and nothing else has been done to it, so the
             # modes that build on the CAD charts run here.
             if live:
-                _uv_modes_on_live(m, live, want)
-            targets = step + live
+                _uv_modes_on_live(m, mesh_parts(live), want)
+            targets = step + mesh_parts(live)
             made = "rebuilt " + " and ".join(made)
 
         # Regenerate has paired the triangles again as the record asks, so
@@ -758,23 +833,21 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
 
 class STEPPER_OT_apply_simplify(bpy.types.Operator):
-    """Ask for the geometry of these parts again with the Simplify settings
-    they now carry. A part that came in over the live link is asked of the
+    """Leave the small features out of these parts and ask for their
+    geometry again. A part that came in over the live link is asked of the
     CAD application. A part that came from a STEP file is read from the file
     again. Nothing in the CAD document or the STEP file is changed."""
+    # The idname keeps the older word. It is what a keymap or a macro
+    # calls, and a rename would break those for a label.
     bl_idname = "stepper.apply_simplify"
-    bl_label = "Apply Simplify"
+    bl_label = "Apply Defeature"
     bl_options = {"REGISTER", "UNDO"}
-
-    scope: bpy.props.EnumProperty(
-        name="Scope", items=SCOPE_ITEMS, default="SELECTED")
 
     @classmethod
     def poll(cls, context):
-        # The scope is not known here, and the Collection scope works from
-        # the outliner with nothing selected at all, so this asks only
-        # whether there is anything in the scene to work on. What the scope
-        # actually found is reported by execute.
+        # Not "is something selected": with nothing selected the scope is
+        # the collection that is active in the outliner. What the scope
+        # found is reported by execute.
         if context.mode != "OBJECT":
             cls.poll_message_set("Leave edit mode first")
             return False
@@ -786,16 +859,31 @@ class STEPPER_OT_apply_simplify(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        covered = scope_objects(context, self.scope)
-        step = [o for o in covered if from_step(o)]
-        # A part is asked of the CAD application when it can be,
-        # because that is the live copy.
-        live = [o for o in covered if from_cad_link(o) and o not in step]
-        if not step and not live:
+        from .rig import simplify as simplify_mod
+
+        covered, holder = scope_of(
+            context, lambda o: from_step(o) or from_cad_link(o))
+        if not covered:
             self.report({"WARNING"},
                         "Select parts that came from a STEP file or over the "
                         "live link")
             return {"CANCELLED"}
+
+        # Two placements of one part share one mesh, and asking for one of
+        # them without the other would break that link.
+        covered = linked_parts(context, covered)
+
+        # The button is the plain way to say "these parts, defeatured", so
+        # it turns the switch on as well as acting on it. A collection is
+        # set once and covers everything below it, which also survives a
+        # rebuild that replaces every object.
+        groups, parts = simplify_mod.turn_on(holder, covered, context.scene)
+        turned = "set on %d collection(s) and %d part(s)" % (groups, parts)             if groups else "set on %d part(s)" % parts
+
+        step = [o for o in covered if from_step(o)]
+        # A part is asked of the CAD application when it can be,
+        # because that is the live copy.
+        live = [o for o in covered if from_cad_link(o) and o not in step]
 
         said = []
         if live:
@@ -809,7 +897,11 @@ class STEPPER_OT_apply_simplify(bpy.types.Operator):
             context.view_layer.objects.active = step[0]
             bpy.ops.stepper.regenerate(use_scene_settings=False)
             said.append("%d part(s) from the STEP file" % len(step))
-        self.report({"INFO"}, "Simplify: rebuilt " + ", ".join(said))
+        if not said:
+            self.report({"WARNING"}, "Nothing here can be asked for again")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Defeature: %s, %s"
+                    % (turned, ", ".join(said)))
         return {"FINISHED"}
 
 

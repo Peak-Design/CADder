@@ -23,6 +23,7 @@ import bpy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
+from CADder import tools  # noqa: E402
 from CADder.rig import simplify, ui  # noqa: E402
 
 
@@ -97,19 +98,85 @@ def main():
     assert len([r for r in asked if r["component"] == "c003"]) == 1, asked
     bpy.data.objects.remove(second_body)
 
-    # 6. The scope of a rebuild: a collection covers what is below it.
+    # 6. The scope is READ from the selection, not set on a panel.
+    #    Parts that are selected are the parts covered.
+    def active(collection):
+        layer = bpy.context.view_layer.layer_collection
+        for child in layer.children:
+            if child.collection is collection:
+                return child
+            for deeper in child.children:
+                if deeper.collection is collection:
+                    return deeper
+        return layer
+
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     gear.select_set(True)
     bpy.context.view_layer.objects.active = gear
-    covered = {o.name for o in ui._scope_objects(bpy.context, "COLLECTION")}
+    covered = {o.name for o in ui._scope_objects(bpy.context)}
     assert covered == {"gear"}, covered
+
+    plate.select_set(True)
+    covered = {o.name for o in ui._scope_objects(bpy.context)}
+    assert covered == {"gear", "plate"}, covered
+
+    #    With nothing selected it is the collection that is active in the
+    #    outliner, and every collection below it. That is how a whole
+    #    subassembly is covered without picking its parts out, and how the
+    #    root covers the whole assembly.
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    bpy.context.view_layer.active_layer_collection = active(sub)
+    covered = {o.name for o in ui._scope_objects(bpy.context)}
+    assert covered == {"gear"}, covered
+    bpy.context.view_layer.active_layer_collection = active(assembly)
+    covered = {o.name for o in ui._scope_objects(bpy.context)}
+    assert covered == {"plate", "cover", "gear"}, covered
+    bpy.context.view_layer.active_layer_collection = \
+        bpy.context.view_layer.layer_collection
+
+    # 6b. Two placements of one part are ONE mesh, and what is asked for
+    #     has to be asked for together or the link is gone.
+    twin = bpy.data.objects.new("plate-2", plate.data)
+    assembly.objects.link(twin)
+    twin["RIG_component_id"] = "c004"
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     plate.select_set(True)
     bpy.context.view_layer.objects.active = plate
-    covered = {o.name for o in ui._scope_objects(bpy.context, "COLLECTION")}
-    assert covered == {"plate", "cover", "gear"}, covered
+    covered, holder = tools.scope_of(
+        bpy.context, lambda o: tools.from_step(o) or tools.from_cad_link(o))
+    assert {o.name for o in covered} == {"plate"}, covered
+    assert holder is None
+    together = tools.linked_parts(bpy.context, covered)
+    assert {o.name for o in together} == {"plate", "plate-2"}, together
+
+    # 6c. The button turns the switch on: a collection where the scope came
+    #     from one, and the parts themselves where it did not. A part a
+    #     collection already covers is left alone, so nothing is left behind
+    #     when the collection goes off.
+    assembly.cad_simplify.enabled = False
+    sub.cad_simplify.enabled = False
+    plate.cad_simplify.enabled = False
+    groups, parts = simplify.turn_on(None, together, scene)
+    assert (groups, parts) == (0, 2), (groups, parts)
+    assert plate.cad_simplify.enabled and twin.cad_simplify.enabled
+
+    plate.cad_simplify.enabled = False
+    twin.cad_simplify.enabled = False
+    groups, parts = simplify.turn_on(assembly, together, scene)
+    assert (groups, parts) == (1, 0), (groups, parts)
+    assert assembly.cad_simplify.enabled
+    assert not plate.cad_simplify.enabled, \
+        "a part the collection already covers got a switch of its own"
+    bpy.data.objects.remove(twin)
+    assembly.cad_simplify.enabled = True
+    assembly.cad_simplify.size = 0.02
+    assembly.cad_simplify.curved = True
+    sub.cad_simplify.enabled = True
+    plate.cad_simplify.enabled = True
+    plate.cad_simplify.size = 0.008
 
     # 7. A rebuild of the whole assembly replaces every object and every
     #    collection. The settings are written down first and put back on

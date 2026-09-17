@@ -45,15 +45,6 @@ if bpy is not None:
                         "0 is a coarse preview, 1 is a smooth close-up",
             default=0.75, min=0.0, max=1.0, subtype="FACTOR",
         )
-        # How much of the assembly the Rebuild button covers. On the
-        # panel rather than in the redo panel alone, so the button says
-        # what it will do before it is pressed.
-        rebuild_scope: bpy.props.EnumProperty(
-            name="Scope",
-            description="How much of the assembly Rebuild from CAD asks for",
-            items=ui.SCOPE_ITEMS,
-            default="SELECTED",
-        )
         # One entry per mechanism that offers a choice of input
         # (inputs.py); filled on manifest load, drawn as dropdowns.
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)

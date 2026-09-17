@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Which parts travel without their small features.
 
+The panel calls it Defeature, which is the word a CAD user knows for it,
+and the code keeps the older word. A property name is written into every
+saved file that holds one, so renaming it would cost every scene its
+settings for a label (Oscar, 2026-09-17).
+
 A bolt hole costs far more triangles than the plate it is in, and a model
 going to a game engine rarely wants it: the bolts are modelled and the
 holes are not visible. Leaving it out is therefore worth doing, and it is
@@ -160,6 +165,40 @@ def orders(objects, scene=None):
     return rows
 
 
+def turn_on(collection, objects, scene=None):
+    """Turns the switch on for a scope. Returns (collections, parts) set.
+
+    Pressing the button is how most people will say "this, defeatured", so
+    the button turns the switch on rather than asking to have it turned on
+    first. A collection is set once and covers everything below it, and it
+    survives a rebuild that replaces every object, so it is set where there
+    is one. A part already covered by a collection is left alone: it is
+    already on, and setting its own switch as well would leave a switch
+    behind when the collection goes off.
+    """
+    if bpy is None:
+        return 0, 0
+    scene = scene or bpy.context.scene
+    groups = 0
+    if collection is not None and scene is not None \
+            and collection is not scene.collection:
+        settings = _set(collection)
+        if settings is not None and not settings.enabled:
+            settings.enabled = True
+        if settings is not None:
+            groups = 1
+    parts = 0
+    for obj in objects or []:
+        if settings_for(obj, scene)[0]:
+            continue
+        settings = _set(obj)
+        if settings is None:
+            continue
+        settings.enabled = True
+        parts += 1
+    return groups, parts
+
+
 # -- Keeping the setting across a whole rebuild ----------------------------
 
 def snapshot(scene=None):
@@ -229,10 +268,10 @@ if bpy is not None:
         """Set on a part, or on a collection to cover everything in it."""
 
         enabled: bpy.props.BoolProperty(
-            name="Simplify",
-            description="Ask the CAD application for this geometry without "
-                        "its bolt holes and other small features. Nothing in "
-                        "the CAD document is changed",
+            name="Defeature",
+            description="Ask for this geometry without its bolt holes and "
+                        "other small features. Nothing in the CAD document "
+                        "is changed",
             default=False,
         )
         size: bpy.props.FloatProperty(
@@ -263,7 +302,7 @@ if bpy is not None:
         if inherited is not None:
             # Color is never the only signal, so the row that says a setting
             # is out of reach carries the reason in words as well.
-            column.label(text='Simplify is set on the collection "%s"'
+            column.label(text='Defeature is set on the collection "%s"'
                               % inherited.name, icon="OUTLINER_COLLECTION")
             body = column.column()
             body.enabled = False
@@ -278,11 +317,12 @@ if bpy is not None:
         body.prop(settings, "curved")
 
     def target(context):
-        """What the Simplify panel is about: the active part when it came
+        """What the Defeature panel is about: the active part when it came
         from CAD, and otherwise the active collection."""
         obj = context.object
-        if obj is not None and obj.type == "MESH" and (
-                obj.get("RIG_component_id") or "STEP_tag" in obj):
+        if obj is not None and (
+                obj.get("RIG_component_id") or "STEP_tag" in obj) and (
+                obj.type == "MESH" or obj.instance_collection is not None):
             return obj
         collection = context.collection
         if collection is not None and context.scene is not None \
@@ -295,11 +335,11 @@ if bpy is not None:
 
         A category of its own, because it is not a property of the live link
         or of the STEP importer but of the PART, whichever way the part came
-        in. The same settings are in the object and collection properties;
-        this is where they sit beside the button that acts on them.
+        in. The same settings are in the object and collection properties.
+        This is where they sit beside the button that acts on them.
         """
 
-        bl_label = "Simplify"
+        bl_label = "Defeature"
         bl_idname = "CADLINK_PT_simplify"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
@@ -321,20 +361,15 @@ if bpy is not None:
                 layout.label(text=here.name, icon="OBJECT_DATA")
                 draw_for(layout, here, source_of(here, context.scene))
 
-            settings = context.scene.stepper
-            column = layout.column()
-            column.use_property_split = True
-            column.use_property_decorate = False
-            column.prop(settings, "simplify_scope", text="Scope")
-            apply_it = layout.operator("stepper.apply_simplify",
-                                       icon="MOD_DECIM")
-            apply_it.scope = settings.simplify_scope
+            from .. import tools as tools_mod
+            tools_mod.scope_hint(layout, context)
+            layout.operator("stepper.apply_simplify", icon="MOD_DECIM")
 
     class CADLINK_PT_simplify_object(bpy.types.Panel):
         """On the part, in the object properties, where a part's own
         settings live."""
 
-        bl_label = "CAD Simplify"
+        bl_label = "CAD Defeature"
         bl_idname = "CADLINK_PT_simplify_object"
         bl_space_type = "PROPERTIES"
         bl_region_type = "WINDOW"
@@ -353,7 +388,7 @@ if bpy is not None:
         """On the collection, which is how a whole subassembly is covered at
         once in the tree hierarchy modes."""
 
-        bl_label = "CAD Simplify"
+        bl_label = "CAD Defeature"
         bl_idname = "CADLINK_PT_simplify_collection"
         bl_space_type = "PROPERTIES"
         bl_region_type = "WINDOW"

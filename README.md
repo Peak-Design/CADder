@@ -152,17 +152,13 @@ The **CADder** tab holds the link at the top and the STEP import
 panels below it. The link is one panel with three sub-panels, two of
 them closed:
 
-- **SolidWorks Bridge**: **Quality**, **Scope**, **Rebuild from CAD**,
-  and **Lock Rig**. The four quality
+- **SolidWorks Bridge**: **Quality**, **Rebuild from CAD**, and **Lock
+  Rig**. The four quality
   names are the names the CAD add-in uses (Draft, Balanced, Fine, Ultra),
   and Custom takes a chord of its own. Rebuild from CAD asks the CAD
   application for the geometry again at that quality, and swaps it in
-  without losing the pose, the materials or the rig. Scope says how much
-  of the assembly it covers: the selected parts, a collection and
-  everything below it, or the whole send. With nothing selected, the
-  collection scope takes the collection that is active in the outliner,
-  so one level of a tree can be rebuilt on its own. Press F9 after it for
-  the scope again and for its purpose (Geometry, Geometry and Poses,
+  without losing the pose, the materials or the rig. Press F9 after it for
+  its purpose (Geometry, Geometry and Poses,
   Poses, or Everything). Everything asks for the
   assembly again and rebuilds the scene from it, which is what catches
   parts added or removed and mates changed. One dropdown per mechanism
@@ -186,12 +182,22 @@ them closed:
   loop counts of the manifest, the exporter's warnings, and the match,
   pose and rig reports of the last run.
 
-Below the bridge come **Simplify** and **UV**, which work on any part
+Below the bridge come **Defeature** and **UV**, which work on any part
 whichever way it came in, then **Material Database** and the STEP import
 panels: **STEP - Tools** and **STEP - File**. **STEP - Debug** joins them
 when **Debug Options** is on in the addon preferences.
 
-### Simplify
+### What a button covers
+
+Every button that works on parts reads the scope from the selection, so
+there is nothing to set. Parts that are selected are the parts it covers.
+With no part selected it is the collection that is active in the
+outliner, and every collection below it, so a whole subassembly is
+treated at once without picking its parts out. The root collection is
+then the whole scene. The panel says which collection it will take, so
+the button reads the same way before it is pressed.
+
+### Defeature
 
 Which parts travel without their small features. A bolt hole costs far
 more triangles than the plate it is in, and a model for a game engine
@@ -202,14 +208,23 @@ assembly came in as a tree. A part inside a collection that is set follows
 the collection: its own switch is greyed, with a line saying which
 collection decides. The nearest collection wins, so a subassembly can
 differ from the assembly it sits in. The same settings are in the object
-and collection properties, under **CAD Simplify**.
+and collection properties, under **CAD Defeature**.
 
 **Smaller Than** sets how wide a feature may be and still be left out,
 measured across the hole it makes in the face it breaks into, so one size
 covers round holes, slots, keyways and small cutouts. **Curved Faces**
 takes in a feature that breaks into a face that is not flat, such as a
-hole drilled into a boss. **Scope** says how much the button covers, and
-**Apply Simplify** asks for the geometry again.
+hole drilled into a boss. **Apply Defeature** asks for the geometry again.
+
+The button also turns the switch on, so the switch is there to read and
+to change rather than to find first. It sets the collection where the
+scope came from one, and the parts themselves where it did not.
+
+Two placements of one part are one piece of geometry in Blender: both
+objects point at the same mesh, which is most of what makes a large
+assembly workable. Asking for one of them defeatured and not the other
+would give them two meshes, so the link decides the unit. Whatever shares
+a mesh with a part in the scope is covered with it.
 
 Where the geometry comes from depends on where the part came from, and the
 switch does not. A part from the live link is asked of the CAD
@@ -236,8 +251,6 @@ The UV map of any part, whichever way it came in. **Box Project** reads
 the mesh and nothing else. The other modes start from one island per CAD
 face, so they need the CAD data: a part from a STEP file is read from the
 file again, and a part from the live link is asked of the CAD application.
-**Scope** covers the selection, or a collection and everything below it.
-
 A part from the live link needs one step a part from a STEP file does not.
 Its mesh carries every CAD face's points twice, once for each face that
 meets there, which is what lets each point hold its own surface

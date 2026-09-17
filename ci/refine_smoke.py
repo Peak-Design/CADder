@@ -195,7 +195,7 @@ def main():
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         assert bpy.ops.cadlink.update_from_cad.poll(), "operator refused the selection"
-        result = bpy.ops.cadlink.update_from_cad(quality=0.9, scope="SELECTED")
+        result = bpy.ops.cadlink.update_from_cad(quality=0.9)
         assert "FINISHED" in result, result
 
         # 4. The request said what it should have.
@@ -217,11 +217,11 @@ def main():
             "the coarse mesh was left behind"
         assert len(bpy.data.meshes) == meshes_before
 
-        # 7. A wider scope asks for more than the selection: with nothing
-        # selected, the whole send is every object of this file.
+        # 7. With nothing selected the scope is the collection that is
+        # active in the outliner, which at the root is the whole scene.
         for o in bpy.context.selected_objects:
             o.select_set(False)
-        result = bpy.ops.cadlink.update_from_cad(quality=0.5, scope="WHOLE")
+        result = bpy.ops.cadlink.update_from_cad(quality=0.5)
         assert "FINISHED" in result, result
         assert server.seen[-1]["components"] == ["c009"], server.seen[-1]
         # A rebuild that said nothing about simplifying leaves the key out,
@@ -234,13 +234,36 @@ def main():
         obj.cad_simplify.enabled = True
         obj.cad_simplify.size = 0.008
         obj.cad_simplify.curved = True
-        result = bpy.ops.cadlink.update_from_cad(quality=0.5, scope="WHOLE")
+        result = bpy.ops.cadlink.update_from_cad(quality=0.5)
         assert "FINISHED" in result, result
         asked = server.seen[-1].get("simplify")
         assert asked and asked[0]["component"] == "c009", server.seen[-1]
         assert abs(asked[0]["size_m"] - 0.008) < 1e-6, asked
         assert asked[0]["curved"] is True, asked
         obj.cad_simplify.enabled = False
+
+        # 7f. Two placements of one part are ONE mesh in Blender. Asking for
+        # one of them defeatured and not the other would give them two
+        # meshes, which is the link gone, so the link is the unit: the
+        # request names both, and the button turns the switch on for both.
+        twin = bpy.data.objects.new("bracket-2", obj.data)
+        bpy.context.scene.collection.objects.link(twin)
+        twin["RIG_component_id"] = "c010"
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        assert "FINISHED" in bpy.ops.stepper.apply_simplify(), \
+            "the button refused a part from the live link"
+        asked = server.seen[-1]
+        assert asked["op"] == "retessellate", asked
+        assert set(asked["components"]) == {"c009", "c010"}, asked
+        assert {row["component"] for row in asked.get("simplify") or []} \
+            == {"c009", "c010"}, asked
+        assert obj.cad_simplify.enabled and twin.cad_simplify.enabled, \
+            "the button left one of the two switches off"
+        obj.cad_simplify.enabled = False
+        bpy.data.objects.remove(twin)
 
         # 7c. The UV panel works on a part from the live link, not only on
         # one from a STEP file. Box Project reads the mesh and nothing else.
@@ -274,8 +297,9 @@ def main():
         assert "FINISHED" in bpy.ops.stepper.reapply_uv(), "smart UVs failed"
         assert len(obj.data.vertices) <= points, "the weld added points"
 
-        # 7d. A collection is a scope of its own, so a whole subassembly can
-        # be given one treatment without picking its parts out.
+        # 7d. With nothing selected the collection that is active in the
+        # outliner is the scope, so a whole subassembly is given one
+        # treatment without picking its parts out.
         group = bpy.data.collections.new("uv group")
         bpy.context.scene.collection.children.link(group)
         group.objects.link(obj)
@@ -284,7 +308,7 @@ def main():
         prg.uv_mode = "BOX"
         bpy.context.view_layer.active_layer_collection = (
             bpy.context.view_layer.layer_collection.children[group.name])
-        assert "FINISHED" in bpy.ops.stepper.reapply_uv(scope="COLLECTION"), \
+        assert "FINISHED" in bpy.ops.stepper.reapply_uv(), \
             "the collection scope found nothing"
         bpy.context.view_layer.active_layer_collection = (
             bpy.context.view_layer.layer_collection)
@@ -347,7 +371,7 @@ def main():
         obj.parent = None
         bpy.context.view_layer.update()
         before = obj.matrix_world.translation.copy()
-        result = bpy.ops.cadlink.update_from_cad(scope="WHOLE", what="POSES")
+        result = bpy.ops.cadlink.update_from_cad(what="POSES")
         assert "FINISHED" in result, result
         assert server.seen[-1]["op"] == "poses", server.seen[-1]
         bpy.context.view_layer.update()
@@ -362,7 +386,7 @@ def main():
         #    scene is rebuilt from it. This is what catches parts added or
         #    removed and mates changed, which no geometry update can see.
         objects_before = len([o for o in bpy.data.objects if o.get("RIG_component_id")])
-        result = bpy.ops.cadlink.update_from_cad(scope="WHOLE", what="EVERYTHING")
+        result = bpy.ops.cadlink.update_from_cad(what="EVERYTHING")
         assert "FINISHED" in result, result
         assert server.seen[-1]["op"] == "export", server.seen[-1]
         bpy.context.view_layer.update()
@@ -402,7 +426,7 @@ def main():
             o.select_set(False)
         empty.select_set(True)
         bpy.context.view_layer.objects.active = empty
-        result = bpy.ops.cadlink.update_from_cad(quality=0.9, scope="SELECTED")
+        result = bpy.ops.cadlink.update_from_cad(quality=0.9)
         assert "FINISHED" in result, result
         holder = next(o for o in empty.instance_collection.all_objects
                       if o.type == "MESH")

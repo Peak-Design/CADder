@@ -3137,22 +3137,6 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "down as more parts share a tile",
         default=UV_PACK_MARGIN, min=0.0, max=0.25, precision=4)
 
-    # How much of the assembly the Apply buttons of the Simplify and UV
-    # panels cover. Panel state rather than an import option, so it lives
-    # here and not on the import operator.
-    uv_scope: bpy.props.EnumProperty(
-        items=tools_mod.SCOPE_ITEMS,
-        name="Scope",
-        description="How much of the assembly Apply UVs covers",
-        default="SELECTED",
-    )
-    simplify_scope: bpy.props.EnumProperty(
-        items=tools_mod.SCOPE_ITEMS,
-        name="Scope",
-        description="How much of the assembly Apply Simplify covers",
-        default="SELECTED",
-    )
-
     # Material database UI state
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
     mat_db_active_index: bpy.props.IntProperty(default=0)
@@ -4333,9 +4317,8 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
         sub = col.row()
         sub.active = prg.uv_pack != "NONE"
         sub.prop(prg, "uv_pack_margin")
-        col.prop(prg, "uv_scope", text="Scope")
-        apply_uv = layout.operator("stepper.reapply_uv", icon="UV")
-        apply_uv.scope = prg.uv_scope
+        tools_mod.scope_hint(layout, context)
+        layout.operator("stepper.reapply_uv", icon="UV")
 
 
 class STEP_PT_STEPper_Debug(bpy.types.Panel):

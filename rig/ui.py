@@ -212,18 +212,6 @@ QUALITY_ITEMS = [
     ("CUSTOM", "Custom", "The chord set below, not one of the four names"),
 ]
 
-#: How much of the assembly Rebuild from CAD covers. Shared by the panel and
-#: the operator, so the dropdown and the redo panel offer the same three.
-SCOPE_ITEMS = [
-    ("SELECTED", "Selected Parts", "The parts that are selected"),
-    ("COLLECTION", "Collection",
-     "Every part in the collections the selection sits in, and in the "
-     "collections below them. With nothing selected, the collection that is "
-     "active in the outliner"),
-    ("WHOLE", "Whole Assembly", "Every part of this send"),
-]
-
-
 def quality_dial(settings):
     """The chord dial for Rebuild from CAD: 0 is coarse, 1 is fine.
 
@@ -610,49 +598,18 @@ if bpy is not None:
         """Every object that came in over CAD Link."""
         return [o for o in bpy.data.objects if o.get("RIG_component_id")]
 
-    def _under(collection):
-        """A collection and every collection inside it, however deep."""
-        found = [collection]
-        stack = [collection]
-        guard = 0
-        while stack and guard < 10000:
-            guard += 1
-            here = stack.pop()
-            for child in here.children:
-                if child in found:
-                    continue
-                found.append(child)
-                stack.append(child)
-        return found
+    def _scope_objects(context):
+        """The parts a rebuild covers, taken from what is selected.
 
-    def _scope_objects(context, scope):
-        """The objects a rebuild covers. Selected parts is what is selected.
-        Collection widens that to the collections the selection sits in AND
-        everything below them, which is a subassembly and its subassemblies
-        in the tree modes. With nothing selected it is the collection that
-        is active in the outliner, so one level of the tree can be rebuilt
-        on its own. Whole assembly is every object of the same send."""
-        selected = [o for o in context.selected_objects if o.get("RIG_component_id")]
-        if scope == "SELECTED":
-            return selected
-        if scope == "COLLECTION":
-            holders = []
-            for o in selected:
-                for c in o.users_collection:
-                    if c not in holders:
-                        holders.append(c)
-            if not holders and context.collection is not None:
-                holders = [context.collection]
-            wanted = set()
-            for c in holders:
-                wanted.update(_under(c))
-            return [o for o in _linked_objects()
-                    if any(c in wanted for c in o.users_collection)]
-        files = {o.get("SWMESH_file") for o in selected}
-        files.discard(None)
-        if not files:
-            return _linked_objects()
-        return [o for o in _linked_objects() if o.get("SWMESH_file") in files]
+        Parts that are selected are what it covers. With no part selected
+        it is the collection that is active in the outliner and every
+        collection below it, so one level of the tree is rebuilt on its own
+        and the root rebuilds the whole assembly. One rule, shared with
+        every other button that works on parts, so there is nothing to set.
+        """
+        from .. import tools as tools_mod
+        return tools_mod.scope_objects(
+            context, lambda o: bool(o.get("RIG_component_id")))
 
     def _apply_poses(context, reply):
         """Puts the CAD poses the reply carries into the manifest, then onto
@@ -751,12 +708,10 @@ if bpy is not None:
         bl_description = ((
             "Ask the CAD application for the geometry of these parts again, at the "
             "quality set here. The addon swaps the new geometry in and keeps the "
-            "pose, the materials, the rig and which parts are simplified"
+            "pose, the materials, the rig and which parts are defeatured"
         ))
         bl_options = {"REGISTER", "UNDO"}
 
-        scope: bpy.props.EnumProperty(
-            name="Scope", items=SCOPE_ITEMS, default="SELECTED")
         what: bpy.props.EnumProperty(
             name="What",
             items=[
@@ -767,8 +722,8 @@ if bpy is not None:
                 ("POSES", "Poses", "Only where the parts now sit in the CAD assembly"),
                 ("EVERYTHING", "Everything",
                  "Ask the CAD application for the whole assembly again: parts added or "
-                 "removed, mates changed, the rig rebuilt. Only the whole assembly, "
-                 "whatever the scope says"),
+                 "removed, mates changed, the rig rebuilt. Always the whole assembly, "
+                 "whatever is selected"),
             ],
             default="GEOMETRY")
         quality: bpy.props.FloatProperty(
@@ -783,7 +738,8 @@ if bpy is not None:
         def execute(self, context):
             from . import native_import, cad_link, progress, simplify
             ids = []
-            for obj in _scope_objects(context, self.scope):
+            covered = _scope_objects(context)
+            for obj in covered:
                 cid = obj.get("RIG_component_id")
                 if cid and cid not in ids:
                     ids.append(cid)
@@ -792,7 +748,6 @@ if bpy is not None:
                 return {"CANCELLED"}
             persistent = []
             split = False
-            covered = _scope_objects(context, self.scope)
             for obj in covered:
                 pid = obj.get("SWMESH_persistent_id")
                 if pid and pid not in persistent:
@@ -815,7 +770,7 @@ if bpy is not None:
                         self.report({"ERROR"}, stages["error"])
                         return {"CANCELLED"}
                     parts, groups = stages.get("simplify") or (0, 0)
-                    kept = (", {} part(s) and {} collection(s) still simplified"
+                    kept = (", {} part(s) and {} collection(s) still defeatured"
                             .format(parts, groups)) if parts or groups else ""
                     self.report({"INFO"},
                                 "Brought the whole assembly over again: {} object(s), {}{}"
@@ -904,12 +859,12 @@ if bpy is not None:
             col.prop(settings, "update_quality", text="Quality")
             if settings.update_quality == "CUSTOM":
                 col.prop(settings, "update_quality_factor", text="Chord")
-            col.prop(settings, "rebuild_scope", text="Scope")
 
+            from .. import tools as tools_mod
+            tools_mod.scope_hint(layout, context)
             update = layout.operator("cadlink.update_from_cad",
                                      icon="FILE_REFRESH")
             update.quality = quality_dial(settings)
-            update.scope = settings.rebuild_scope
 
             # The lock: what a send does to the rig standing in the scene.
             # Only shown when there is a rig, because that is the only time

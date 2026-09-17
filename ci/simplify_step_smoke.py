@@ -88,20 +88,27 @@ def main():
     assert holes(plate) == (4, True), \
         "the fixture does not have the holes it should: %s" % (holes(plate),)
 
-    # 2. Nobody marked it, so nothing happens. The switch decides, and a
-    #    part that says nothing gets the geometry it has always had.
+    # 2. The button says "this part, defeatured", so it turns the switch on
+    #    as well as acting on it. Nobody has to find the checkbox first.
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     plate.select_set(True)
     bpy.context.view_layer.objects.active = plate
     assert bpy.ops.stepper.apply_simplify.poll(), "the operator refused a STEP part"
     bpy.ops.stepper.apply_simplify()
-    assert holes(plate) == (4, True), "an unmarked part came back changed"
+    assert plate.cad_simplify.enabled, "the button left the switch off"
+    assert holes(plate) == (0, True),         "the default dial did not take the bolt holes: %s" % (holes(plate),)
 
-    # 3. Marked: the four small holes go, the 30 mm bore stays, and the
-    #    plate is still closed.
+    # 3. The dial is the part's own, so a part says how small is small. At
+    #    12 mm the four bolt holes go, the 30 mm bore stays, and the plate
+    #    is still closed.
+    plate = load()
     plate.cad_simplify.enabled = True
     plate.cad_simplify.size = 0.012
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    plate.select_set(True)
+    bpy.context.view_layer.objects.active = plate
     bpy.ops.stepper.apply_simplify()
     small, big = holes(plate)
     faces = len(plate.data.polygons)
@@ -140,7 +147,7 @@ def main():
         obj.select_set(False)
     plate3.select_set(True)
     bpy.context.view_layer.objects.active = plate3
-    bpy.ops.stepper.apply_simplify(scope="COLLECTION")
+    bpy.ops.stepper.apply_simplify()
     assert holes(plate3) == (0, True), \
         "the collection did not decide for the part: %s" % (holes(plate3),)
     assert open_edges(plate3) == 0, "the part the collection covered is open"

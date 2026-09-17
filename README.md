@@ -251,6 +251,13 @@ The UV map of any part, whichever way it came in. **Box Project** reads
 the mesh and nothing else. The other modes start from one island per CAD
 face, so they need the CAD data: a part from a STEP file is read from the
 file again, and a part from the live link is asked of the CAD application.
+One UV unit is one metre of the part, whichever way the part came in, so
+the texture is the same size on every part of the assembly and a 50 mm
+face gets ten times the UV length of a 5 mm one. A curved face is measured
+across its own surface, so a texture on a cylinder is the same size as one
+on the plate beside it. A sphere, a torus and a spline have no single
+scale, and there the size is the one that holds over most of the face.
+
 A part from the live link needs one step a part from a STEP file does not.
 Its mesh carries every CAD face's points twice, once for each face that
 meets there, which is what lets each point hold its own surface

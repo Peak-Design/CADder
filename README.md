@@ -197,12 +197,32 @@ CAD**, **Rebuild from STEP**, **Rebuild from IGES**. With parts of both
 kinds in scope there is a button for each. Rebuild from CAD asks the CAD
 application for the geometry again and swaps it in without losing the
 pose, the materials or the rig. Press F9 after it to choose what
-it brings. Geometry, Geometry and Poses and Poses all ask for the parts the
-scene ALREADY HOLDS, and nothing else about the scene changes. Whole
-Assembly asks for the assembly itself, which is the only way to pick up a
-part added or deleted in CAD and a mate that changed: it takes the whole
-assembly whatever is selected, and it builds the scene again, so work done
-in Blender on those objects goes with the old ones.
+it brings:
+
+| | What it asks for | What it does to the scene |
+| --- | --- | --- |
+| **Geometry** | The parts in scope | Swaps the meshes in |
+| **Geometry and Poses** | The parts in scope | Swaps the meshes in and moves them |
+| **Poses** | Where the parts sit | Moves them |
+| **Refresh** | The whole assembly | Brings it up to date part by part |
+| **Full Reimport** | The whole assembly | Builds it again from nothing |
+
+The first three ask only about the parts the scene ALREADY HOLDS, so a part
+added or deleted in CAD, or a mate that changed, is invisible to them. The
+last two ask about the assembly itself and always take all of it, whatever
+is selected.
+
+**Refresh** is the one to reach for. A part that is still there keeps its
+object, its mesh, its materials and its modifiers, and only moves and is
+re-tagged. New parts arrive, deleted parts go, and the tree and the poses
+follow. **Rig** says what happens to the armature: add and remove bones
+(the default, which keeps an animation, because a body made of the same
+parts keeps its bone name), keep it as it is, or build a new one. It is the
+same work **Refresh Model** does from the CAD add-in, driven from this end.
+
+**Full Reimport** replaces everything, so work done in Blender on those
+objects goes with the old ones. Use it when the scene is wrong in a way a
+refresh cannot put right.
 
 **Triangles to Quads** pairs the tessellation triangles back into quads.
 A flat or lightly curved CAD face comes out as long thin pairs that go

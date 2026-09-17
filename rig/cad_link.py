@@ -141,7 +141,7 @@ def poses(component_ids=None, persistent_ids=None, instance=None):
 
 
 def retessellate(component_ids, quality, persistent_ids=None, instance=None,
-                 separate_solids=None, defeature=None):
+                 separate_solids=None, defeature=None, paths=None):
     """Asks for those components again at `quality` (0..1). The reply names
     a .swmesh on disk. Persistent ids name the same occurrences after an
     edit; see `poses`.
@@ -155,11 +155,17 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
 
     defeature names the components this scene holds without their small
     features, one entry each. The CAD application holds no such setting of
-    its own, so saying nothing gets the geometry as it is."""
+    its own, so saying nothing gets the geometry as it is.
+
+    paths name the PLACEMENTS wanted, where the scene can say. A component
+    id is the rig body's, and every part of a rigid subassembly shares it,
+    so the ids alone ask for the whole branch (native_import.cad_paths)."""
     payload = dict(components=list(component_ids), quality=float(quality),
                    persistent_ids=list(persistent_ids or []))
     if separate_solids is not None:
         payload["separate_solids"] = bool(separate_solids)
     if defeature:
         payload["defeature"] = list(defeature)
+    if paths:
+        payload["paths"] = list(paths)
     return request("retessellate", instance=instance, **payload)

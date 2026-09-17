@@ -59,7 +59,14 @@ def _text(s):
 
 def write_mesh(path, triangles, tolerance):
     """A fan of `triangles` triangles: the count is how the test tells the
-    coarse mesh from the refined one."""
+    coarse mesh from the refined one.
+
+    Version 3 of the format, because that is the one that carries the
+    occurrence PATH, and the path is what an update pairs the two
+    assemblies up by. A component id does not do it: every part of a rigid
+    subassembly travels under the subassembly's id, so one id can name a
+    thousand placements (Conveyor12k-A00, Oscar, 2026-09-17).
+    """
     n = triangles + 2
     verts = []
     for i in range(n):
@@ -68,18 +75,20 @@ def write_mesh(path, triangles, tolerance):
     for i in range(triangles):
         tris.extend([0, i + 1, i + 2])
 
-    body = struct.pack("<III", swmesh.MAGIC, 1, 0)
+    body = struct.pack("<III", swmesh.MAGIC, 3, 0)
     body += struct.pack("<d", tolerance)
-    body += struct.pack("<III", 1, 1, 1)
+    body += struct.pack("<IIII", 1, 1, 1, 0)
     body += _text("grey") + struct.pack("<6f", 0.8, 0.8, 0.8, 1.0, 0.5, 0.0) + _text("")
+    body += struct.pack("<I", 0)              # no appearance JSON
     body += struct.pack("<i", 42) + _text("bracket")
     body += struct.pack("<II", n, triangles)
     body += struct.pack("<%df" % len(verts), *verts)
     body += struct.pack("<%di" % len(tris), *tris)
     body += struct.pack("<%di" % triangles, *([0] * triangles))
     rows = [1, 0, 0, 1.25, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-    body += struct.pack("<i", 42) + _text("c009") + _text("bracket-1") \
-        + struct.pack("<16d", *rows)
+    body += struct.pack("<i", 42) + _text("c009") + _text("bracket") \
+        + _text("bracket-1") + struct.pack("<16d", *rows) \
+        + struct.pack("<B", 0)                # no local transform
     with open(path, "wb") as fh:
         fh.write(body)
     return path
@@ -208,6 +217,10 @@ def main():
         assert asked["components"] == ["c009"], asked
         # Blender's FloatProperty is float32, so 0.9 arrives as 0.89999998.
         assert abs(asked["quality"] - 0.9) < 1e-6, asked["quality"]
+        # And the PLACEMENT, not only the component id. Every part of a
+        # rigid subassembly carries the subassembly's id, so the id alone
+        # asks for every part of the branch (Oscar, 2026-09-17).
+        assert asked.get("paths") == ["bracket-1"], asked.get("paths")
 
         # 5. Finer geometry, SAME object, same place, still on its bone.
         assert len(obj.data.polygons) == FINE_TRIS, len(obj.data.polygons)
@@ -404,6 +417,28 @@ def main():
         arms = [o for o in bpy.data.objects if o.type == "ARMATURE" and o.get("RIG_rig")]
         assert len(arms) == 1, "the re-send did not rebuild exactly one rig: %s" % arms
 
+        # 9b. Refresh: the same question of the CAD application, and the
+        #     scene is brought up to date rather than built again. A part
+        #     that is still there keeps its object, and with it the work
+        #     done in Blender on that object.
+        part = rebuilt[0]
+        part.name = "bracket I renamed"
+        part["mine"] = 42
+        part.modifiers.new("Bevel", "BEVEL")
+        result = bpy.ops.cadlink.update_from_cad(what="REFRESH")
+        assert "FINISHED" in result, result
+        assert server.seen[-1]["op"] == "export", server.seen[-1]
+        bpy.context.view_layer.update()
+        kept = bpy.data.objects.get("bracket I renamed")
+        assert kept is not None, "the refresh replaced the object"
+        assert kept.get("mine") == 42, "the refresh dropped what was on it"
+        assert [m.type for m in kept.modifiers] == ["BEVEL"], \
+            "the refresh dropped the modifier: %s" % [m.type
+                                                      for m in kept.modifiers]
+        arms = [o for o in bpy.data.objects
+                if o.type == "ARMATURE" and o.get("RIG_rig")]
+        assert len(arms) == 1, "the refresh left %d rig(s)" % len(arms)
+
         # 10. The same round trip with the parts sent as collection
         #     instances. The object that carries the component id is then
         #     an empty, and the geometry sits on the prototype inside the
@@ -457,7 +492,8 @@ def main():
         print("refine_smoke: OK: %d -> %d triangles, object kept its bone "
               "parent and world pose, a pose update moved it onto the new CAD "
               "transform, and a whole-assembly re-send rebuilt the scene from a "
-              "fresh export, and a part sent as a collection instance "
+              "fresh export, a Refresh brought the same export in without "
+              "losing the object, and a part sent as a collection instance "
               "refines through its prototype" % (COARSE_TRIS, FINE_TRIS))
     finally:
         server.shutdown()

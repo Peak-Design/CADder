@@ -1032,6 +1032,7 @@ def _ask_cad_link(context, objs):
         reply = cad_link.retessellate(
             ids, rig_ui.quality_dial(context.scene.cad_link),
             persistent_ids=persistent,
+            paths=native_import.cad_paths(objs),
             defeature=defeature_mod.orders(objs, context.scene))
         return len(native_import.refine(context, reply["mesh"]))
     except cad_link.CadLinkError as exc:

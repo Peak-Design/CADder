@@ -24,6 +24,7 @@ has to be asked for again, which is what the quality round trip is for.
 
 import hashlib
 import os
+import re
 import struct
 from dataclasses import dataclass, field
 from typing import List
@@ -179,6 +180,35 @@ def _rehome_children(coll, home):
 
 
 _TAG_FILE = "SWMESH_file"      # on every collection and object of an import
+
+# ".body003" at the end of a path: a part that came in as one object per
+# solid body. The CAD application knows the part, not the body.
+_BODY_SUFFIX = re.compile(r"\.body\d+$")
+
+
+def cad_paths(objects):
+    """Where each of these parts sits in the CAD assembly, once each, or
+    None when one of them does not say.
+
+    This is what names ONE placement. A component id does not: every part
+    of a rigid subassembly travels under the SUBASSEMBLY's id, so asking by
+    id for one part asks the CAD application for every part of the branch
+    it sits on (Conveyor12k-A00: one part selected, 78 tessellated and 1509 sent
+    back, Oscar, 2026-09-17). A caller that cannot name them all sends none
+    of them and lets the ids answer, because a partial list would quietly
+    leave parts out.
+    """
+    out, seen = [], set()
+    for obj in objects or []:
+        path = obj.get(_TAG_PATH)
+        if not path:
+            return None
+        path = _BODY_SUFFIX.sub("", str(path))
+        if path in seen:
+            continue
+        seen.add(path)
+        out.append(path)
+    return out
 
 
 def _own_collections(stem):

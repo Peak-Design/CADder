@@ -12,7 +12,6 @@ broken file can never take the UI down with it.
 
 import json
 import os
-import re
 
 from . import (graph, inputs, joining, manifest as manifest_mod, matching,
                parenting, pose_sync, rig_build, defeature)
@@ -222,9 +221,6 @@ def quality_dial(settings):
     return QUALITY_DIAL.get(settings.update_quality, 0.75)
 
 
-# ".body003" at the end of an occurrence path: a part that came in as one
-# object per solid body.
-_BODY_SUFFIX = re.compile(r"\.body\d+$")
 
 
 def _find_rig(context):
@@ -650,23 +646,29 @@ if bpy is not None:
         context.view_layer.update()
         return moved
 
-    def _resend_everything(context):
-        """Asks the CAD application to export the whole assembly again and
-        runs it through the same stages a send does: the old import is
-        replaced, the poses are synced, the rig is rebuilt from the new
-        manifest and the geometry goes back on its bones. This is what
-        catches parts added or removed and mates changed, which no update of
-        the geometry alone can see.
+    def _resend_everything(context, update=False, rig_mode=None):
+        """Asks the CAD application to export the whole assembly again.
+
+        This is what catches a part added or deleted in CAD and a mate that
+        changed, which no update of the geometry alone can see.
+
+        With `update`, the scene is brought up to date part by part: a part
+        that is still there keeps its object, its mesh, its materials and
+        its modifiers, and only moves and is re-tagged. `rig_mode` then says
+        what happens to the rig (rig_update.MODES). Without it, the import
+        is REPLACED, which is what a fresh send does, and everything done in
+        Blender on those objects goes with the old ones.
 
         The import options of the last send are reused, so the assembly
         lands the same way round and in the same shape. So are the parts and
         collections the scene holds defeatured: the CAD application is told
-        which they are, and the settings are put back on what arrives,
-        because this replaces every object and collection in the send."""
+        which they are, and after a replace the settings are put back on
+        what arrives, because a replace takes every object and collection
+        with it. An update keeps them, so it needs none of that."""
         from . import cad_link, manifest as man_mod, defeature
         from .. import bridge
         out = {}
-        held = defeature.snapshot(context.scene)
+        held = None if update else defeature.snapshot(context.scene)
         asked = defeature.orders(_linked_objects(), context.scene)
         try:
             reply = cad_link.request(
@@ -685,19 +687,33 @@ if bpy is not None:
         options = _STATE.get("import_options") or {"hierarchy_types": "FLAT", "up_as": "ZPOS"}
         payload = {
             "step": None, "mesh": mesh, "manifest": manifest_path,
-            "steps": {"import": False, "replace": True, "match": True,
+            "steps": {"import": False, "replace": not update,
+                      "update": update, "match": True,
                       "sync_poses": True, "build_rig": True, "relink": True,
                       "cleanup": True},
             "import_options": options,
         }
+        if update and rig_mode:
+            payload["rig_mode"] = rig_mode
         result = bridge._run_job(payload)
         if not result.get("ok"):
             return {"error": result.get("error") or "the import failed"}
         stages = result.get("stages") or {}
         out["objects"] = (stages.get("mesh") or {}).get("objects", 0)
         rig = stages.get("rig")
-        out["rig"] = ("%d bone(s)" % rig["bones"]) if rig else "no rig"
-        out["defeature"] = defeature.restore(held, context.scene)
+        out["rig"] = ("%d bone(s)" % rig["bones"]) if rig and "bones" in rig \
+            else (rig.get("mode", "no rig") if rig else "no rig")
+        changed = stages.get("update")
+        if changed:
+            out["changed"] = ("%d part(s) added, %d removed, %d moved, "
+                              "%d re-tessellated, %d unchanged"
+                              % (len(changed.get("added") or []),
+                                 len(changed.get("removed") or []),
+                                 len(changed.get("moved") or []),
+                                 len(changed.get("reshaped") or []),
+                                 changed.get("kept", 0)))
+        out["defeature"] = ((0, 0) if held is None
+                            else defeature.restore(held, context.scene))
         return out
 
     class CADLINK_OT_update_from_cad(bpy.types.Operator):
@@ -712,12 +728,14 @@ if bpy is not None:
         ))
         bl_options = {"REGISTER", "UNDO"}
 
-        # One choice, not three switches. The first three ask the CAD
+        # One choice, not a row of switches. The first three ask the CAD
         # application for the parts THIS SCENE ALREADY HOLDS and change
-        # nothing else; the fourth asks for the assembly itself and builds
-        # the scene again from it. Checkboxes would offer "neither", which
-        # does nothing, and would read as though the fourth were the other
-        # two together, which it is not (Oscar, 2026-09-17).
+        # nothing else about it. The last two ask for the ASSEMBLY, which is
+        # the only way to see a part added or deleted and a mate changed,
+        # and they differ in what they do with the scene that is standing.
+        # Checkboxes would offer "neither", which does nothing, and would
+        # read as though the last were the others together, which it is not
+        # (Oscar, 2026-09-17).
         what: bpy.props.EnumProperty(
             name="Bring",
             items=[
@@ -731,15 +749,36 @@ if bpy is not None:
                  "Still only the parts the scene already holds"),
                 ("POSES", "Poses",
                  "Only where the parts now sit in the CAD assembly"),
-                ("EVERYTHING", "Whole Assembly",
-                 "Ask the CAD application for the assembly ITSELF again, "
-                 "which is the only way to pick up a part added or deleted "
-                 "in CAD and a mate that changed. Always the whole "
-                 "assembly, whatever is selected, and it builds the scene "
-                 "again: work done in Blender on these objects goes with "
-                 "the old ones"),
+                ("REFRESH", "Refresh",
+                 "Ask the CAD application for the assembly ITSELF again and "
+                 "bring the scene up to date part by part: parts added, "
+                 "parts deleted, the tree and the poses. A part that is "
+                 "still there keeps its object, its mesh, its materials and "
+                 "its modifiers. Always the whole assembly, whatever is "
+                 "selected"),
+                ("EVERYTHING", "Full Reimport",
+                 "Ask for the assembly again and build the scene from "
+                 "nothing. Work done in Blender on these objects goes with "
+                 "the old ones, so use Refresh unless the scene is wrong in "
+                 "a way a refresh cannot put right"),
             ],
             default="GEOMETRY")
+        rig: bpy.props.EnumProperty(
+            name="Rig",
+            description="What a Refresh does with the rig that is standing",
+            items=[
+                ("APPEND", "Add and Remove Bones",
+                 "Keep the armature and bring its bones up to date. A body "
+                 "made of the same parts keeps its bone name, so an "
+                 "animation on it survives"),
+                ("KEEP", "Keep",
+                 "Leave the rig exactly as it is. The parts still attach to "
+                 "it"),
+                ("REGENERATE", "Build a New Rig",
+                 "Throw the armature away and build one from the new "
+                 "manifest"),
+            ],
+            default="APPEND")
         quality: bpy.props.FloatProperty(
             name="Quality", default=0.75, min=0.0, max=1.0, subtype="FACTOR",
             description=("Chord tolerance, relative to each part's own size: "
@@ -769,7 +808,8 @@ if bpy is not None:
                 # A part that came in as one object per solid body. The
                 # geometry has to come back in the same pieces, so the CAD
                 # application is told which it was.
-                if _BODY_SUFFIX.search(str(obj.get("SWMESH_path") or "")):
+                if native_import._BODY_SUFFIX.search(
+                        str(obj.get("SWMESH_path") or "")):
                     split = True
             changed, moved = [], 0
             # The CAD application takes seconds to minutes to answer, and
@@ -777,19 +817,28 @@ if bpy is not None:
             # part of the update is running.
             said = progress.JobProgress(context, title="Rebuild from CAD")
             try:
-                if self.what == "EVERYTHING":
+                if self.what in ("EVERYTHING", "REFRESH"):
+                    update = self.what == "REFRESH"
                     said.stage("asking the CAD application for the assembly", 0, 90)
-                    stages = _resend_everything(context)
+                    stages = _resend_everything(
+                        context, update=update,
+                        rig_mode=self.rig if update else None)
                     if stages.get("error"):
                         self.report({"ERROR"}, stages["error"])
                         return {"CANCELLED"}
                     parts, groups = stages.get("defeature") or (0, 0)
                     kept = (", {} part(s) and {} collection(s) still defeatured"
                             .format(parts, groups)) if parts or groups else ""
-                    self.report({"INFO"},
-                                "Brought the whole assembly over again: {} object(s), {}{}"
-                                .format(stages.get("objects", 0),
-                                        stages.get("rig", "no rig"), kept))
+                    if update:
+                        self.report({"INFO"}, "Refreshed from CAD: {}, {}"
+                                    .format(stages.get("changed",
+                                                       "nothing changed"),
+                                            stages.get("rig", "no rig")))
+                    else:
+                        self.report({"INFO"},
+                                    "Brought the whole assembly over again: {} object(s), {}{}"
+                                    .format(stages.get("objects", 0),
+                                            stages.get("rig", "no rig"), kept))
                     return {"FINISHED"}
                 if self.what != "POSES":
                     said.stage("asking the CAD application for the geometry", 0, 60)
@@ -800,6 +849,7 @@ if bpy is not None:
                     reply = cad_link.retessellate(
                         ids, self.quality, persistent_ids=persistent,
                         separate_solids=split or None,
+                        paths=native_import.cad_paths(covered),
                         defeature=defeature.orders(covered, context.scene))
                     said.stage("replacing the geometry", 60, 90, len(ids))
                     changed = native_import.refine(context, reply["mesh"])

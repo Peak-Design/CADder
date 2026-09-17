@@ -520,6 +520,19 @@ longer. **Into UDIM tiles** shares the import over the tiles you ask for. A
 tile is never smaller than the longest single face, because the addon never
 splits a CAD face.
 
+**Unwrap awkward faces** gives Blender's own unwrap the faces that no one
+scale can flatten. A plane, a cylinder and a cone unroll with no error at
+all, and their chart carries a texture at one size all over. A sphere, a
+torus and a spline do not unroll, so their chart is right over the middle of
+the face and wrong at its corners. The addon measures each face against its
+own texel density, and sends the faces that are off over more than 5 percent
+of their area. Each one is unwrapped on its own, put back at the size of the
+CAD charts of the part, and then joined like any other chart. A face keeps
+the chart of its surface when the unwrap does not beat it. The option is on
+by default. It costs about two seconds on a gearbox, and it is what takes
+the last of the worm wheel from 96 to 100 percent of its surface inside a
+factor of two.
+
 Smart makes its own cuts, so the **Closed surfaces** setting does not apply
 to it. A turn does not change the texel density, and a bend changes it only
 within the limit.

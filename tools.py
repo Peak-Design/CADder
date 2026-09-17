@@ -365,7 +365,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                          stored.get("uv_smart_distortion",
                                     m.UV_SMART_DISTORTION),
                          bool(stored.get("uv_smart_sharp", False)),
-                         bool(stored.get("uv_smart_split", True))),
+                         bool(stored.get("uv_smart_split", True)),
+                         bool(stored.get("uv_smart_unwrap", True))),
                         []).append(obj)
                 done += 1
                 wm.progress_update(done)
@@ -730,6 +731,7 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
     # Every UV key of the import record this panel is allowed to change.
     KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
             "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
+            "uv_smart_unwrap",
             "box_uv_scale", "uv_pack", "uv_pack_tiles", "uv_pack_margin")
 
     @classmethod
@@ -925,7 +927,7 @@ def _uv_modes_on_live(m, objs, want):
         m._smart_merge_objects(
             objs, want["uv_pack"], want["uv_pack_tiles"],
             want["uv_smart_distortion"], bool(want["uv_smart_sharp"]),
-            bool(want["uv_smart_split"]))
+            bool(want["uv_smart_split"]), bool(want["uv_smart_unwrap"]))
     elif mode in uv_mod.UNWRAP_MODES:
         m._unwrap_uv_objects(
             objs,

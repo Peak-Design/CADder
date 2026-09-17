@@ -58,7 +58,7 @@ _IMPORT_OPTION_KEYS = {
     "lin_deflection", "ang_deflection", "lin_deflection_len",
     "ang_deflection_rot", "tessellation_relative", "lin_deflection_rel",
     "uv_mode", "uv_normalize", "uv_closed_seams", "uv_smart_distortion",
-    "uv_smart_sharp", "uv_smart_split", "uv_pack", "uv_pack_tiles",
+    "uv_smart_sharp", "uv_smart_split", "uv_smart_unwrap", "uv_pack", "uv_pack_tiles",
     "uv_pack_margin", "box_uv_scale", "tris_to_quads",
     "eng_materials", "material_database", "import_curves",
     "skip_construction", "group_in_collection", "separate_solids",

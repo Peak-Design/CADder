@@ -1092,14 +1092,94 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             pass
 
 
+def _unwrap_awkward_objects(targets, method="MINIMUM_STRETCH"):
+    """Give Blender's unwrap the faces that no one scale can flatten.
+
+    CAD Surfaces gives every face the chart of its own surface. A plane, a
+    cylinder and a cone unroll into that chart with no error at all. A
+    sphere, a torus and a spline do not unroll, so their chart stretches
+    wherever the surface does, and no scale puts it right. Those faces, and
+    only those, go to the unwrap here, before Smart starts to join
+    anything: it is what a user does by hand today, and Smart then treats
+    the island it makes like any other chart.
+
+    Returns (faces, islands).
+    """
+    picked = []
+    for o in targets:
+        try:
+            mask = uv_mod.strained(o.data)
+        except Exception as e:
+            print(f"UV strain test failed on {o.name}: {e}")
+            continue
+        if mask is None or not mask.any():
+            continue
+        # The unwrap reads the seams. Without one on every chart boundary
+        # it welds two charts into one island, and without the cut a closed
+        # face already carries it has nowhere to open that face.
+        uv_mod.mark_seams(o.data)
+        picked.append((o, mask, uv_mod.read_uvs(o.data)))
+    if not picked:
+        return 0, 0
+
+    view_layer = bpy.context.view_layer
+    tool = bpy.context.tool_settings
+    was = tuple(tool.mesh_select_mode)
+    faces = 0
+    try:
+        for o in view_layer.objects:
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass
+        for o, _mask, _was in picked:
+            o.select_set(True)
+        view_layer.objects.active = picked[0][0]
+        bpy.ops.object.mode_set(mode="EDIT")
+        tool.mesh_select_mode = (False, False, True)
+        bpy.ops.mesh.select_all(action="DESELECT")
+        for o, mask, _was in picked:
+            bm = bmesh.from_edit_mesh(o.data)
+            bm.faces.ensure_lookup_table()
+            for i in np.flatnonzero(mask).tolist():
+                bm.faces[i].select_set(True)
+            bmesh.update_edit_mesh(o.data, loop_triangles=False,
+                                   destructive=False)
+            faces += int(mask.sum())
+        try:
+            bpy.ops.uv.unwrap(method=method, margin=0.001, no_flip=True,
+                              correct_aspect=False)
+        except TypeError:
+            bpy.ops.uv.unwrap(method=method, margin=0.001,
+                              correct_aspect=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception as e:
+        print(f"UV unwrap of the awkward faces failed: {e}")
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+        return 0, 0
+    finally:
+        tool.mesh_select_mode = was
+
+    # The unwrap packs what it made into the 0 to 1 square. Put each island
+    # back at the size the CAD charts of the part are in.
+    islands = 0
+    for o, mask, was in picked:
+        islands += uv_mod.fit_charts(o.data, mask, was)
+    return faces, islands
+
+
 def _smart_merge_objects(objs, pack="NONE", tiles=4,
                          distortion=UV_SMART_DISTORTION, sharp=False,
-                         split=True):
+                         split=True, unwrap=True):
     """Grow the Smart UV islands on every unique mesh.
 
     `distortion` is the Smart distortion setting in percent. `sharp` lets
     Smart join across sharp edges as well. `split` lets Smart cut an island
-    where its pieces pack better.
+    where its pieces pack better. `unwrap` sends the faces that no one
+    scale can flatten to Blender's unwrap before any of that.
 
     The tile an island has to fit comes from Pack UVs. One tile for each
     part, or no packing, gives every part its own. All parts together puts
@@ -1118,6 +1198,13 @@ def _smart_merge_objects(objs, pack="NONE", tiles=4,
         targets.append(o)
     if not targets:
         return
+    if unwrap:
+        t_un = time.time()
+        faces, made = _unwrap_awkward_objects(targets)
+        if faces:
+            print("UV smart unwrap: %d face(s) that one scale cannot "
+                  "flatten into %d island(s) in %.2fs"
+                  % (faces, made, time.time() - t_un))
     side = None
     if pack in ("ALL", "UDIM"):
         total = 0.0
@@ -2317,6 +2404,7 @@ def load_step(
     uv_smart_distortion=UV_SMART_DISTORTION,
     uv_smart_sharp=False,
     uv_smart_split=True,
+    uv_smart_unwrap=True,
     box_uv_scale=1.0,
     tris_to_quads=True,
     uv_pack="NONE",
@@ -2469,6 +2557,7 @@ def load_step(
         "uv_smart_distortion": uv_smart_distortion,
         "uv_smart_sharp": uv_smart_sharp,
         "uv_smart_split": uv_smart_split,
+        "uv_smart_unwrap": uv_smart_unwrap,
         "box_uv_scale": _uv_options["box_scale"],
         "tris_to_quads": tris_to_quads,
         "uv_pack": uv_pack,
@@ -2790,7 +2879,7 @@ def load_step(
     if uv_mode == "SMART":
         _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
                              uv_smart_distortion, uv_smart_sharp,
-                             uv_smart_split)
+                             uv_smart_split, uv_smart_unwrap)
     if _uv_options.get("unwrap"):
         _unwrap_uv_objects(
             created_names.values(),
@@ -3118,6 +3207,13 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "fills little of the rectangle around it. Clear this "
                     "option to keep every island whole",
         default=True)
+    uv_smart_unwrap: bpy.props.BoolProperty(
+        name="Unwrap Awkward Faces",
+        description="Give Blender's unwrap the faces that no one scale can "
+                    "flatten, such as a sphere, a blend corner or a spline "
+                    "surface. A plane, a cylinder and a cone keep the exact "
+                    "chart of the CAD surface",
+        default=True)
     box_uv_scale: bpy.props.FloatProperty(
         name="Box UV Size", unit="LENGTH",
         description="World size of one UV tile for the Box Project mode",
@@ -3367,6 +3463,15 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    uv_smart_unwrap: bpy.props.BoolProperty(
+        name="Unwrap Awkward Faces",
+        description="Give Blender's unwrap the faces that no one scale can "
+                    "flatten, such as a sphere, a blend corner or a spline "
+                    "surface. A plane, a cylinder and a cone keep the exact "
+                    "chart of the CAD surface",
+        default=True,
+    )
+
     uv_closed_seams: bpy.props.EnumProperty(
         items=UV_CLOSED_ITEMS,
         name="Closed surfaces",
@@ -3507,6 +3612,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_smart_distortion": self.uv_smart_distortion,
             "uv_smart_sharp": self.uv_smart_sharp,
             "uv_smart_split": self.uv_smart_split,
+            "uv_smart_unwrap": self.uv_smart_unwrap,
             "box_uv_scale": self.box_uv_scale,
             "tris_to_quads": self.tris_to_quads,
             "uv_pack": self.uv_pack,
@@ -3588,6 +3694,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_smart_distortion=self.uv_smart_distortion,
                 uv_smart_sharp=self.uv_smart_sharp,
                 uv_smart_split=self.uv_smart_split,
+                uv_smart_unwrap=self.uv_smart_unwrap,
                 box_uv_scale=self.box_uv_scale,
                 tris_to_quads=self.tris_to_quads,
                 uv_pack=self.uv_pack,

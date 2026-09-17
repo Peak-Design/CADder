@@ -199,6 +199,16 @@ SMART_SPLIT_GAIN = 0.10
 # Blender leaves 0.005 of the tile on each side of an island.
 SMART_SPLIT_MARGIN = 0.01
 
+# How far a triangle may be from the texel density of its OWN chart before
+# the chart counts as one that no single scale can flatten. A ring fillet of
+# 20 mm with a 2 mm tube runs from 18 to 22 mm around it, which is 1.22, and
+# it still makes a clean strip to put a texture on.
+SMART_STRAIN = 1.5
+
+# How much of a chart may be over that before the face goes to the unwrap,
+# as a share of the area of the face.
+SMART_STRAIN_SHARE = 0.05
+
 _KEY_OFF = 1 << 30
 
 
@@ -734,6 +744,110 @@ def _split_islands(members, edges, hull_pts, area, margin, gain):
     return out
 
 
+class _Read(object):
+    """The arrays of one mesh that a chart is found from.
+
+    A chart is a run of faces the UV map holds together. Before Smart joins
+    anything, that is one CAD face on one CAD surface. Everything is read
+    once, and `ok` says whether there was anything to read.
+    """
+
+    def __init__(self, me):
+        self.ok = False
+        self.me = me
+        self.layer = me.uv_layers.active
+        self.nl = nl = len(me.loops)
+        self.npoly = npoly = len(me.polygons)
+        self.ne = ne = len(me.edges)
+        if self.layer is None or nl == 0 or npoly == 0:
+            return
+        uv = np.empty(nl * 2, dtype=np.float64)
+        self.layer.uv.foreach_get("vector", uv)
+        self.uv = uv = uv.reshape(-1, 2)
+        self.lv = lv = np.empty(nl, dtype=np.int64)
+        me.loops.foreach_get("vertex_index", lv)
+        le = np.empty(nl, dtype=np.int64)
+        me.loops.foreach_get("edge_index", le)
+        self.starts = starts = np.empty(npoly, dtype=np.int64)
+        me.polygons.foreach_get("loop_start", starts)
+        self.totals = totals = np.empty(npoly, dtype=np.int64)
+        me.polygons.foreach_get("loop_total", totals)
+        self.parea = np.empty(npoly, dtype=np.float64)
+        me.polygons.foreach_get("area", self.parea)
+        self.sharp = np.zeros(ne, dtype=bool)
+        me.edges.foreach_get("use_edge_sharp", self.sharp)
+
+        self.pol = pol = np.repeat(np.arange(npoly), totals)
+        nxt = np.arange(nl) + 1
+        nxt[starts + totals - 1] = starts
+        self.nxt = nxt
+
+        # The two loops of every edge that has exactly two faces.
+        order = np.argsort(le, kind="stable")
+        cnt = np.bincount(le, minlength=ne)
+        first = np.concatenate([[0], np.cumsum(cnt)[:-1]])
+        self.man = man = np.where(cnt == 2)[0]
+        l1 = order[first[man]]
+        l2 = order[first[man] + 1]
+        # l1 runs from va to vb. In a mesh wound one way, l2 runs back.
+        back = lv[l2] != lv[l1]
+        self.a1, self.b1 = l1, nxt[l1]
+        self.a2 = np.where(back, nxt[l2], l2)
+        self.b2 = np.where(back, l2, nxt[l2])
+        self.p1, self.p2 = pol[l1], pol[l2]
+
+        span = float(np.ptp(uv, axis=0).max())
+        self.tol = max(span, 1e-12) * 1e-7
+
+        # Fan triangles of every polygon, for areas and the overlap test.
+        tcount = totals - 2
+        self.tp = tp = np.repeat(np.arange(npoly), tcount)
+        k = (np.arange(int(tcount.sum()))
+             - np.repeat(np.cumsum(tcount) - tcount, tcount))
+        self.t0 = t0 = starts[tp]
+        self.t1 = t0 + k + 1
+        self.t2 = t0 + k + 2
+        self.ok = True
+
+    def joined(self, u):
+        """Whether the UVs hold the two faces of each edge together."""
+        return ((np.abs(u[self.a1] - u[self.a2]).sum(axis=1) <= self.tol)
+                & (np.abs(u[self.b1] - u[self.b2]).sum(axis=1) <= self.tol))
+
+    def charts(self, u):
+        """The faces the UVs hold together, as a chart number per face."""
+        cont = self.joined(u)
+        _ids, lab = np.unique(_labels(self.p1[cont], self.p2[cont],
+                                      self.npoly), return_inverse=True)
+        return lab.ravel()
+
+    def signed(self, u):
+        """The signed UV area of every fan triangle."""
+        return 0.5 * ((u[self.t1, 0] - u[self.t0, 0])
+                      * (u[self.t2, 1] - u[self.t0, 1])
+                      - (u[self.t2, 0] - u[self.t0, 0])
+                      * (u[self.t1, 1] - u[self.t0, 1]))
+
+    def frame(self):
+        """The 3D shape of every fan triangle, and its area.
+
+        The frame holds the length of the first edge of the triangle, and
+        the second edge along that first one and across it. It is what a
+        UV triangle is measured against.
+        """
+        co = np.empty(len(self.me.vertices) * 3, dtype=np.float64)
+        self.me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        e1 = co[self.lv[self.t1]] - co[self.lv[self.t0]]
+        e2 = co[self.lv[self.t2]] - co[self.lv[self.t0]]
+        l1 = np.linalg.norm(e1, axis=1)
+        ex = (e1 * e2).sum(axis=1) / np.maximum(l1, 1e-300)
+        ey = np.linalg.norm(np.cross(e1, e2), axis=1) / np.maximum(l1, 1e-300)
+        good = (l1 > 0.0) & (ey > 1e-9 * np.maximum(l1, 1e-300))
+        frame = (np.where(good, l1, 1.0), ex, np.where(good, ey, 1.0))
+        return frame, np.where(good, 0.5 * l1 * ey, 0.0)
+
+
 def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False,
                 split=True):
     """Grow UV islands out of the CAD charts of one mesh.
@@ -762,73 +876,16 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False,
     Writes the UVs and puts the seams on the island boundaries. Returns
     (charts, islands) for the charts that had a neighbor to join.
     """
-    layer = me.uv_layers.active
-    nl = len(me.loops)
-    npoly = len(me.polygons)
-    if layer is None or nl == 0 or npoly == 0:
+    r = _Read(me)
+    if not r.ok:
         return 0, 0
-    uv = np.empty(nl * 2, dtype=np.float64)
-    layer.uv.foreach_get("vector", uv)
-    uv = uv.reshape(-1, 2)
-    lv = np.empty(nl, dtype=np.int64)
-    me.loops.foreach_get("vertex_index", lv)
-    le = np.empty(nl, dtype=np.int64)
-    me.loops.foreach_get("edge_index", le)
-    starts = np.empty(npoly, dtype=np.int64)
-    me.polygons.foreach_get("loop_start", starts)
-    totals = np.empty(npoly, dtype=np.int64)
-    me.polygons.foreach_get("loop_total", totals)
-    parea = np.empty(npoly, dtype=np.float64)
-    me.polygons.foreach_get("area", parea)
-    ne = len(me.edges)
-    sharp_e = np.zeros(ne, dtype=bool)
-    me.edges.foreach_get("use_edge_sharp", sharp_e)
-
-    pol = np.repeat(np.arange(npoly), totals)
-    nxt = np.arange(nl) + 1
-    last = starts + totals - 1
-    nxt[last] = starts
-
-    # The two loops of every edge that has exactly two faces.
-    order = np.argsort(le, kind="stable")
-    cnt = np.bincount(le, minlength=ne)
-    first = np.concatenate([[0], np.cumsum(cnt)[:-1]])
-    man = np.where(cnt == 2)[0]
-    l1 = order[first[man]]
-    l2 = order[first[man] + 1]
-    # l1 runs from va to vb. In a mesh wound one way, l2 runs back.
-    back = lv[l2] != lv[l1]
-    a1, b1 = l1, nxt[l1]
-    a2 = np.where(back, nxt[l2], l2)
-    b2 = np.where(back, l2, nxt[l2])
-    p1, p2 = pol[l1], pol[l2]
-
-    span = float(np.ptp(uv, axis=0).max()) if nl else 1.0
-    tol = max(span, 1e-12) * 1e-7
-
-    def joined(u):
-        return ((np.abs(u[a1] - u[a2]).sum(axis=1) <= tol)
-                & (np.abs(u[b1] - u[b2]).sum(axis=1) <= tol))
-
-    def charts_of(u):
-        """The faces the UVs hold together, as a chart number per polygon."""
-        cont = joined(u)
-        _ids, lab = np.unique(_labels(p1[cont], p2[cont], npoly),
-                              return_inverse=True)
-        return lab.ravel()
-
-    # Fan triangles of every polygon, for areas and the overlap test.
-    tcount = totals - 2
-    tp = np.repeat(np.arange(npoly), tcount)
-    k = np.arange(int(tcount.sum())) - np.repeat(np.cumsum(tcount) - tcount,
-                                                 tcount)
-    t0 = starts[tp]
-    t1 = t0 + k + 1
-    t2 = t0 + k + 2
-
-    def signed(u):
-        return 0.5 * ((u[t1, 0] - u[t0, 0]) * (u[t2, 1] - u[t0, 1])
-                      - (u[t2, 0] - u[t0, 0]) * (u[t1, 1] - u[t0, 1]))
+    layer, uv, lv = r.layer, r.uv, r.lv
+    nl, npoly, ne = r.nl, r.npoly, r.ne
+    starts, totals, parea, sharp_e = r.starts, r.totals, r.parea, r.sharp
+    pol, nxt, tol = r.pol, r.nxt, r.tol
+    man, a1, b1, a2, b2, p1, p2 = r.man, r.a1, r.b1, r.a2, r.b2, r.p1, r.p2
+    tp, t0, t1, t2 = r.tp, r.t0, r.t1, r.t2
+    joined, charts_of, signed = r.joined, r.charts, r.signed
 
     # The charts the CAD surfaces give. Every one the same way up: a face
     # whose surface runs the other way arrives mirrored, and a mirrored
@@ -844,23 +901,10 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False,
     if side_3d is None:
         side_3d = np.sqrt(base_3d.sum() / SMART_FILL)
 
-    # The 3D shape of every triangle, for the stretch of a bent chart: the
-    # length of its first edge, and its second edge along and across it.
     frame = None
     tarea = None
     if distortion > 0.0:
-        co = np.empty(len(me.vertices) * 3, dtype=np.float64)
-        me.vertices.foreach_get("co", co)
-        co = co.reshape(-1, 3)
-        e1 = co[lv[t1]] - co[lv[t0]]
-        e2 = co[lv[t2]] - co[lv[t0]]
-        f_l1 = np.linalg.norm(e1, axis=1)
-        f_ex = (e1 * e2).sum(axis=1) / np.maximum(f_l1, 1e-300)
-        f_ey = np.linalg.norm(np.cross(e1, e2), axis=1) / np.maximum(f_l1,
-                                                                    1e-300)
-        good = (f_l1 > 0.0) & (f_ey > 1e-9 * np.maximum(f_l1, 1e-300))
-        frame = (np.where(good, f_l1, 1.0), f_ex, np.where(good, f_ey, 1.0))
-        tarea = np.where(good, 0.5 * f_l1 * f_ey, 0.0)
+        frame, tarea = r.frame()
 
     # Every join any pass makes, as a pair of the charts above. Together
     # they are the tree each island grew as, which the split walks.
@@ -1273,6 +1317,139 @@ def smart_merge(me, side_3d=None, distortion=SMART_DISTORTION, sharp=False,
     layer.uv.foreach_set("vector", uv.astype(np.float32).ravel())
     me.edges.foreach_set("use_seam", _seams(ne, man, ~joined(uv)))
     return len(took_part), n_out
+
+
+def _strain(r, chart, nc, u, frame, tarea, limit):
+    """The share of each chart's area whose texel is off by more than
+    `limit` from the texel density of that chart.
+
+    Measuring a chart against its OWN density reads the shape of the chart
+    and not its size. A chart with no UV area at all has a density of zero
+    and comes out off by everything, which is what it is.
+    """
+    tchart = chart[r.tp]
+    uv_area = np.abs(np.bincount(tchart, weights=r.signed(u), minlength=nc))
+    area = np.bincount(tchart, weights=tarea, minlength=nc)
+    live = area > 0.0
+    density = np.zeros(nc)
+    density[live] = np.sqrt(uv_area[live] / area[live])
+    s1, s2, _mirrored = _stretch(u, r.t0, r.t1, r.t2, frame, 1.0)
+    d = np.maximum(density[tchart], 1e-30)
+    off = np.maximum(s1 / d, d / np.maximum(s2, 1e-30)) > limit
+    over = np.bincount(tchart, weights=tarea * off, minlength=nc)
+    return np.where(live, over / np.maximum(area, 1e-30), 0.0)
+
+
+def strained(me, limit=SMART_STRAIN, share=SMART_STRAIN_SHARE):
+    """The faces whose CAD chart no one scale can flatten.
+
+    A plane, a cylinder and a cone unroll with no error at all, and their
+    chart carries a texture at one size all over. A sphere, a torus and a
+    spline do not unroll: the chart is right over the middle of the face
+    and wrong at its corners, and no scale puts that right. Those faces are
+    what an unwrap does better than the surface.
+
+    A chart is picked out when more than `share` of its area is off by more
+    than `limit`. Returns one boolean for each face, or None when there is
+    nothing to read.
+    """
+    r = _Read(me)
+    if not r.ok:
+        return None
+    chart = r.charts(r.uv)
+    nc = int(chart.max()) + 1
+    frame, tarea = r.frame()
+    return (_strain(r, chart, nc, r.uv, frame, tarea, limit) > share)[chart]
+
+
+def read_uvs(me):
+    """The UV map of a mesh, as it stands. None when it has none."""
+    layer = me.uv_layers.active
+    if layer is None or not len(me.loops):
+        return None
+    uv = np.empty(len(me.loops) * 2, dtype=np.float64)
+    layer.uv.foreach_get("vector", uv)
+    return uv.reshape(-1, 2)
+
+
+def fit_charts(me, faces, before=None, limit=SMART_STRAIN,
+               nudge=SMART_ISLAND_NUDGE):
+    """Put the islands of `faces` back at the size of the rest of the mesh.
+
+    Blender's unwrap packs what it unwraps into the 0 to 1 square, which
+    throws the size away. Each island is scaled about itself until one UV
+    unit is one length unit of the mesh again, which is the size the CAD
+    charts are already in, and is then set down in a place of its own.
+
+    With `before`, the UV map as it was, a chart keeps what it had unless
+    the unwrap made it better. An unwrap that cannot solve an island leaves
+    it folded or flat, and the chart of the surface, wrong as it is at the
+    corners, is still the better of the two. Returns how many islands it
+    moved.
+    """
+    r = _Read(me)
+    if not r.ok:
+        return 0
+    faces = np.asarray(faces, dtype=bool)
+    if len(faces) != r.npoly or not faces.any():
+        return 0
+    chart = r.charts(r.uv)
+    nc = int(chart.max()) + 1
+    tchart = chart[r.tp]
+    frame, tarea = r.frame()
+    uv_area = np.abs(np.bincount(tchart, weights=r.signed(r.uv),
+                                 minlength=nc))
+    area = np.bincount(tchart, weights=tarea, minlength=nc)
+    mine = np.zeros(nc, dtype=bool)
+    mine[chart[faces]] = True
+
+    # The size to match is the one the CAD charts of this mesh are in. With
+    # nothing left to read it from, one UV unit is one length unit, which is
+    # what those charts hold.
+    rest = (~mine) & (area > 0.0) & (uv_area > 0.0)
+    want = 1.0
+    if rest.any():
+        want = float(np.sqrt(uv_area[rest].sum() / area[rest].sum()))
+    if not (want > 0.0):
+        want = 1.0
+
+    keep = mine & (area > 0.0) & (uv_area > 0.0)
+    if before is not None and len(before) == r.nl:
+        now = _strain(r, chart, nc, r.uv, frame, tarea, limit)
+        was = _strain(r, chart, nc, before, frame, tarea, limit)
+        keep &= now < was
+
+    lchart = chart[r.pol]
+    order = np.argsort(lchart, kind="stable")
+    cnt = np.bincount(lchart, minlength=nc)
+    first = np.concatenate([[0], np.cumsum(cnt)[:-1]])
+    moved = 0
+    for c in np.flatnonzero(mine):
+        loops = order[first[c]:first[c] + cnt[c]]
+        if not keep[c]:
+            if before is not None and len(before) == r.nl:
+                r.uv[loops] = before[loops]
+            continue
+        u = r.uv[loops] * (want / np.sqrt(uv_area[c] / area[c]))
+        moved += 1
+        r.uv[loops] = (u - u.min(axis=0)
+                       + moved * nudge * np.array([0.8, 0.6]))
+    r.layer.uv.foreach_set("vector", r.uv.astype(np.float32).ravel())
+    return moved
+
+
+def mark_seams(me):
+    """Put a seam on every edge where the UV map steps.
+
+    That is the boundary of every chart, and the cut a closed surface
+    carries. An unwrap needs both: without them it welds two charts into
+    one island, and it has nowhere to cut a face that closes on itself.
+    """
+    r = _Read(me)
+    if not r.ok:
+        return False
+    me.edges.foreach_set("use_seam", _seams(r.ne, r.man, ~r.joined(r.uv)))
+    return True
 
 
 def _seams(ne, man, cut):

@@ -888,6 +888,93 @@ check(len(whole_shared) == 2,
       "in a tile shared with the plate both sides stay whole (%d found)"
       % len(whole_shared))
 
+# ---- Smart unwraps what one scale cannot flatten -------------------------
+# A sphere does not unroll. Its own coordinates put the same angle in u all
+# the way to the pole, where the real distance round it has gone to nothing,
+# so no one scale can hold a texture on it. A plane next to it unrolls
+# exactly, and has to come out of this untouched.
+print("\n== Smart unwraps the faces one scale cannot flatten")
+
+
+def ball_and_plate(lat=math.radians(75.0), steps=16):
+    """A patch of a sphere in its own coordinates, and a flat square.
+
+    The sphere patch runs from the equator to `lat`, and carries the UVs
+    the surface gives: the angle round times the radius, and the angle up
+    times the radius. Those are right at the equator and wrong at the top.
+    """
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="CADder")
+    radius = 10.0
+    verts, faces, uvs = [], [], []
+    for i in range(steps + 1):
+        for j in range(steps + 1):
+            u = 2.0 * math.pi * i / steps
+            v = lat * j / steps
+            verts.append((radius * math.cos(v) * math.cos(u),
+                          radius * math.cos(v) * math.sin(u),
+                          radius * math.sin(v)))
+    for i in range(steps):
+        for j in range(steps):
+            a = i * (steps + 1) + j
+            b = (i + 1) * (steps + 1) + j
+            faces.append((a, b, b + 1, a + 1))
+            for corner in ((i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)):
+                uvs += [radius * 2.0 * math.pi * corner[0] / steps,
+                        radius * lat * corner[1] / steps]
+    base = len(verts)
+    square = [(-30.0, -30.0, -20.0), (-10.0, -30.0, -20.0),
+              (-10.0, -10.0, -20.0), (-30.0, -10.0, -20.0)]
+    verts += square
+    faces.append(tuple(base + k for k in range(4)))
+    for x, y, _z in square:
+        uvs += [x, y]
+    me = bpy.data.meshes.new("ball")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    layer = me.uv_layers.new(name="UVMap")
+    layer.uv.foreach_set("vector", uvs)
+    obj = bpy.data.objects.new("ball", me)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    bpy.context.view_layer.update()
+    return obj
+
+
+obj = ball_and_plate()
+me = obj.data
+flat = len(me.polygons) - 1          # the square is the last face
+mask = uv_mod.strained(me)
+before = uv_mod.read_uvs(me).copy()
+check(mask is not None and mask[:flat].all() and not mask[flat],
+      "the sphere is picked out and the plane is not (%d of %d face(s))"
+      % (0 if mask is None else int(mask.sum()), len(me.polygons)))
+
+faces, made = m._unwrap_awkward_objects([obj])
+after = uv_mod.read_uvs(me)
+left = uv_mod.strained(me)
+check(faces == flat and made == 1,
+      "the unwrap takes the sphere and makes one island of it (%d face(s), "
+      "%d island(s))" % (faces, made))
+check(not left.any(),
+      "and one scale then holds it (%d face(s) still over)"
+      % int(left.sum()))
+starts = np.empty(len(me.polygons), dtype=np.int64)
+me.polygons.foreach_get("loop_start", starts)
+totals = np.empty(len(me.polygons), dtype=np.int64)
+me.polygons.foreach_get("loop_total", totals)
+side = slice(int(starts[flat]), int(starts[flat] + totals[flat]))
+check(np.allclose(after[side], before[side]),
+      "the plane keeps the chart of its own surface")
+
+# The island comes back at the size of the CAD charts, not packed into the
+# 0 to 1 square the unwrap leaves it in.
+uv = after[:int(starts[flat])]
+real = 4.0 * math.pi * 10.0 * 10.0 * (math.sin(math.radians(75.0)) / 2.0)
+span = float((uv.max(axis=0) - uv.min(axis=0)).max())
+check(span > 10.0, "and at the size of the part, not packed into 0 to 1 "
+      "(%.1f across, %.0f mm2 of surface)" % (span, real))
+
 # ---- a refresh reproduces it ---------------------------------------------
 print("\n== the setting is stamped on the object")
 objs = load(uv_mode="SMART")

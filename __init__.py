@@ -230,9 +230,9 @@
 bl_info = {
     "name": "CADder",
     "author": "ambi, Peak-Design",
-    "description": "STEP OpenCASCADE import",
+    "description": "Import CAD files, link SolidWorks, and rig assemblies",
     "blender": (5, 1, 0),
-    "version": (2, 5, 0),
+    "version": (1, 0, 0),
     "location": "3D View > Tools panel > CADder",
     "category": "Import",
 }

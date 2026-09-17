@@ -174,12 +174,12 @@ def _stepper_available():
 
 
 def _cad_link_enabled(context):
-    """True when the user has switched on the experimental CAD Link
-    in the addon preferences.
+    """True when the user has switched the SolidWorks Bridge on in the
+    addon preferences.
 
-    Gates the whole tab: without it the panel never polls true, so the
-    "CAD Link" category does not appear in the sidebar at all. Fails
-    closed, because a user who has not opted in should never see it.
+    Gates the panels of the link: without it they never poll true, so
+    nothing about the bridge appears in the sidebar. Fails closed, because
+    a user who has not opted in should never see it.
     """
     if bpy is None:
         return False

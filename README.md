@@ -22,7 +22,9 @@ appearances and a rig manifest straight into the scene, and the addon
 builds an armature that moves the way the mates say it should.
 
 The addon was **STEPper NEXT** up to version 2.5.0. It was renamed because
-it had outgrown the one file format it was named after.
+it had outgrown the one file format it was named after. CADder starts at
+version 1.0.0: a new name, a new first release, and not the next STEPper
+number.
 
 Originally created by **ambi** (Tommi Hyppanen). Now maintained by
 **Peak Design** (Oskaras Spalvys).
@@ -150,9 +152,13 @@ The importer panel will appear in **3D View > Tools panel > CADder**.
 > before installing the extension.
 >
 > **Upgrading from v2.5.0 or older:** the addon was renamed from STEPper
-> NEXT to CADder. Blender keys addon preferences by the addon name, so
-> the material database folder and the other preferences are empty the
-> first time. Set them again under **Preferences > Add-ons > CADder**.
+> NEXT to CADder, and the number starts again at 1.0.0. Blender sees the
+> two as different addons, so this is an install and not an update, and
+> STEPper NEXT does not offer it: get CADder from the
+> [Releases](https://github.com/Peak-Design/CADder/releases) page.
+> Blender also keys addon preferences by the addon name, so the material
+> database folder and the other preferences are empty the first time. Set
+> them again under **Preferences > Add-ons > CADder**.
 
 To remove or update: remove the extension from **Preferences > Get Extensions >
 Installed** (or Add-ons). To update, install the new `.zip` and Blender
@@ -802,6 +808,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |
 | 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |
 | 2.4.7   | 5.1     | Imported files panel with Refresh from disk. A refresh keeps your modifiers, collections, parenting, materials and placement, and can no longer change the size of the assembly. The object color now matches the CAD color. New "Group in a collection" and "Separate solids" import options. Material databases can live in a folder of your choosing. Update notice and Ko-fi link in the sidebar. The file cache checks the file on disk, so re-exporting over the same path no longer imports old geometry |
 | 2.4.6   | 5.1     | Fixed engineering materials always being created gray instead of keeping the part's imported color |

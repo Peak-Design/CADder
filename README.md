@@ -255,8 +255,10 @@ One UV unit is one metre of the part, whichever way the part came in, so
 the texture is the same size on every part of the assembly and a 50 mm
 face gets ten times the UV length of a 5 mm one. A curved face is measured
 across its own surface, so a texture on a cylinder is the same size as one
-on the plate beside it. A sphere, a torus and a spline have no single
-scale, and there the size is the one that holds over most of the face.
+on the plate beside it, and a cone is unrolled into a fan so it does not
+stretch from one end to the other. A sphere, a torus and a spline cannot
+be flattened at all, and there the size is the one that holds over most of
+the face.
 
 A part from the live link needs one step a part from a STEP file does not.
 Its mesh carries every CAD face's points twice, once for each face that

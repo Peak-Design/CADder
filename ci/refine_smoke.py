@@ -224,23 +224,23 @@ def main():
         result = bpy.ops.cadlink.update_from_cad(quality=0.5)
         assert "FINISHED" in result, result
         assert server.seen[-1]["components"] == ["c009"], server.seen[-1]
-        # A rebuild that said nothing about simplifying leaves the key out,
+        # A rebuild that said nothing about defeaturing leaves the key out,
         # because a CAD application told nothing sends the geometry as it is.
-        assert "simplify" not in server.seen[-1], server.seen[-1]
+        assert "defeature" not in server.seen[-1], server.seen[-1]
 
-        # 7b. A part marked to be simplified says so on every rebuild. This
+        # 7b. A part marked to be defeatured says so on every rebuild. This
         # is what keeps a scene consistent: the setting is Blender's, and it
         # has to ride the request or the holes come quietly back.
-        obj.cad_simplify.enabled = True
-        obj.cad_simplify.size = 0.008
-        obj.cad_simplify.curved = True
+        obj.cad_defeature.enabled = True
+        obj.cad_defeature.size = 0.008
+        obj.cad_defeature.curved = True
         result = bpy.ops.cadlink.update_from_cad(quality=0.5)
         assert "FINISHED" in result, result
-        asked = server.seen[-1].get("simplify")
+        asked = server.seen[-1].get("defeature")
         assert asked and asked[0]["component"] == "c009", server.seen[-1]
         assert abs(asked[0]["size_m"] - 0.008) < 1e-6, asked
         assert asked[0]["curved"] is True, asked
-        obj.cad_simplify.enabled = False
+        obj.cad_defeature.enabled = False
 
         # 7f. Two placements of one part are ONE mesh in Blender. Asking for
         # one of them defeatured and not the other would give them two
@@ -253,16 +253,16 @@ def main():
             o.select_set(False)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
-        assert "FINISHED" in bpy.ops.stepper.apply_simplify(), \
+        assert "FINISHED" in bpy.ops.stepper.apply_defeature(), \
             "the button refused a part from the live link"
         asked = server.seen[-1]
         assert asked["op"] == "retessellate", asked
         assert set(asked["components"]) == {"c009", "c010"}, asked
-        assert {row["component"] for row in asked.get("simplify") or []} \
+        assert {row["component"] for row in asked.get("defeature") or []} \
             == {"c009", "c010"}, asked
-        assert obj.cad_simplify.enabled and twin.cad_simplify.enabled, \
+        assert obj.cad_defeature.enabled and twin.cad_defeature.enabled, \
             "the button left one of the two switches off"
-        obj.cad_simplify.enabled = False
+        obj.cad_defeature.enabled = False
         bpy.data.objects.remove(twin)
 
         # 7c. The UV panel works on a part from the live link, not only on

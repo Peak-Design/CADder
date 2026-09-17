@@ -2,7 +2,7 @@
 """Writes holes.step: a plate with four small bolt holes and one big one.
 
 The sizes are the point of the fixture. At a 12 mm dial the four 6 mm holes
-are small features and the 30 mm bore is not, so a simplify that takes the
+are small features and the 30 mm bore is not, so a defeature that takes the
 lot is as wrong as one that takes none, and the test can tell the
 difference. The plate is 100 x 60 x 10 mm, which is the sort of thing the
 rule was written for.

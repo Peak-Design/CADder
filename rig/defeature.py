@@ -1,11 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Which parts travel without their small features.
 
-The panel calls it Defeature, which is the word a CAD user knows for it,
-and the code keeps the older word. A property name is written into every
-saved file that holds one, so renaming it would cost every scene its
-settings for a label (Oscar, 2026-09-17).
-
 A bolt hole costs far more triangles than the plate it is in, and a model
 going to a game engine rarely wants it: the bolts are modelled and the
 holes are not visible. Leaving it out is therefore worth doing, and it is
@@ -15,7 +10,7 @@ only the person building the scene knows which is which.
 
 So the switch lives here, on the part, and on the collection above it when
 the assembly came in as a tree. A part inside a collection that is set to
-simplify follows the collection and its own switch is shown greyed, with a
+defeature follows the collection and its own switch is shown greyed, with a
 line saying where the setting came from. One rule decides, and it is
 visible from the part.
 
@@ -70,7 +65,7 @@ def _chain(collection, parents):
 def _set(target):
     """The settings of an object or a collection, or None before the addon
     has registered them."""
-    return getattr(target, "cad_simplify", None) if target is not None else None
+    return getattr(target, "cad_defeature", None) if target is not None else None
 
 
 def source_of(obj, scene=None):
@@ -106,7 +101,7 @@ def source_of(obj, scene=None):
 
 
 def above(collection, scene=None):
-    """The nearest collection ABOVE this one that is set to simplify, or
+    """The nearest collection ABOVE this one that is set to defeature, or
     None. What makes a collection's own switch read only."""
     if bpy is None or collection is None:
         return None
@@ -126,7 +121,7 @@ def above(collection, scene=None):
 def settings_for(obj, scene=None):
     """What an object travels as: (enabled, size in metres, curved).
 
-    A collection above it that is set to simplify decides for it. Otherwise
+    A collection above it that is set to defeature decides for it. Otherwise
     it answers for itself.
     """
     if bpy is None or obj is None:
@@ -141,7 +136,7 @@ def settings_for(obj, scene=None):
 
 
 def orders(objects, scene=None):
-    """The simplify entries for a request: one per component, naming the
+    """The defeature entries for a request: one per component, naming the
     size and whether curved faces are included.
 
     Several objects can carry one component id, because a multibody part
@@ -264,7 +259,7 @@ def restore(taken, scene=None):
 
 if bpy is not None:
 
-    class CADLINK_SimplifySettings(bpy.types.PropertyGroup):
+    class CADLINK_DefeatureSettings(bpy.types.PropertyGroup):
         """Set on a part, or on a collection to cover everything in it."""
 
         enabled: bpy.props.BoolProperty(
@@ -330,7 +325,7 @@ if bpy is not None:
             return collection
         return None
 
-    class CADLINK_PT_simplify(bpy.types.Panel):
+    class CADLINK_PT_defeature(bpy.types.Panel):
         """Which parts travel without their small features.
 
         A category of its own, because it is not a property of the live link
@@ -340,7 +335,7 @@ if bpy is not None:
         """
 
         bl_label = "Defeature"
-        bl_idname = "CADLINK_PT_simplify"
+        bl_idname = "CADLINK_PT_defeature"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "CADder"
@@ -363,14 +358,14 @@ if bpy is not None:
 
             from .. import tools as tools_mod
             tools_mod.scope_hint(layout, context)
-            layout.operator("stepper.apply_simplify", icon="MOD_DECIM")
+            layout.operator("stepper.apply_defeature", icon="MOD_DECIM")
 
-    class CADLINK_PT_simplify_object(bpy.types.Panel):
+    class CADLINK_PT_defeature_object(bpy.types.Panel):
         """On the part, in the object properties, where a part's own
         settings live."""
 
         bl_label = "CAD Defeature"
-        bl_idname = "CADLINK_PT_simplify_object"
+        bl_idname = "CADLINK_PT_defeature_object"
         bl_space_type = "PROPERTIES"
         bl_region_type = "WINDOW"
         bl_context = "object"
@@ -384,12 +379,12 @@ if bpy is not None:
             draw_for(self.layout, context.object,
                      source_of(context.object, context.scene))
 
-    class CADLINK_PT_simplify_collection(bpy.types.Panel):
+    class CADLINK_PT_defeature_collection(bpy.types.Panel):
         """On the collection, which is how a whole subassembly is covered at
         once in the tree hierarchy modes."""
 
         bl_label = "CAD Defeature"
-        bl_idname = "CADLINK_PT_simplify_collection"
+        bl_idname = "CADLINK_PT_defeature_collection"
         bl_space_type = "PROPERTIES"
         bl_region_type = "WINDOW"
         bl_context = "collection"
@@ -404,21 +399,21 @@ if bpy is not None:
                      above(context.collection, context.scene))
 
     classes = (
-        CADLINK_SimplifySettings,
-        CADLINK_PT_simplify,
-        CADLINK_PT_simplify_object,
-        CADLINK_PT_simplify_collection,
+        CADLINK_DefeatureSettings,
+        CADLINK_PT_defeature,
+        CADLINK_PT_defeature_object,
+        CADLINK_PT_defeature_collection,
     )
 
     def register():
-        bpy.types.Object.cad_simplify = bpy.props.PointerProperty(
-            type=CADLINK_SimplifySettings)
-        bpy.types.Collection.cad_simplify = bpy.props.PointerProperty(
-            type=CADLINK_SimplifySettings)
+        bpy.types.Object.cad_defeature = bpy.props.PointerProperty(
+            type=CADLINK_DefeatureSettings)
+        bpy.types.Collection.cad_defeature = bpy.props.PointerProperty(
+            type=CADLINK_DefeatureSettings)
 
     def unregister():
-        del bpy.types.Collection.cad_simplify
-        del bpy.types.Object.cad_simplify
+        del bpy.types.Collection.cad_defeature
+        del bpy.types.Object.cad_defeature
 
 else:                                                  # pragma: no cover
     classes = ()

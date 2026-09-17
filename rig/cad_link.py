@@ -54,9 +54,7 @@ def _post(inst, path, payload, timeout):
     req = urllib.request.Request(
         inst.url + path, data=data,
         headers={"Content-Type": "application/json",
-                 "X-CADLink-Token": inst.token or "",
-                 # An add-in built before the rename checks this one.
-                 "X-SWTB-Token": inst.token or ""})
+                 "X-CADLink-Token": inst.token or ""})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -143,7 +141,7 @@ def poses(component_ids=None, persistent_ids=None, instance=None):
 
 
 def retessellate(component_ids, quality, persistent_ids=None, instance=None,
-                 separate_solids=None, simplify=None):
+                 separate_solids=None, defeature=None):
     """Asks for those components again at `quality` (0..1). The reply names
     a .swmesh on disk. Persistent ids name the same occurrences after an
     edit; see `poses`.
@@ -155,13 +153,13 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
     2026-09-16). None leaves the CAD application to use its own export
     setting, which is what an older scene has to fall back on.
 
-    simplify names the components this scene holds without their small
+    defeature names the components this scene holds without their small
     features, one entry each. The CAD application holds no such setting of
     its own, so saying nothing gets the geometry as it is."""
     payload = dict(components=list(component_ids), quality=float(quality),
                    persistent_ids=list(persistent_ids or []))
     if separate_solids is not None:
         payload["separate_solids"] = bool(separate_solids)
-    if simplify:
-        payload["simplify"] = list(simplify)
+    if defeature:
+        payload["defeature"] = list(defeature)
     return request("retessellate", instance=instance, **payload)

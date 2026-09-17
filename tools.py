@@ -116,7 +116,7 @@ def scope_hint(layout, context):
                  icon="OUTLINER_COLLECTION")
 
 
-def simplify_settings(obj, scene):
+def defeature_settings(obj, scene):
     """What one part travels as: (leave small features out, size, curved).
 
     The rig subpackage owns the switch, and CADder loads that subpackage
@@ -124,10 +124,10 @@ def simplify_settings(obj, scene):
     rather than importing it at the top keeps that true.
     """
     try:
-        from .rig import simplify as simplify_mod
+        from .rig import defeature as defeature_mod
     except Exception:                               # noqa: BLE001
         return False, 0.0, False
-    return simplify_mod.settings_for(obj, scene)
+    return defeature_mod.settings_for(obj, scene)
 
 
 def from_step(obj):
@@ -237,7 +237,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, len(targets))
         done = 0
-        simplified = 0
+        defeatured = 0
         features = [0, 0]
         failed = []
         quad_objs = []
@@ -279,18 +279,18 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 # tessellated. The direct link asks SolidWorks to leave them
                 # out because SolidWorks holds the part; here the STEP file
                 # holds it, so the same decision is made on the shape.
-                want, size, curved = simplify_settings(obj, context.scene)
+                want, size, curved = defeature_settings(obj, context.scene)
                 if want:
-                    from . import simplify_brep
+                    from . import defeature_brep
                     lines = []
-                    lighter, history, taken, left = simplify_brep.apply(
+                    lighter, history, taken, left = defeature_brep.apply(
                         shp, size, curved, lines.append)
                     for line in lines:
                         print("[CADder] " + line)
                     if lighter is not None:
-                        simplify_brep.carry_colors(reader, shp, lighter, history)
+                        defeature_brep.carry_colors(reader, shp, lighter, history)
                         shp = lighter
-                        simplified += 1
+                        defeatured += 1
                     features[0] += taken
                     features[1] += left
 
@@ -395,9 +395,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
             m._apply_matdb_to_objects(list(targets.values()), mappings)
 
         note = ""
-        if simplified:
+        if defeatured:
             note = (", %d defeatured (%d feature(s) out, %d left alone)"
-                    % (simplified, features[0], features[1]))
+                    % (defeatured, features[0], features[1]))
         if failed:
             self.report({"WARNING"},
                         f"Regenerated {done}{note}; "
@@ -832,14 +832,12 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class STEPPER_OT_apply_simplify(bpy.types.Operator):
+class STEPPER_OT_apply_defeature(bpy.types.Operator):
     """Leave the small features out of these parts and ask for their
     geometry again. A part that came in over the live link is asked of the
     CAD application. A part that came from a STEP file is read from the file
     again. Nothing in the CAD document or the STEP file is changed."""
-    # The idname keeps the older word. It is what a keymap or a macro
-    # calls, and a rename would break those for a label.
-    bl_idname = "stepper.apply_simplify"
+    bl_idname = "stepper.apply_defeature"
     bl_label = "Apply Defeature"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -859,7 +857,7 @@ class STEPPER_OT_apply_simplify(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        from .rig import simplify as simplify_mod
+        from .rig import defeature as defeature_mod
 
         covered, holder = scope_of(
             context, lambda o: from_step(o) or from_cad_link(o))
@@ -877,7 +875,7 @@ class STEPPER_OT_apply_simplify(bpy.types.Operator):
         # it turns the switch on as well as acting on it. A collection is
         # set once and covers everything below it, which also survives a
         # rebuild that replaces every object.
-        groups, parts = simplify_mod.turn_on(holder, covered, context.scene)
+        groups, parts = defeature_mod.turn_on(holder, covered, context.scene)
         turned = "set on %d collection(s) and %d part(s)" % (groups, parts)             if groups else "set on %d part(s)" % parts
 
         step = [o for o in covered if from_step(o)]
@@ -997,9 +995,9 @@ def weld(me, distance=1e-6):
 
 def _ask_cad_link(context, objs):
     """Asks the CAD application for these parts again, with whatever the
-    scene now holds them simplified to. Returns how many came back, or None
+    scene now holds them defeatured to. Returns how many came back, or None
     when the CAD application could not be reached."""
-    from .rig import cad_link, native_import, simplify as simplify_mod, ui as rig_ui
+    from .rig import cad_link, native_import, defeature as defeature_mod, ui as rig_ui
 
     ids, persistent = [], []
     for obj in objs:
@@ -1015,7 +1013,7 @@ def _ask_cad_link(context, objs):
         reply = cad_link.retessellate(
             ids, rig_ui.quality_dial(context.scene.cad_link),
             persistent_ids=persistent,
-            simplify=simplify_mod.orders(objs, context.scene))
+            defeature=defeature_mod.orders(objs, context.scene))
         return len(native_import.refine(context, reply["mesh"]))
     except cad_link.CadLinkError as exc:
         _report(context, str(exc))
@@ -1036,5 +1034,5 @@ classes = (
     STEPPER_OT_mesh_cleanup,
     STEPPER_OT_add_box_uv,
     STEPPER_OT_reapply_uv,
-    STEPPER_OT_apply_simplify,
+    STEPPER_OT_apply_defeature,
 )

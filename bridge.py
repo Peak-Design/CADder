@@ -13,9 +13,7 @@ writes %LOCALAPPDATA%/PeakDesign/CADder/bridge/<pid>.json with the
 port and a random token. The CAD side lists that directory, pings
 each entry, and prunes the corpses. Every request must carry the token in
 X-CADLink-Token: the file is user-readable only, so possession proves the
-caller is the same desktop user. (The names from before the rename,
-X-SWTB-Token and /swtb/..., are still accepted so an older add-in build
-keeps working.)
+caller is the same desktop user.
 
 Endpoints:
   GET  /cadlink/ping    -> instance info (fast, main thread not involved)
@@ -117,8 +115,8 @@ class _Job:
         self.result = None
 
 
-_PING_PATHS = ("/cadlink/ping", "/swtb/ping")
-_IMPORT_PATHS = ("/cadlink/import", "/swtb/import")
+_PING_PATH = "/cadlink/ping"
+_IMPORT_PATH = "/cadlink/import"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -139,12 +137,11 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _authorized(self) -> bool:
-        sent = (self.headers.get("X-CADLink-Token")
-                or self.headers.get("X-SWTB-Token", ""))
+        sent = self.headers.get("X-CADLink-Token", "")
         return sent == _state["token"]
 
     def do_GET(self):
-        if self.path not in _PING_PATHS:
+        if self.path != _PING_PATH:
             self._reply(404, {"ok": False, "error": "unknown endpoint"})
             return
         if not self._authorized():
@@ -153,7 +150,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(200, _instance_info())
 
     def do_POST(self):
-        if self.path not in _IMPORT_PATHS:
+        if self.path != _IMPORT_PATH:
             self._reply(404, {"ok": False, "error": "unknown endpoint"})
             return
         if not self._authorized():
@@ -442,12 +439,12 @@ def _ask_again_without_small_features(asked, preset, separate_solids):
             dial = rig_ui.QUALITY_DIAL.get(preset or "FINE", 0.75)
             reply = cad_link.retessellate(
                 [row["component"] for row in asked], dial,
-                separate_solids=separate_solids, simplify=asked)
+                separate_solids=separate_solids, defeature=asked)
             changed = native_import.refine(bpy.context, reply["mesh"])
-            print("[CADLink simplify] %d part(s) came back without their "
+            print("[CADLink defeature] %d part(s) came back without their "
                   "small features" % len(changed))
         except Exception as exc:                       # noqa: BLE001
-            print("[CADLink simplify] the marked parts could not be asked "
+            print("[CADLink defeature] the marked parts could not be asked "
                   "for again: %s" % exc)
         return None
 
@@ -608,8 +605,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # this scene's own decision, and a send replaces every object
             # and collection that carries it. So it is written down here
             # and put back on what arrives.
-            from .rig import simplify as rig_simplify
-            held = None if updating else rig_simplify.snapshot()
+            from .rig import defeature as rig_defeature
+            held = None if updating else rig_defeature.snapshot()
             if want("replace") and not updating:
                 # A STEP import of the same assembly goes too, or the scene
                 # holds every part twice.
@@ -651,18 +648,18 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             }
             bpy.context.view_layer.update()
             if held is not None:
-                parts, groups = rig_simplify.restore(held)
+                parts, groups = rig_defeature.restore(held)
                 if parts or groups:
                     log.append(
-                        "simplify: %d part(s) and %d collection(s) kept their "
+                        "defeature: %d part(s) and %d collection(s) kept their "
                         "settings" % (parts, groups))
             # The CAD application holds no such setting, so a send always
             # brings the small features back. The marked parts are asked for
             # again, which is what keeps the scene saying one thing.
-            asked = rig_simplify.orders(objects)
+            asked = rig_defeature.orders(objects)
             if asked:
-                stages["mesh"]["simplify"] = len(asked)
-                log.append("simplify: asking again for %d part(s) without "
+                stages["mesh"]["defeature"] = len(asked)
+                log.append("defeature: asking again for %d part(s) without "
                            "their small features" % len(asked))
                 _ask_again_without_small_features(
                     asked, opts.get("quality_preset"),

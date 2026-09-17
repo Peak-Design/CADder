@@ -16,7 +16,7 @@ shape is tessellated. Four things have to hold:
 The fixture is built by fixtures/make_holes.py: a 100 x 60 x 10 mm plate
 with four 6 mm bolt holes and one 30 mm bore.
 
-Run:  blender -b --factory-startup -P simplify_step_smoke.py
+Run:  blender -b --factory-startup -P defeature_step_smoke.py
 """
 
 import os
@@ -94,22 +94,22 @@ def main():
         obj.select_set(False)
     plate.select_set(True)
     bpy.context.view_layer.objects.active = plate
-    assert bpy.ops.stepper.apply_simplify.poll(), "the operator refused a STEP part"
-    bpy.ops.stepper.apply_simplify()
-    assert plate.cad_simplify.enabled, "the button left the switch off"
+    assert bpy.ops.stepper.apply_defeature.poll(), "the operator refused a STEP part"
+    bpy.ops.stepper.apply_defeature()
+    assert plate.cad_defeature.enabled, "the button left the switch off"
     assert holes(plate) == (0, True),         "the default dial did not take the bolt holes: %s" % (holes(plate),)
 
     # 3. The dial is the part's own, so a part says how small is small. At
     #    12 mm the four bolt holes go, the 30 mm bore stays, and the plate
     #    is still closed.
     plate = load()
-    plate.cad_simplify.enabled = True
-    plate.cad_simplify.size = 0.012
+    plate.cad_defeature.enabled = True
+    plate.cad_defeature.size = 0.012
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     plate.select_set(True)
     bpy.context.view_layer.objects.active = plate
-    bpy.ops.stepper.apply_simplify()
+    bpy.ops.stepper.apply_defeature()
     small, big = holes(plate)
     faces = len(plate.data.polygons)
     assert small == 0, "%d bolt hole(s) stayed at a 12 mm dial" % small
@@ -117,18 +117,18 @@ def main():
     assert faces < plain_faces, \
         "the mesh did not get smaller: %d faces either way" % faces
     assert open_edges(plate) == 0, \
-        "the simplified plate has %d open edge(s)" % open_edges(plate)
+        "the defeatured plate has %d open edge(s)" % open_edges(plate)
 
     # 4. The size dial means what it says: under the bore, over the bolt
     #    holes, and the bore goes as well.
     plate2 = load()
-    plate2.cad_simplify.enabled = True
-    plate2.cad_simplify.size = 0.040
+    plate2.cad_defeature.enabled = True
+    plate2.cad_defeature.size = 0.040
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     plate2.select_set(True)
     bpy.context.view_layer.objects.active = plate2
-    bpy.ops.stepper.apply_simplify()
+    bpy.ops.stepper.apply_defeature()
     assert holes(plate2) == (0, False), \
         "a 40 mm dial left %s behind" % (holes(plate2),)
     assert open_edges(plate2) == 0, "the plate with no holes is not closed"
@@ -141,18 +141,18 @@ def main():
     for holder in list(plate3.users_collection):
         holder.objects.unlink(plate3)
     group.objects.link(plate3)
-    group.cad_simplify.enabled = True
-    group.cad_simplify.size = 0.012
+    group.cad_defeature.enabled = True
+    group.cad_defeature.size = 0.012
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
     plate3.select_set(True)
     bpy.context.view_layer.objects.active = plate3
-    bpy.ops.stepper.apply_simplify()
+    bpy.ops.stepper.apply_defeature()
     assert holes(plate3) == (0, True), \
         "the collection did not decide for the part: %s" % (holes(plate3),)
     assert open_edges(plate3) == 0, "the part the collection covered is open"
 
-    print("simplify_step_smoke: OK, four bolt holes went and the bore "
+    print("defeature_step_smoke: OK, four bolt holes went and the bore "
           "stayed, %d faces to %d, and the plate is still closed"
           % (plain_faces, faces))
 

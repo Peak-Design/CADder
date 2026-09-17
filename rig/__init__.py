@@ -10,7 +10,7 @@ and graph.py run under plain Python in CI. The bpy-dependent classes only
 exist inside Blender."""
 
 from . import constraints, drivers, graph, loops  # noqa: F401
-from . import manifest, matching, parenting, rig_build, simplify, ui  # noqa: F401
+from . import manifest, matching, parenting, rig_build, defeature, ui  # noqa: F401
 
 try:
     import bpy
@@ -50,7 +50,7 @@ if bpy is not None:
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)
 
     _classes = ((ui.CADLINK_MechanismChoice, CadLinkSettings)
-                + simplify.classes + ui.classes)
+                + defeature.classes + ui.classes)
 
     def register():
         for cls in _classes:
@@ -59,12 +59,12 @@ if bpy is not None:
             type=CadLinkSettings)
         # Per part and per collection, so the classes above have to be
         # registered first.
-        simplify.register()
+        defeature.register()
 
     def unregister():
         # The pointer references the PropertyGroup class, so it must be
         # gone before the class it points at.
-        simplify.unregister()
+        defeature.unregister()
         del bpy.types.Scene.cad_link
         for cls in reversed(_classes):
             bpy.utils.unregister_class(cls)

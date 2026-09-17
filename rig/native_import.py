@@ -206,13 +206,9 @@ def remove_previous(stem=None, scene_collection=None):
     the live one on every send, live 2026-09-14). Meshes go too: an
     orphaned datablock of a million triangles is invisible in the outliner
     and very much present in the file. `stem` narrows the removal to one
-    file's import; None takes every native import. The fixed collection
-    name of scenes from before is taken as well."""
+    file's import; None takes every native import."""
     removed = 0
     colls = _own_collections(stem)
-    legacy = bpy.data.collections.get("SW_Native")
-    if legacy is not None and legacy not in colls:
-        colls.append(legacy)
     objects = [o for o in bpy.data.objects
                if o.get(_TAG_FILE) is not None and (stem is None or o.get(_TAG_FILE) == stem)]
     for coll in colls:

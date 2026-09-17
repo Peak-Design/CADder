@@ -15,7 +15,7 @@ import os
 import re
 
 from . import (graph, inputs, joining, manifest as manifest_mod, matching,
-               parenting, pose_sync, rig_build, simplify)
+               parenting, pose_sync, rig_build, defeature)
 from .manifest import ManifestError
 
 try:
@@ -660,17 +660,17 @@ if bpy is not None:
 
         The import options of the last send are reused, so the assembly
         lands the same way round and in the same shape. So are the parts and
-        collections the scene holds simplified: the CAD application is told
+        collections the scene holds defeatured: the CAD application is told
         which they are, and the settings are put back on what arrives,
         because this replaces every object and collection in the send."""
-        from . import cad_link, manifest as man_mod, simplify
+        from . import cad_link, manifest as man_mod, defeature
         from .. import bridge
         out = {}
-        held = simplify.snapshot(context.scene)
-        asked = simplify.orders(_linked_objects(), context.scene)
+        held = defeature.snapshot(context.scene)
+        asked = defeature.orders(_linked_objects(), context.scene)
         try:
             reply = cad_link.request(
-                "export", mesh=True, **({"simplify": asked} if asked else {}))
+                "export", mesh=True, **({"defeature": asked} if asked else {}))
         except cad_link.CadLinkError as exc:
             return {"error": str(exc)}
         mesh = reply.get("mesh")
@@ -697,7 +697,7 @@ if bpy is not None:
         out["objects"] = (stages.get("mesh") or {}).get("objects", 0)
         rig = stages.get("rig")
         out["rig"] = ("%d bone(s)" % rig["bones"]) if rig else "no rig"
-        out["simplify"] = simplify.restore(held, context.scene)
+        out["defeature"] = defeature.restore(held, context.scene)
         return out
 
     class CADLINK_OT_update_from_cad(bpy.types.Operator):
@@ -736,7 +736,7 @@ if bpy is not None:
             return bool(_linked_objects())
 
         def execute(self, context):
-            from . import native_import, cad_link, progress, simplify
+            from . import native_import, cad_link, progress, defeature
             ids = []
             covered = _scope_objects(context)
             for obj in covered:
@@ -769,7 +769,7 @@ if bpy is not None:
                     if stages.get("error"):
                         self.report({"ERROR"}, stages["error"])
                         return {"CANCELLED"}
-                    parts, groups = stages.get("simplify") or (0, 0)
+                    parts, groups = stages.get("defeature") or (0, 0)
                     kept = (", {} part(s) and {} collection(s) still defeatured"
                             .format(parts, groups)) if parts or groups else ""
                     self.report({"INFO"},
@@ -786,7 +786,7 @@ if bpy is not None:
                     reply = cad_link.retessellate(
                         ids, self.quality, persistent_ids=persistent,
                         separate_solids=split or None,
-                        simplify=simplify.orders(covered, context.scene))
+                        defeature=defeature.orders(covered, context.scene))
                     said.stage("replacing the geometry", 60, 90, len(ids))
                     changed = native_import.refine(context, reply["mesh"])
                     if not changed:

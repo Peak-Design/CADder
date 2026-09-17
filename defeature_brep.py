@@ -237,7 +237,7 @@ def plan(shape, max_extent_m, curved=False, log=None):
         if why is not None:
             declined += 1
             if log is not None:
-                log("simplify: a feature stays, %s" % why)
+                log("defeature: a feature stays, %s" % why)
             continue
         shape_key = frozenset(region)
         if shape_key in already:
@@ -253,7 +253,7 @@ def apply(shape, max_extent_m, curved=False, log=None):
     The shape without its small features, as (shape, history, removed,
     declined). The shape is None when it keeps them.
 
-    None is not a failure to report as such. The contract is "simplified" or
+    None is not a failure to report as such. The contract is "defeatured" or
     "left alone", so a shape OCCT will not rebuild simply travels as it is.
 
     The history says what became of each face, which is what lets the colors
@@ -265,7 +265,7 @@ def apply(shape, max_extent_m, curved=False, log=None):
         gone, removed, declined, faces = plan(shape, max_extent_m, curved, log)
     except Exception as exc:                        # noqa: BLE001
         if log is not None:
-            log("simplify: the shape could not be read: %s" % exc)
+            log("defeature: the shape could not be read: %s" % exc)
         return None, None, 0, 0
     if not gone:
         return None, None, 0, declined
@@ -297,11 +297,11 @@ def apply(shape, max_extent_m, curved=False, log=None):
             history = algo.History()
     except Exception as exc:                        # noqa: BLE001
         if log is not None:
-            log("simplify: OCCT would not rebuild the shape: %s" % exc)
+            log("defeature: OCCT would not rebuild the shape: %s" % exc)
         return None, None, 0, removed + declined
     if not done or result is None or result.IsNull():
         if log is not None:
-            log("simplify: OCCT would not rebuild the shape, so it is sent "
+            log("defeature: OCCT would not rebuild the shape, so it is sent "
                 "as it is")
         return None, None, 0, removed + declined
 
@@ -314,11 +314,11 @@ def apply(shape, max_extent_m, curved=False, log=None):
     TopExp.MapShapes_s(result, TopAbs_ShapeEnum.TopAbs_FACE, after)
     if after.Extent() < 1 or after.Extent() >= faces.Extent():
         if log is not None:
-            log("simplify: the rebuilt shape has %d face(s) against %d, so "
+            log("defeature: the rebuilt shape has %d face(s) against %d, so "
                 "the part is sent as it is" % (after.Extent(), faces.Extent()))
         return None, None, 0, removed + declined
     if log is not None:
-        log("simplify: %d feature(s) removed, %d left alone, %d face(s) to %d"
+        log("defeature: %d feature(s) removed, %d left alone, %d face(s) to %d"
             % (removed, declined, faces.Extent(), after.Extent()))
     return result, history, removed, declined
 
@@ -328,7 +328,7 @@ def carry_colors(reader, old, new, history):
 
     A STEP file can color a whole part, a body inside it, or one face, and
     the reader holds those against the shapes it read. The rebuilt shape is
-    made of NEW faces, so without this a simplified part would arrive in
+    made of NEW faces, so without this a defeatured part would arrive in
     whatever color a part with nothing said about it gets.
 
     The history says what became of each shape: gone, changed into others,

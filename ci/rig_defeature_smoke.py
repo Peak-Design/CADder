@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Headless smoke for the simplify switch: which parts travel without their
+"""Headless smoke for the defeature switch: which parts travel without their
 small features.
 
 The switch lives on the part and on the collection above it, and the rule
@@ -12,7 +12,7 @@ that decides between them is the whole feature. Four things have to hold:
 - the settings ride the request, once per component;
 - they survive a rebuild of the whole assembly, which replaces every object.
 
-Run:  blender -b --factory-startup -P rig_simplify_smoke.py
+Run:  blender -b --factory-startup -P rig_defeature_smoke.py
 """
 
 import os
@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from CADder import tools  # noqa: E402
-from CADder.rig import simplify, ui  # noqa: E402
+from CADder.rig import defeature, ui  # noqa: E402
 
 
 def part(name, component, collection):
@@ -53,13 +53,13 @@ def main():
 
     # 1. Nothing is set, so nothing is asked for. A scene that says nothing
     #    gets the geometry it has always got.
-    assert simplify.orders(everything, scene) == [], "asked without being told"
-    assert simplify.source_of(plate, scene) is None
+    assert defeature.orders(everything, scene) == [], "asked without being told"
+    assert defeature.source_of(plate, scene) is None
 
     # 2. One part on its own.
-    plate.cad_simplify.enabled = True
-    plate.cad_simplify.size = 0.008
-    asked = simplify.orders(everything, scene)
+    plate.cad_defeature.enabled = True
+    plate.cad_defeature.size = 0.008
+    asked = defeature.orders(everything, scene)
     assert len(asked) == 1, asked
     assert asked[0]["component"] == "c001", asked
     assert abs(asked[0]["size_m"] - 0.008) < 1e-6, asked
@@ -67,12 +67,12 @@ def main():
 
     # 3. The collection covers everything in it, including the parts of the
     #    subassembly below it, and it overrides a part's own switch.
-    assembly.cad_simplify.enabled = True
-    assembly.cad_simplify.size = 0.02
-    assembly.cad_simplify.curved = True
-    assert simplify.source_of(plate, scene) is assembly
-    assert simplify.source_of(gear, scene) is assembly
-    asked = {row["component"]: row for row in simplify.orders(everything, scene)}
+    assembly.cad_defeature.enabled = True
+    assembly.cad_defeature.size = 0.02
+    assembly.cad_defeature.curved = True
+    assert defeature.source_of(plate, scene) is assembly
+    assert defeature.source_of(gear, scene) is assembly
+    asked = {row["component"]: row for row in defeature.orders(everything, scene)}
     assert set(asked) == {"c001", "c002", "c003"}, asked
     for row in asked.values():
         assert abs(row["size_m"] - 0.02) < 1e-6, row
@@ -80,21 +80,21 @@ def main():
 
     # 4. The nearest collection wins, so the subassembly can differ from the
     #    assembly it sits in.
-    sub.cad_simplify.enabled = True
-    sub.cad_simplify.size = 0.004
-    sub.cad_simplify.curved = False
-    assert simplify.source_of(gear, scene) is sub
-    assert simplify.source_of(plate, scene) is assembly
-    assert simplify.above(sub, scene) is assembly
-    assert simplify.above(assembly, scene) is None
-    asked = {row["component"]: row for row in simplify.orders(everything, scene)}
+    sub.cad_defeature.enabled = True
+    sub.cad_defeature.size = 0.004
+    sub.cad_defeature.curved = False
+    assert defeature.source_of(gear, scene) is sub
+    assert defeature.source_of(plate, scene) is assembly
+    assert defeature.above(sub, scene) is assembly
+    assert defeature.above(assembly, scene) is None
+    asked = {row["component"]: row for row in defeature.orders(everything, scene)}
     assert abs(asked["c003"]["size_m"] - 0.004) < 1e-6, asked["c003"]
     assert abs(asked["c001"]["size_m"] - 0.02) < 1e-6, asked["c001"]
 
     # 5. One component, one entry. A multibody part arrives as one object
     #    per body and they are one piece of geometry to the CAD application.
     second_body = part("gear.body002", "c003", sub)
-    asked = simplify.orders(everything + [second_body], scene)
+    asked = defeature.orders(everything + [second_body], scene)
     assert len([r for r in asked if r["component"] == "c003"]) == 1, asked
     bpy.data.objects.remove(second_body)
 
@@ -156,32 +156,32 @@ def main():
     #     from one, and the parts themselves where it did not. A part a
     #     collection already covers is left alone, so nothing is left behind
     #     when the collection goes off.
-    assembly.cad_simplify.enabled = False
-    sub.cad_simplify.enabled = False
-    plate.cad_simplify.enabled = False
-    groups, parts = simplify.turn_on(None, together, scene)
+    assembly.cad_defeature.enabled = False
+    sub.cad_defeature.enabled = False
+    plate.cad_defeature.enabled = False
+    groups, parts = defeature.turn_on(None, together, scene)
     assert (groups, parts) == (0, 2), (groups, parts)
-    assert plate.cad_simplify.enabled and twin.cad_simplify.enabled
+    assert plate.cad_defeature.enabled and twin.cad_defeature.enabled
 
-    plate.cad_simplify.enabled = False
-    twin.cad_simplify.enabled = False
-    groups, parts = simplify.turn_on(assembly, together, scene)
+    plate.cad_defeature.enabled = False
+    twin.cad_defeature.enabled = False
+    groups, parts = defeature.turn_on(assembly, together, scene)
     assert (groups, parts) == (1, 0), (groups, parts)
-    assert assembly.cad_simplify.enabled
-    assert not plate.cad_simplify.enabled, \
+    assert assembly.cad_defeature.enabled
+    assert not plate.cad_defeature.enabled, \
         "a part the collection already covers got a switch of its own"
     bpy.data.objects.remove(twin)
-    assembly.cad_simplify.enabled = True
-    assembly.cad_simplify.size = 0.02
-    assembly.cad_simplify.curved = True
-    sub.cad_simplify.enabled = True
-    plate.cad_simplify.enabled = True
-    plate.cad_simplify.size = 0.008
+    assembly.cad_defeature.enabled = True
+    assembly.cad_defeature.size = 0.02
+    assembly.cad_defeature.curved = True
+    sub.cad_defeature.enabled = True
+    plate.cad_defeature.enabled = True
+    plate.cad_defeature.size = 0.008
 
     # 7. A rebuild of the whole assembly replaces every object and every
     #    collection. The settings are written down first and put back on
     #    what arrives, matched by component and by collection name.
-    held = simplify.snapshot(scene)
+    held = defeature.snapshot(scene)
     assert set(held["components"]) == {"c001"}, held["components"]
     assert set(held["collections"]) == {"assembly", "gearbox"}, held["collections"]
 
@@ -196,17 +196,17 @@ def main():
     plate = part("plate", "c001", assembly)
     gear = part("gear", "c003", sub)
     # A part that is no longer in the assembly is simply not there to set.
-    missing = simplify.restore(held, scene)
+    missing = defeature.restore(held, scene)
     assert missing == (1, 2), missing
-    assert plate.cad_simplify.enabled
-    assert abs(plate.cad_simplify.size - 0.008) < 1e-6
-    assert assembly.cad_simplify.enabled
-    assert abs(assembly.cad_simplify.size - 0.02) < 1e-6
-    assert assembly.cad_simplify.curved
-    assert abs(sub.cad_simplify.size - 0.004) < 1e-6
-    assert simplify.source_of(gear, scene) is sub
+    assert plate.cad_defeature.enabled
+    assert abs(plate.cad_defeature.size - 0.008) < 1e-6
+    assert assembly.cad_defeature.enabled
+    assert abs(assembly.cad_defeature.size - 0.02) < 1e-6
+    assert assembly.cad_defeature.curved
+    assert abs(sub.cad_defeature.size - 0.004) < 1e-6
+    assert defeature.source_of(gear, scene) is sub
 
-    print("rig_simplify_smoke: OK")
+    print("rig_defeature_smoke: OK")
 
 
 main()

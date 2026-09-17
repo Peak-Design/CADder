@@ -89,10 +89,6 @@ def main():
     info = request(base + "/cadlink/ping", token)
     assert info["ok"] and info["app"] == "blender", info
 
-    # An add-in built before the CAD Link rename still gets through.
-    legacy = request(base + "/swtb/ping", token, header="X-SWTB-Token")
-    assert legacy["ok"], legacy
-
     try:
         request(base + "/cadlink/ping", "wrong-token")
         raise AssertionError("bad token was accepted")

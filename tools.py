@@ -13,6 +13,91 @@ import numpy as np
 from . import uv as uv_mod
 
 
+def under(collection):
+    """A collection and every collection inside it, however deep."""
+    found = [collection]
+    stack = [collection]
+    guard = 0
+    while stack and guard < 10000:
+        guard += 1
+        here = stack.pop()
+        for child in here.children:
+            if child in found:
+                continue
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+SCOPE_ITEMS = [
+    ("SELECTED", "Selected Parts", "The parts that are selected"),
+    ("COLLECTION", "Collection",
+     "Every part in the collections the selection sits in, and in the "
+     "collections below them. With nothing selected, the collection that is "
+     "active in the outliner"),
+]
+
+
+def scope_objects(context, scope, keep=None):
+    """The meshes an operator covers.
+
+    Selected Parts is what is selected. Collection widens that to the
+    collections the selection sits in AND everything below them, which is a
+    subassembly and its subassemblies in the tree modes. With nothing
+    selected it is the collection that is active in the outliner, so one
+    level of a tree can be worked on its own.
+    """
+    selected = [o for o in context.selected_objects if o.type == "MESH"]
+    if scope != "COLLECTION":
+        found = selected
+    else:
+        holders = []
+        for obj in selected:
+            for collection in obj.users_collection:
+                if collection not in holders:
+                    holders.append(collection)
+        if not holders and context.collection is not None:
+            holders = [context.collection]
+        wanted = set()
+        for collection in holders:
+            wanted.update(under(collection))
+        found = [o for o in context.scene.objects
+                 if o.type == "MESH"
+                 and any(c in wanted for c in o.users_collection)]
+    seen = set()
+    kept = []
+    for obj in found:
+        if obj.name in seen or (keep is not None and not keep(obj)):
+            continue
+        seen.add(obj.name)
+        kept.append(obj)
+    return kept
+
+
+def simplify_settings(obj, scene):
+    """What one part travels as: (leave small features out, size, curved).
+
+    The rig subpackage owns the switch, and CADder loads that subpackage
+    guarded so a rig failure never costs the STEP import. Asking for it here
+    rather than importing it at the top keeps that true.
+    """
+    try:
+        from .rig import simplify as simplify_mod
+    except Exception:                               # noqa: BLE001
+        return False, 0.0, False
+    return simplify_mod.settings_for(obj, scene)
+
+
+def from_step(obj):
+    """A part this addon read out of a STEP file, which it can read again."""
+    return obj.type == "MESH" and "STEP_file" in obj and "STEP_tag" in obj
+
+
+def from_cad_link(obj):
+    """A part the CAD application sent over the live link."""
+    return obj.type == "MESH" and bool(obj.get("RIG_component_id"))
+
+
 def _scale_mesh_verts(me, factor):
     vert_count = len(me.vertices)
     if vert_count == 0 or factor in (0.0, 1.0):
@@ -76,6 +161,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, len(targets))
         done = 0
+        simplified = 0
+        features = [0, 0]
         failed = []
         quad_objs = []
         unwrap_objs = {}
@@ -111,6 +198,25 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     continue
                 shp, node_index = tag_to_node[tag]
                 node = reader.tree.nodes[node_index]
+
+                # Small features come out of the SHAPE, before it is
+                # tessellated. The direct link asks SolidWorks to leave them
+                # out because SolidWorks holds the part; here the STEP file
+                # holds it, so the same decision is made on the shape.
+                want, size, curved = simplify_settings(obj, context.scene)
+                if want:
+                    from . import simplify_brep
+                    lines = []
+                    lighter, history, taken, left = simplify_brep.apply(
+                        shp, size, curved, lines.append)
+                    for line in lines:
+                        print("[CADder] " + line)
+                    if lighter is not None:
+                        simplify_brep.carry_colors(reader, shp, lighter, history)
+                        shp = lighter
+                        simplified += 1
+                    features[0] += taken
+                    features[1] += left
 
                 stored = {}
                 try:
@@ -212,11 +318,16 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
             mappings = m._ensure_matdb_materials(db_path)
             m._apply_matdb_to_objects(list(targets.values()), mappings)
 
+        note = ""
+        if simplified:
+            note = (", %d simplified (%d feature(s) out, %d left alone)"
+                    % (simplified, features[0], features[1]))
         if failed:
             self.report({"WARNING"},
-                        f"Regenerated {done}; failed: {', '.join(failed[:5])}")
+                        f"Regenerated {done}{note}; "
+                        f"failed: {', '.join(failed[:5])}")
         else:
-            self.report({"INFO"}, f"Regenerated {done} mesh(es)")
+            self.report({"INFO"}, f"Regenerated {done} mesh(es){note}")
         return {"FINISHED"}
 
 
@@ -531,14 +642,17 @@ class STEPPER_OT_add_box_uv(bpy.types.Operator):
 
 
 class STEPPER_OT_reapply_uv(bpy.types.Operator):
-    """Make the UVMap layer of the selected parts again with the settings in
-    this panel. Box Project works on the mesh as it is. The other modes need
-    the CAD data, so the addon reads the source file again and replaces the
-    mesh, the same way Regenerate does. The settings go on to each object, so
-    a later Regenerate or Refresh keeps them."""
+    """Make the UVMap layer of these parts again with the settings in this
+    panel. Box Project works on the mesh as it is. The other modes need the
+    CAD data: a part from a STEP file is read from the file again, and a part
+    from the live link is asked of the CAD application again. The settings go
+    on to each object, so a later Regenerate or Rebuild keeps them."""
     bl_idname = "stepper.reapply_uv"
-    bl_label = "Apply UVs to Selected"
+    bl_label = "Apply UVs"
     bl_options = {"REGISTER", "UNDO"}
+
+    scope: bpy.props.EnumProperty(
+        name="Scope", items=SCOPE_ITEMS, default="SELECTED")
 
     # Every UV key of the import record this panel is allowed to change.
     KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
@@ -547,8 +661,15 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == "OBJECT" and any(
-            o.type == "MESH" for o in context.selected_objects)
+        # Not "is something selected": the Collection scope works from the
+        # outliner with nothing selected at all.
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        if not any(o.type == "MESH" for o in context.scene.objects):
+            cls.poll_message_set("This scene holds no meshes")
+            return False
+        return True
 
     def execute(self, context):
         from . import main as m
@@ -558,8 +679,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
         targets = []
         seen = set()
-        for obj in context.selected_objects:
-            if obj.type != "MESH" or obj.data is None or obj.data in seen:
+        for obj in scope_objects(context, self.scope):
+            if obj.data is None or obj.data in seen:
                 continue
             seen.add(obj.data)
             targets.append(obj)
@@ -592,19 +713,38 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
                     n += 1
             made = "box projected %d mesh(es)" % n
         else:
-            from_cad = [o for o in targets
-                        if "STEP_file" in o and "STEP_tag" in o]
-            if not from_cad:
+            # The CAD data is where these modes start, and a part knows which
+            # CAD data is its own: a STEP file on disk, or the CAD
+            # application holding the live model. Both come back with one
+            # island per CAD face, which is what every mode below builds on.
+            step = [o for o in targets if from_step(o)]
+            live = [o for o in targets if from_cad_link(o) and o not in step]
+            if not step and not live:
                 self.report({"WARNING"},
                             "This mode needs the CAD data. Select parts that "
-                            "came from a STEP file")
+                            "came from a STEP file or over the live link")
                 return {"CANCELLED"}
-            for obj in context.selected_objects:
-                obj.select_set(obj in from_cad)
-            context.view_layer.objects.active = from_cad[0]
-            bpy.ops.stepper.regenerate(use_scene_settings=False)
-            targets = from_cad
-            made = "rebuilt %d mesh(es) from the CAD data" % len(from_cad)
+            made = []
+            if live:
+                done = _ask_cad_link(context, live)
+                if done is None:
+                    self.report({"ERROR"},
+                                "The CAD application could not be reached")
+                    return {"CANCELLED"}
+                made.append("%d from the CAD application" % done)
+            if step:
+                for obj in context.selected_objects:
+                    obj.select_set(obj in step)
+                context.view_layer.objects.active = step[0]
+                bpy.ops.stepper.regenerate(use_scene_settings=False)
+                made.append("%d from the STEP file" % len(step))
+            # A part from the live link arrives with the coordinates
+            # SolidWorks gave it and nothing else has been done to it, so the
+            # modes that build on the CAD charts run here.
+            if live:
+                _uv_modes_on_live(m, live, want)
+            targets = step + live
+            made = "rebuilt " + " and ".join(made)
 
         # Regenerate has paired the triangles again as the record asks, so
         # packing is the one pass left.
@@ -617,6 +757,186 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class STEPPER_OT_apply_simplify(bpy.types.Operator):
+    """Ask for the geometry of these parts again with the Simplify settings
+    they now carry. A part that came in over the live link is asked of the
+    CAD application. A part that came from a STEP file is read from the file
+    again. Nothing in the CAD document or the STEP file is changed."""
+    bl_idname = "stepper.apply_simplify"
+    bl_label = "Apply Simplify"
+    bl_options = {"REGISTER", "UNDO"}
+
+    scope: bpy.props.EnumProperty(
+        name="Scope", items=SCOPE_ITEMS, default="SELECTED")
+
+    @classmethod
+    def poll(cls, context):
+        # The scope is not known here, and the Collection scope works from
+        # the outliner with nothing selected at all, so this asks only
+        # whether there is anything in the scene to work on. What the scope
+        # actually found is reported by execute.
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        if not any(from_step(o) or from_cad_link(o)
+                   for o in context.scene.objects):
+            cls.poll_message_set(
+                "This scene holds no parts from a STEP file or the live link")
+            return False
+        return True
+
+    def execute(self, context):
+        covered = scope_objects(context, self.scope)
+        step = [o for o in covered if from_step(o)]
+        # A part is asked of the CAD application when it can be,
+        # because that is the live copy.
+        live = [o for o in covered if from_cad_link(o) and o not in step]
+        if not step and not live:
+            self.report({"WARNING"},
+                        "Select parts that came from a STEP file or over the "
+                        "live link")
+            return {"CANCELLED"}
+
+        said = []
+        if live:
+            done = _ask_cad_link(context, live)
+            if done is None:
+                return {"CANCELLED"}
+            said.append("%d part(s) from the CAD application" % done)
+        if step:
+            for obj in context.selected_objects:
+                obj.select_set(obj in step)
+            context.view_layer.objects.active = step[0]
+            bpy.ops.stepper.regenerate(use_scene_settings=False)
+            said.append("%d part(s) from the STEP file" % len(step))
+        self.report({"INFO"}, "Simplify: rebuilt " + ", ".join(said))
+        return {"FINISHED"}
+
+
+def _uv_modes_on_live(m, objs, want):
+    """The UV passes a part from the live link needs after its geometry has
+    come back.
+
+    The STEP route runs these inside Regenerate, from the record each object
+    carries. A part from the live link has no such record and no STEP file,
+    so its geometry comes back from the CAD application and the same passes
+    run here, in the same order.
+
+    Smart needs to know which faces touch, and a mesh from the CAD
+    application does not say: every CAD face carries its own copy of the
+    points along its edges, so no two faces share an edge and Smart would
+    find nothing to join. weld() puts that right without changing the shape
+    or the shading.
+    """
+    mode = want["uv_mode"]
+    if mode == "SMART":
+        for obj in objs:
+            weld(obj.data)
+        m._smart_merge_objects(
+            objs, want["uv_pack"], want["uv_pack_tiles"],
+            want["uv_smart_distortion"], bool(want["uv_smart_sharp"]),
+            bool(want["uv_smart_split"]))
+    elif mode in uv_mod.UNWRAP_MODES:
+        m._unwrap_uv_objects(
+            objs,
+            world_scale=None if want["uv_normalize"] else 1.0,
+            method=mode)
+
+
+def weld(me, distance=1e-6):
+    """Joins the points a CAD mesh carries twice, and marks what was a CAD
+    face boundary sharp and as a UV seam.
+
+    A mesh from the live link is one patch of triangles per CAD face, each
+    with its own copy of the points along its edges. That is what lets every
+    point carry its own surface coordinates, and it also means the faces do
+    not touch: anything that walks from face to face finds nothing.
+
+    The normals are put back exactly as they were, so the shading does not
+    change. Nothing moves: the points joined were already in the same place.
+    """
+    if me is None or not len(me.polygons):
+        return False
+    normals = [tuple(loop.normal) for loop in me.loops] \
+        if me.has_custom_normals else None
+    before = len(me.vertices)
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(me)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=distance)
+        bm.to_mesh(me)
+    finally:
+        bm.free()
+    if len(me.vertices) == before:
+        return False
+    # An edge whose two faces disagree about where its ends are in the UV
+    # map was a CAD face boundary before the weld, and has to stay one.
+    #
+    # Compared FACE BY FACE rather than loop by loop. The two faces of an
+    # edge walk it in opposite directions, so their loops on it start at
+    # different ends and comparing them in loop order compares the wrong
+    # pairs and finds no disagreement anywhere.
+    layer = me.uv_layers.active
+    if layer is not None:
+        corners = []
+        for poly in me.polygons:
+            corners.append({
+                me.loops[i].vertex_index: tuple(
+                    round(v, 6) for v in layer.data[i].uv)
+                for i in poly.loop_indices})
+        number = {tuple(sorted(e.vertices)): e.index for e in me.edges}
+        sides = {}
+        for index, poly in enumerate(me.polygons):
+            for key in poly.edge_keys:
+                sides.setdefault(tuple(sorted(key)), []).append(index)
+        for key, faces in sides.items():
+            if len(faces) != 2 or key not in number:
+                continue
+            here, there = corners[faces[0]], corners[faces[1]]
+            if all(here.get(v) == there.get(v) for v in key):
+                continue
+            edge = me.edges[number[key]]
+            edge.use_seam = True
+            edge.use_edge_sharp = True
+    if normals is not None and len(normals) == len(me.loops):
+        me.normals_split_custom_set(normals)
+    return True
+
+
+def _ask_cad_link(context, objs):
+    """Asks the CAD application for these parts again, with whatever the
+    scene now holds them simplified to. Returns how many came back, or None
+    when the CAD application could not be reached."""
+    from .rig import cad_link, native_import, simplify as simplify_mod, ui as rig_ui
+
+    ids, persistent = [], []
+    for obj in objs:
+        component = obj.get("RIG_component_id")
+        if component and component not in ids:
+            ids.append(component)
+        found = obj.get("SWMESH_persistent_id")
+        if found and found not in persistent:
+            persistent.append(found)
+    if not ids:
+        return 0
+    try:
+        reply = cad_link.retessellate(
+            ids, rig_ui.quality_dial(context.scene.cad_link),
+            persistent_ids=persistent,
+            simplify=simplify_mod.orders(objs, context.scene))
+        return len(native_import.refine(context, reply["mesh"]))
+    except cad_link.CadLinkError as exc:
+        _report(context, str(exc))
+        return None
+    except (OSError, ValueError) as exc:
+        _report(context, "Could not read what the CAD application sent: %s" % exc)
+        return None
+
+
+def _report(context, message):
+    print("[CADder] " + message)
+
+
 classes = (
     STEPPER_OT_regenerate,
     STEPPER_OT_prune_hierarchy,
@@ -624,4 +944,5 @@ classes = (
     STEPPER_OT_mesh_cleanup,
     STEPPER_OT_add_box_uv,
     STEPPER_OT_reapply_uv,
+    STEPPER_OT_apply_simplify,
 )

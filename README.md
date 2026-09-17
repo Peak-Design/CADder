@@ -177,34 +177,6 @@ them closed:
   costs: the rest pose stays as it was built, so a part that moved in the
   CAD application follows its bone until the rig is unlocked and built
   again.
-- **Simplify**: which parts travel without their small features. A bolt
-  hole costs far more triangles than the plate it is in, and a model for a
-  game engine rarely wants it: the bolts are modelled and the holes are
-  not visible. **Smaller Than** sets how wide a feature may be and still
-  be left out, measured across the hole it makes in the face it breaks
-  into, so one size covers round holes, slots, keyways and small cutouts.
-  **Curved Faces** takes in a feature that breaks into a face that is not
-  flat, such as a hole drilled into a boss.
-
-  The switch is on the PART, and on the collection above it when the
-  assembly came in as a tree. A part inside a collection that is set
-  follows the collection: its own switch is greyed, with a line saying
-  which collection decides. The nearest collection wins, so a subassembly
-  can differ from the assembly it sits in. The same settings are in the
-  object and collection properties, under **CAD Simplify**.
-
-  Nothing in the CAD document is changed and no feature is written into
-  anybody's file. A feature is left in unless the whole of it can be
-  accounted for, and a part that would come back with a hole in its side
-  is sent exactly as it was. The export log says how many features went
-  and how many were left alone.
-
-  The setting goes to the CAD application with every request for geometry,
-  so Rebuild from CAD gives back what the scene had. It also survives a
-  rebuild of the whole assembly, and a fresh send from the CAD
-  application: the CAD side holds no such setting, so a send brings the
-  small features back, and the marked parts are asked for again straight
-  after.
 - **STEP Rig**: the `.rig.json` to build from and the pipeline buttons in
   the order they run (Import STEP, Match Geometry, Snap to CAD Poses,
   Build Rig, Relink Geometry). A direct send runs all of it, so this
@@ -214,9 +186,66 @@ them closed:
   loop counts of the manifest, the exporter's warnings, and the match,
   pose and rig reports of the last run.
 
-Below the bridge come **Material Database** and the STEP import panels:
-**STEP - Tools**, **STEP - UV** and **STEP - File**. **STEP - Debug**
-joins them when **Debug Options** is on in the addon preferences.
+Below the bridge come **Simplify** and **UV**, which work on any part
+whichever way it came in, then **Material Database** and the STEP import
+panels: **STEP - Tools** and **STEP - File**. **STEP - Debug** joins them
+when **Debug Options** is on in the addon preferences.
+
+### Simplify
+
+Which parts travel without their small features. A bolt hole costs far
+more triangles than the plate it is in, and a model for a game engine
+rarely wants it: the bolts are modelled and the holes are not visible.
+
+The switch is on the PART, and on the collection above it when the
+assembly came in as a tree. A part inside a collection that is set follows
+the collection: its own switch is greyed, with a line saying which
+collection decides. The nearest collection wins, so a subassembly can
+differ from the assembly it sits in. The same settings are in the object
+and collection properties, under **CAD Simplify**.
+
+**Smaller Than** sets how wide a feature may be and still be left out,
+measured across the hole it makes in the face it breaks into, so one size
+covers round holes, slots, keyways and small cutouts. **Curved Faces**
+takes in a feature that breaks into a face that is not flat, such as a
+hole drilled into a boss. **Scope** says how much the button covers, and
+**Apply Simplify** asks for the geometry again.
+
+Where the geometry comes from depends on where the part came from, and the
+switch does not. A part from the live link is asked of the CAD
+application, which leaves the features out of the triangles it sends. A
+part from a STEP file is read from the file again, and the features come
+out of the solid itself before it is tessellated, which is exact. Nothing
+in the CAD document or the STEP file is changed and no feature is written
+into anybody's file.
+
+A feature is left in unless the whole of it can be accounted for: a hole
+running into a fillet, a hole breaking the silhouette, a thread. A part
+that would come back with a hole in its side is sent exactly as it was.
+The log says how many features went and how many were left alone.
+
+The setting goes with every request for geometry, so Rebuild from CAD
+gives back what the scene had. It also survives a rebuild of the whole
+assembly, and a fresh send from the CAD application: the CAD side holds no
+such setting, so a send brings the small features back, and the marked
+parts are asked for again straight after.
+
+### UV
+
+The UV map of any part, whichever way it came in. **Box Project** reads
+the mesh and nothing else. The other modes start from one island per CAD
+face, so they need the CAD data: a part from a STEP file is read from the
+file again, and a part from the live link is asked of the CAD application.
+**Scope** covers the selection, or a collection and everything below it.
+
+A part from the live link needs one step a part from a STEP file does not.
+Its mesh carries every CAD face's points twice, once for each face that
+meets there, which is what lets each point hold its own surface
+coordinates. Nothing touches anything until those points are joined, so
+**CAD Surfaces (Smart)** would find no neighbor to join. The addon joins
+them first and marks what was a CAD face boundary sharp and as a seam. The
+shape and the shading do not change: the points joined were already in the
+same place, and the normals are put back as they were.
 
 The manual route still works: export from the add-in to disk, then point
 **Manifest** at the `.rig.json` and press the buttons in order. The STEP

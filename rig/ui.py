@@ -255,17 +255,6 @@ def _find_rig(context):
 
 if bpy is not None:
 
-    def _simplify_target(context):
-        """What the Simplify panel is about: the active part when it came in
-        over CAD Link, and otherwise the active collection."""
-        obj = context.object
-        if obj is not None and obj.get("RIG_component_id"):
-            return obj
-        collection = context.collection
-        if collection is not None and context.scene is not None                 and collection is not context.scene.collection:
-            return collection
-        return None
-
     class CADLINK_MechanismChoice(bpy.types.PropertyGroup):
         """One mechanism's input, as a dropdown of its candidate joints."""
         index: bpy.props.IntProperty(default=0)
@@ -948,42 +937,6 @@ if bpy is not None:
                 box.alert = True
                 box.label(text=_STATE["error"], icon="ERROR")
 
-    class CADLINK_PT_simplify(bpy.types.Panel):
-        """Which parts travel without their small features.
-
-        The same settings as the object and collection properties, put
-        beside the button that sends them, because that is where the
-        decision is made. A collection is offered when nothing that came in
-        over CAD Link is active, which is how a whole subassembly is covered
-        at once.
-        """
-
-        bl_label = "Simplify"
-        bl_idname = "CADLINK_PT_simplify"
-        bl_space_type = "VIEW_3D"
-        bl_region_type = "UI"
-        bl_category = "CADder"
-        bl_parent_id = "CADLINK_PT_bridge"
-        bl_options = {"DEFAULT_CLOSED"}
-
-        @classmethod
-        def poll(cls, context):
-            return _simplify_target(context) is not None
-
-        def draw(self, context):
-            target = _simplify_target(context)
-            if target is None:
-                return
-            layout = self.layout
-            if isinstance(target, bpy.types.Collection):
-                layout.label(text=target.name, icon="OUTLINER_COLLECTION")
-                simplify.draw_for(layout, target,
-                                  simplify.above(target, context.scene))
-                return
-            layout.label(text=target.name, icon="OBJECT_DATA")
-            simplify.draw_for(layout, target,
-                              simplify.source_of(target, context.scene))
-
     class CADLINK_PT_mechanism(bpy.types.Panel):
         """Which joint drives a mechanism.
 
@@ -1197,7 +1150,6 @@ if bpy is not None:
         CADLINK_OT_join_rigs,
         CADLINK_OT_update_from_cad,
         CADLINK_PT_bridge,
-        CADLINK_PT_simplify,
         CADLINK_PT_mechanism,
         CADLINK_PT_step,
         CADLINK_PT_info,

@@ -242,6 +242,83 @@ def main():
         assert asked[0]["curved"] is True, asked
         obj.cad_simplify.enabled = False
 
+        # 7c. The UV panel works on a part from the live link, not only on
+        # one from a STEP file. Box Project reads the mesh and nothing else.
+        # The other modes need the CAD data, and for this part the CAD data
+        # is the CAD application, so the geometry is asked for again.
+        prg = bpy.context.scene.stepper
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        prg.uv_mode = "BOX"
+        prg.box_uv_scale = 0.05
+        assert bpy.ops.stepper.reapply_uv.poll(), "the UV operator refused a part"
+        assert "FINISHED" in bpy.ops.stepper.reapply_uv(), "box project failed"
+        assert obj.data.uv_layers.get("UVMap") is not None, "no UV map"
+
+        # The modes that are not Box Project need the CAD data, and for a
+        # part from the live link the CAD data is the CAD application. What
+        # this fixture can show is that it is ASKED: the .swmesh written
+        # here carries no surface coordinates, so what comes back is not a
+        # UV map to check.
+        before = len(server.seen)
+        prg.uv_mode = "SURFACE"
+        assert "FINISHED" in bpy.ops.stepper.reapply_uv(), "surface UVs failed"
+        assert len(server.seen) > before, \
+            "a mode that needs the CAD data asked nobody for it"
+        assert server.seen[-1]["op"] == "retessellate", server.seen[-1]
+
+        points = len(obj.data.vertices)
+        prg.uv_mode = "SMART"
+        assert "FINISHED" in bpy.ops.stepper.reapply_uv(), "smart UVs failed"
+        assert len(obj.data.vertices) <= points, "the weld added points"
+
+        # 7d. A collection is a scope of its own, so a whole subassembly can
+        # be given one treatment without picking its parts out.
+        group = bpy.data.collections.new("uv group")
+        bpy.context.scene.collection.children.link(group)
+        group.objects.link(obj)
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        prg.uv_mode = "BOX"
+        bpy.context.view_layer.active_layer_collection = (
+            bpy.context.view_layer.layer_collection.children[group.name])
+        assert "FINISHED" in bpy.ops.stepper.reapply_uv(scope="COLLECTION"), \
+            "the collection scope found nothing"
+        bpy.context.view_layer.active_layer_collection = (
+            bpy.context.view_layer.layer_collection)
+        group.objects.unlink(obj)
+        bpy.data.collections.remove(group)
+
+        # 7e. The weld itself, which is what lets Smart work on a part from
+        # the live link at all. A mesh from the CAD application carries
+        # every CAD face's points twice, once for each face that meets
+        # there, so no two faces share an edge and anything that walks from
+        # face to face finds nothing.
+        from CADder import tools as tools_mod
+        me = bpy.data.meshes.new("split")
+        me.from_pydata(
+            [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),      # one face
+             (1, 0, 0), (2, 0, 0), (2, 1, 0), (1, 1, 0)],     # and the next
+            [], [(0, 1, 2, 3), (4, 5, 6, 7)])
+        layer = me.uv_layers.new(name="UVMap")
+        for i, uv in enumerate([(0, 0), (1, 0), (1, 1), (0, 1),
+                                (5, 0), (6, 0), (6, 1), (5, 1)]):
+            layer.data[i].uv = uv
+        me.update()
+        welded = tools_mod.weld(me)
+        assert welded, "the weld found nothing to join"
+        assert len(me.vertices) == 6, \
+            "the weld left %d points, not 6" % len(me.vertices)
+        shared = [e for e in me.edges if len(
+            [p for p in me.polygons if tuple(sorted(e.vertices)) in
+             [tuple(sorted(k)) for k in p.edge_keys]]) == 2]
+        assert shared, "the two faces still do not share an edge"
+        assert all(e.use_seam and e.use_edge_sharp for e in shared), \
+            "the CAD face boundary was not marked"
+        bpy.data.meshes.remove(me)
+
         # 8. Poses: the CAD side says the part has moved, and the object
         #    follows. The manifest keeps the new transform, so a rig built
         #    from it afterwards rests where the part now is.

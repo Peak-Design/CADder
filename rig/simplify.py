@@ -277,6 +277,59 @@ if bpy is not None:
         body.prop(settings, "size")
         body.prop(settings, "curved")
 
+    def target(context):
+        """What the Simplify panel is about: the active part when it came
+        from CAD, and otherwise the active collection."""
+        obj = context.object
+        if obj is not None and obj.type == "MESH" and (
+                obj.get("RIG_component_id") or "STEP_tag" in obj):
+            return obj
+        collection = context.collection
+        if collection is not None and context.scene is not None \
+                and collection is not context.scene.collection:
+            return collection
+        return None
+
+    class CADLINK_PT_simplify(bpy.types.Panel):
+        """Which parts travel without their small features.
+
+        A category of its own, because it is not a property of the live link
+        or of the STEP importer but of the PART, whichever way the part came
+        in. The same settings are in the object and collection properties;
+        this is where they sit beside the button that acts on them.
+        """
+
+        bl_label = "Simplify"
+        bl_idname = "CADLINK_PT_simplify"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "CADder"
+        bl_order = 1002
+        bl_options = {"DEFAULT_CLOSED"}
+
+        def draw(self, context):
+            layout = self.layout
+            here = target(context)
+            if here is None:
+                layout.label(text="Select a part or a collection",
+                             icon="INFO")
+                return
+            if isinstance(here, bpy.types.Collection):
+                layout.label(text=here.name, icon="OUTLINER_COLLECTION")
+                draw_for(layout, here, above(here, context.scene))
+            else:
+                layout.label(text=here.name, icon="OBJECT_DATA")
+                draw_for(layout, here, source_of(here, context.scene))
+
+            settings = context.scene.stepper
+            column = layout.column()
+            column.use_property_split = True
+            column.use_property_decorate = False
+            column.prop(settings, "simplify_scope", text="Scope")
+            apply_it = layout.operator("stepper.apply_simplify",
+                                       icon="MOD_DECIM")
+            apply_it.scope = settings.simplify_scope
+
     class CADLINK_PT_simplify_object(bpy.types.Panel):
         """On the part, in the object properties, where a part's own
         settings live."""
@@ -317,6 +370,7 @@ if bpy is not None:
 
     classes = (
         CADLINK_SimplifySettings,
+        CADLINK_PT_simplify,
         CADLINK_PT_simplify_object,
         CADLINK_PT_simplify_collection,
     )

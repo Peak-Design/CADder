@@ -43,6 +43,7 @@ from . import tools as tools_mod
 from . import curves as curves_mod
 from . import analyzer as analyzer_mod
 from . import refresh as refresh_mod
+from . import empties as empties_mod
 from . import background as background_mod
 from . import updater as updater_mod
 from .formats import classes as formats_classes
@@ -3097,6 +3098,12 @@ def load_step(
                     me.vertices.foreach_set("co", verts)
                     me.update()
                 processed_meshes.add(me)
+
+    # The empties were made at one size for every file. Now that the parts
+    # are placed and scaled, each is sized to what hangs under it.
+    if hierarchy_empties or hierarchy_instances:
+        bpy.context.view_layer.update()
+        empties_mod.fit(created_objs, created_objs)
 
     # Where the import put every object, so a later refresh can tell a part
     # that moved in CAD from one the user moved in Blender.

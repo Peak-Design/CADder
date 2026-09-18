@@ -36,6 +36,7 @@ from mathutils import Matrix
 from . import appearance, matdb, matching, progress, swmesh
 from . import diff as diff_mod
 from . import weld as weld_mod
+from .. import empties as empties_mod
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -545,6 +546,10 @@ class _Placer:
         self.components_collection = None
         self.tree_cols = {"": root}
         self.empties = {}
+        # The empties this run made, which are sized once the parts are in.
+        # An empty an earlier send made keeps the size it has, which may be
+        # one the user chose.
+        self.new_empties = []
         self.flat_groups = {}
 
     # ── materials and meshes, built only when something needs them ──────
@@ -637,6 +642,7 @@ class _Placer:
             emp.parent = parent
             emp.matrix_parent_inverse = parent.matrix_world.inverted()
         self.empties[sw_path] = emp
+        self.new_empties.append(emp)
         return emp
 
     def adopt_tree(self):
@@ -864,6 +870,7 @@ def build(context, path, manifest=None, collection_name=None,
     matdb.apply(objects + prototypes_objects(placer.prototypes), "direct send")
     report.frame_agree = len(report.matched)
     context.view_layer.update()
+    _fit_empties(placer, objects)
     return objects, report
 
 
@@ -1000,7 +1007,21 @@ def update(context, path, manifest=None, unit_scale=1.0,
     matdb.apply(objects + prototypes_objects(placer.prototypes), "update")
     report.frame_agree = len(report.matched)
     context.view_layer.update()
+    _fit_empties(placer, objects)
     return objects, report, out
+
+
+def _fit_empties(placer, objects):
+    """Sizes the empties this run made to the parts under them. An empty
+    the prune took out again is skipped."""
+    alive = []
+    for emp in placer.new_empties:
+        try:
+            emp.name
+        except ReferenceError:
+            continue
+        alive.append(emp)
+    empties_mod.fit(alive, objects)
 
 
 def _reshape(obj, placer, inst):

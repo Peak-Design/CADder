@@ -160,6 +160,14 @@ def main():
         _check(o.parent is emp, "%s is not parented under sub-1" % name)
     _check(round(bpy.data.objects["pin-2"].matrix_world.translation.x, 3) == 0.7,
            "parenting moved pin-2")
+    # The empty is sized to the two pins under it, not drawn 2 m across.
+    corners = [o.matrix_world @ Vector(c) for name in ("pin-1", "pin-2")
+               for o in [bpy.data.objects[name]] for c in o.bound_box]
+    span = (Vector(tuple(max(p[i] for p in corners) for i in range(3)))
+            - Vector(tuple(min(p[i] for p in corners) for i in range(3)))).length
+    _check(abs(emp.empty_display_size - span * 0.1) < 1e-6,
+           "the sub-1 empty is %.4g, the pins under it want %.4g"
+           % (emp.empty_display_size, span * 0.1))
 
     # COLLECTION_INSTANCES: prototypes hidden, occurrences instancing them
     objs, _ = native_import.build(bpy.context, path, manifest=m, hierarchy="COLLECTION_INSTANCES")

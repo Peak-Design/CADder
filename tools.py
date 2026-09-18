@@ -510,7 +510,9 @@ class STEPPER_OT_prune_restore(bpy.types.Operator):
 
     def execute(self, context):
         from mathutils import Matrix
+        from . import empties as empties_mod
         restored = 0
+        made = []
         # Worklist instead of a plain loop: a recreated empty can itself
         # carry restore metadata (cascade prunes record the deeper chain in
         # the removed empty's props). Those must be restored in the same
@@ -552,8 +554,18 @@ class STEPPER_OT_prune_restore(bpy.types.Operator):
                 if "STEP_prune_restore" in entry.get("props", {}):
                     worklist.append(empty)
                 child = empty
+                made.append(empty)
                 restored += 1
             del obj["STEP_prune_restore"]
+
+        # Each restored level is sized to the parts under it, as an import
+        # sizes it.
+        if made:
+            context.view_layer.update()
+            content = set()
+            for empty in made:
+                content.update(empty.children_recursive)
+            empties_mod.fit(made, content)
 
         self.report({"INFO"}, f"Restored {restored} hierarchy level(s)")
         return {"FINISHED"}

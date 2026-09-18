@@ -49,8 +49,10 @@ def test_an_unknown_name_still_answers():
 
 def test_the_dials_match_the_cad_addin():
     """The C# side is the source: read it, do not trust a copy."""
+    # The add-in's checkout, when it sits beside this one.
     source = os.path.join(
-        r"C:\PeakDesign\CADder-SW-Bridge\sw-addin\src\Peak.Cadder",
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+        "CADder-SW-Bridge", "sw-addin", "src", "Peak.Cadder",
         "SendToBlenderCommand.cs")
     if not os.path.exists(source):
         return                      # not a checkout of both repos

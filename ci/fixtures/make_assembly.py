@@ -14,12 +14,13 @@ Every part sits somewhere different so a test can tell which one moved.
 
     blender -b --factory-startup -P make_assembly.py -- <out.step>
 """
+import os
 import sys
 
 OUT = sys.argv[-1]
 
-ADDON = (r"C:\Users\Oscar\AppData\Roaming\Blender Foundation\Blender\5.1"
-         r"\scripts\addons")
+ADDON = os.path.join(os.environ.get("APPDATA", ""), "Blender Foundation",
+                     "Blender", "5.1", "scripts", "addons")
 sys.path.insert(0, ADDON)
 import bpy
 bpy.ops.preferences.addon_enable(module="CADder")

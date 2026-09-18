@@ -9,7 +9,8 @@ __pycache__/
 /OCP_licenses/
 
 # Heavy working files: CAD files, test scenes, renders, recordings.
-# Ignored on purpose, and assets/README.md says what belongs there and
-# what does not.
-/assets/*
-!/assets/README.md
+/assets/
+
+# Internal notes: the release steps and anything else written for the
+# maintainer only. They stay on this machine.
+.claude/

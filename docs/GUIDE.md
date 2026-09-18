@@ -436,6 +436,8 @@ where you put it.
 
 ## STEP import details
 
+![The STEP import dialog and the imported tree](images/step-import.png)
+
 ### Imported files, and refreshing them
 
 The N-panel lists every STEP file this .blend has imported, with what it holds

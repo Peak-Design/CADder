@@ -50,6 +50,11 @@ def _add_driver(arm_obj, pose_bone, path, source_bone, transform_type, constant,
     return fcurve
 
 
+# The units a table's input axis is keyed in: see table_driver.
+KEY_DEGREES = 180.0 / math.pi
+KEY_MILLIMETRES = 1000.0
+
+
 def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
                  samples, periodic, period, unit_scale):
     """A sampled relation as a driver F-curve: the driver's channel is the
@@ -57,8 +62,19 @@ def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
     driver F-curve that has keyframes AT the driver's value, so the mapping
     is the table itself, interpolated linearly, and a Cycles modifier
     repeats a periodic one every turn. Channels read in Blender units; the
-    table is in metres and radians."""
-    expr = "a" if driver_turns else "a / {}".format(repr(float(unit_scale)))
+    table is in metres and radians.
+
+    The input axis is keyed in degrees for a turn and in millimetres for a
+    slide, not in radians and metres. Blender treats two keyframes closer
+    than 0.01 on that axis as one and merges them, and a table sampled every
+    half degree is 0.0087 radians apart: half its keys vanished and the
+    output ran a step ahead of the input (universal joint 2, 2026-09-18).
+    In degrees and millimetres the steps sit far above that threshold."""
+    per_unit = KEY_DEGREES if driver_turns else KEY_MILLIMETRES
+    if driver_turns:
+        expr = "a * {}".format(repr(per_unit))
+    else:
+        expr = "a * {}".format(repr(per_unit / float(unit_scale)))
     fcurve = _add_driver(arm_obj, own_pb,
                          "rotation_euler" if driven_turns else "location",
                          source_bone, "ROT_Y" if driver_turns else "LOC_Y", 1.0)
@@ -69,7 +85,7 @@ def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
         points.remove(points[0])
     points.add(len(samples))
     for kp, (x, y) in zip(points, samples):
-        kp.co = (x, y * scale)
+        kp.co = (x * per_unit, y * scale)
         kp.interpolation = "LINEAR"
         kp.handle_left_type = "AUTO"
         kp.handle_right_type = "AUTO"

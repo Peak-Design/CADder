@@ -1,0 +1,422 @@
+{
+  "manifest_version": "1.0.0",
+  "generator": {
+    "name": "Peak.Cadder",
+    "version": "v1.0.0",
+    "solidworks_version": "30.5.0",
+    "exported_utc": "2026-09-18T08:33:00Z"
+  },
+  "units": {
+    "length": "meter",
+    "angle": "radian"
+  },
+  "frame": {
+    "handedness": "right",
+    "up_axis": "Z",
+    "transform_convention": "row_major_4x4_global"
+  },
+  "step_export": {
+    "file": "universal joint 2.step",
+    "ap": "AP214",
+    "sha1": null,
+    "occurrence_matching": "peak-nauo-tree/1"
+  },
+  "components": [
+    {
+      "id": "c001",
+      "sw_path": "bracket-1",
+      "sw_persistent_id": "mDoAAAUAAAD//v8bYgByAGEAYwBrAGUAdAAtADEAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAAA0AAAA=",
+      "step_name": "bracket",
+      "step_occurrence_path": null,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.01905, -0.0063499999999999945, -0.0063499999999999945],
+        "max": [0.01905, 0.088900000000000021, 0.081298179913703417]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c002",
+      "sw_path": "pinforyoke-1",
+      "sw_persistent_id": "mDoAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADEAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAABoAAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.91535646702682627, 0.37112524658922613, -0.15616846549880894, 0.002975009267752383],
+        [-0.38085776205934768, -0.67219657217912432, 0.63490088472908957, 0.032355138145911087],
+        [0.130651840214028, 0.64063860303194453, 0.75664541031712251, 0.023685904933458568],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.0090201868400340678, 0.027406835829324509, 0.020061611140645745],
+        "max": [0.0090201868400342135, 0.061493164170675983, 0.056138388859353759]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c003",
+      "sw_path": "pinforyoke-2",
+      "sw_persistent_id": "mDoAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADIAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAAB0AAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.012972958557113463, -0.20171860584838017, 0.97935759883755491, -0.019121957117303363],
+        [0.99793836633095856, -0.064179568436516177, 3.0159793933115465E-16, 0.044450000000000017],
+        [0.062854748038416924, 0.97733852223775985, 0.20213533486043142, 0.03415330758685009],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.020130792778444779, 0.039459107824527648, 0.029265439409822337],
+        "max": [-0.0056752799509250012, 0.049440892175472387, 0.041608294516605325]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c004",
+      "sw_path": "pinforyoke-3",
+      "sw_persistent_id": "mDoAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADMAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAACAAAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.091425435877723227, -0.18027779473275987, 0.979357598837555, 0.0066841156120662935],
+        [0.89186680229479187, 0.45229813946606334, -4.3784149483112426E-16, 0.044450000000000017],
+        [-0.44296161982617727, 0.873456529978356, 0.20213533486043145, 0.039479573660422471],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [0.005407382131427634, 0.038133768938665755, 0.033293724774490968],
+        "max": [0.0203986905979419, 0.05076623106133428, 0.048232541299081458]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c005",
+      "sw_path": "spider-1",
+      "sw_persistent_id": "mDoAAAUAAAD//v8acwBwAGkAZABlAHIALQAxAEAAdQBuAGkAdgBlAHIAcwBhAGwAIABqAG8AaQBuAHQAIAAyAAQAAAAQAAAAAQAAAAEAAAARAAAA",
+      "step_name": "spider",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.97935759883755513, 0.12833590293789651, 0.15616846549881039, -2.1163146372147773E-17],
+        [-5.943731834837096E-16, 0.77259359728787946, -0.63490088472908424, 0.04445],
+        [-0.20213533486043039, -0.62179500596811543, -0.75664541031712662, 0.038100000000000037],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.012038285238287368, 0.031043615058788419, 0.023045015970337507],
+        "max": [0.012038285238287327, 0.057856384941211592, 0.053154984029662566]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c006",
+      "sw_path": "yoke_female-1",
+      "sw_persistent_id": "mDoAAAUAAAD//v8feQBvAGsAZQBfAGYAZQBtAGEAbABlAC0AMQBAAHUAbgBpAHYAZQByAHMAYQBsACAAagBvAGkAbgB0ACAAMgAEAAAAEAAAAAEAAAABAAAAFAAAAA==",
+      "step_name": "yoke_female",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.98773043406779037, 2.0875694289055859E-15, -0.15616846549881414, -6.9446873522442112E-16],
+        [-0.10038315464639987, -0.76604444311897391, 0.63490088472908746, 0.0517465733207101],
+        [-0.11963198518578244, 0.64278760968654414, 0.75664541031712307, 0.031977448017737491],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.02179127403674451, 0.0012565457670659363, 0.015284363633407141],
+        "max": [0.021791274036743219, 0.06575373427081313, 0.0792832923133895]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    },
+    {
+      "id": "c007",
+      "sw_path": "yoke_male-1",
+      "sw_persistent_id": "mDoAAAUAAAD//v8deQBvAGsAZQBfAG0AYQBsAGUALQAxAEAAdQBuAGkAdgBlAHIAcwBhAGwAIABqAG8AaQBuAHQAIAAyAAQAAAAQAAAAAQAAAAEAAAAOAAAA",
+      "step_name": "yoke_male",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.20213533486043317, -7.3889902691554012E-22, 0.97935759883755447, -1.0354153890269785E-16],
+        [-5.0361144432533918E-16, 1, 1.0394411790841509E-16, 0.034925000000000025],
+        [-0.97935759883755447, -5.1422662128370348E-16, 0.20213533486043317, 0.03810000000000003],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.02250744038694677, 0.034925000000000025, 0.015592559613053333],
+        "max": [0.022507440386946562, 0.10160000000000004, 0.060607440386946695]
+      },
+      "suppressed": false,
+      "subassembly_solving": null
+    }
+  ],
+  "rigid_groups": [
+    {
+      "id": "g000",
+      "name": "bracket",
+      "components": [
+        "c001"
+      ],
+      "grounded": true,
+      "frame": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.13493100437699604
+    },
+    {
+      "id": "g001",
+      "name": "pinforyoke",
+      "components": [
+        "c002",
+        "c003",
+        "c004",
+        "c005"
+      ],
+      "grounded": false,
+      "frame": [
+        [-0.91535646702682627, 0.37112524658922613, -0.15616846549880894, 0.002975009267752383],
+        [-0.38085776205934768, -0.67219657217912432, 0.63490088472908957, 0.032355138145911087],
+        [0.130651840214028, 0.64063860303194453, 0.75664541031712251, 0.023685904933458568],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.0640784729305895
+    },
+    {
+      "id": "g002",
+      "name": "yoke_female",
+      "components": [
+        "c006"
+      ],
+      "grounded": false,
+      "frame": [
+        [-0.98773043406779037, 2.0875694289055859E-15, -0.15616846549881414, -6.9446873522442112E-16],
+        [-0.10038315464639987, -0.76604444311897391, 0.63490088472908746, 0.0517465733207101],
+        [-0.11963198518578244, 0.64278760968654414, 0.75664541031712307, 0.031977448017737491],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.10077295616211343
+    },
+    {
+      "id": "g003",
+      "name": "yoke_male",
+      "components": [
+        "c007"
+      ],
+      "grounded": false,
+      "frame": [
+        [0.20213533486043317, -7.3889902691554012E-22, 0.97935759883755447, -1.0354153890269785E-16],
+        [-5.0361144432533918E-16, 1, 1.0394411790841509E-16, 0.034925000000000025],
+        [-0.97935759883755447, -5.1422662128370348E-16, 0.20213533486043317, 0.03810000000000003],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.092185869888913391
+    }
+  ],
+  "joints": [
+    {
+      "id": "j001",
+      "type": "revolute",
+      "parent_group": "g000",
+      "child_group": "g002",
+      "origin": [0, 0.037126256946236807, 0.044245350095253336],
+      "axis": [0, 0.76604444311897713, -0.64278760968654047],
+      "secondary_axis": [1, 0, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric13",
+          "type": "swMateCONCENTRIC"
+        }
+      ],
+      "confidence": "high",
+      "notes": "The SolidWorks solver reads this pair as revolute; the mate analysis said cylindrical, and the solver is authoritative."
+    },
+    {
+      "id": "j002",
+      "type": "revolute",
+      "parent_group": "g000",
+      "child_group": "g003",
+      "origin": [0, 0.082550000000000012, 0.0381],
+      "axis": [0, 1, 0],
+      "secondary_axis": [1, 0, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric14",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Coincident10",
+          "type": "swMateCOINCIDENT"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j003",
+      "type": "revolute",
+      "parent_group": "g002",
+      "child_group": "g001",
+      "origin": [0, 0.044450000000001842, 0.038100000000001785],
+      "axis": [0.15616846549881416, -0.63490088472908757, -0.75664541031712318],
+      "secondary_axis": [0.98773043406779049, 0.10038315464639827, 0.11963198518578384],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric15",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Width2",
+          "type": "swMateWIDTH"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j004",
+      "type": "revolute",
+      "parent_group": "g003",
+      "child_group": "g001",
+      "origin": [0, 0.044450000000000024, 0.03810000000000005],
+      "axis": [0.97935759883755469, 0, 0.20213533486043322],
+      "secondary_axis": [0, 1, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric16",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Width3",
+          "type": "swMateWIDTH"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    }
+  ],
+  "loops": [
+    {
+      "id": "loop001",
+      "member_joints": [
+        "j001",
+        "j002",
+        "j003",
+        "j004"
+      ],
+      "closure_joint": "j003",
+      "closure_kind": "ik",
+      "suggested_driver_joint": "j001",
+      "mobility": 1,
+      "planar": false,
+      "plane_normal": null,
+      "driver_candidates": [
+        {
+          "joint": "j001",
+          "closure_joint": "j003",
+          "closure_kind": "ik"
+        },
+        {
+          "joint": "j002",
+          "closure_joint": "j004",
+          "closure_kind": "ik"
+        }
+      ]
+    }
+  ],
+  "mechanisms": [
+    {
+      "id": "mech001",
+      "loops": [
+        "loop001"
+      ],
+      "inputs": [
+        {
+          "joint": "j001",
+          "loops": [
+            {
+              "id": "loop001",
+              "member_joints": [
+                "j001",
+                "j002",
+                "j003",
+                "j004"
+              ],
+              "closure_joint": "j003",
+              "closure_kind": "ik",
+              "suggested_driver_joint": "j001",
+              "mobility": 1,
+              "planar": false,
+              "plane_normal": null,
+              "driver_candidates": [
+                {
+                  "joint": "j001",
+                  "closure_joint": "j003",
+                  "closure_kind": "ik"
+                },
+                {
+                  "joint": "j002",
+                  "closure_joint": "j004",
+                  "closure_kind": "ik"
+                }
+              ]
+            }
+          ],
+          "flipped_joints": [],
+          "joint_limits": []
+        },
+        {
+          "joint": "j002",
+          "loops": [
+            {
+              "id": "loop001",
+              "member_joints": [
+                "j001",
+                "j002",
+                "j003",
+                "j004"
+              ],
+              "closure_joint": "j004",
+              "closure_kind": "ik",
+              "suggested_driver_joint": "j002",
+              "mobility": 1,
+              "planar": false,
+              "plane_normal": null,
+              "driver_candidates": [
+                {
+                  "joint": "j002",
+                  "closure_joint": "j004",
+                  "closure_kind": "ik"
+                },
+                {
+                  "joint": "j001",
+                  "closure_joint": "j003",
+                  "closure_kind": "ik"
+                }
+              ]
+            }
+          ],
+          "flipped_joints": [],
+          "joint_limits": []
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

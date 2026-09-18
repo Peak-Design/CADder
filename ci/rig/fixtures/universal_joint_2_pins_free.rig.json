@@ -1,0 +1,663 @@
+{
+  "manifest_version": "1.0.0",
+  "generator": {
+    "name": "Peak.Cadder",
+    "version": "v0.1.0",
+    "solidworks_version": "32.5.0",
+    "exported_utc": "2026-09-16T21:26:52Z"
+  },
+  "units": {
+    "length": "meter",
+    "angle": "radian"
+  },
+  "frame": {
+    "handedness": "right",
+    "up_axis": "Z",
+    "transform_convention": "row_major_4x4_global"
+  },
+  "step_export": {
+    "file": "universal joint 2.step",
+    "ap": "AP214",
+    "sha1": null,
+    "occurrence_matching": "peak-nauo-tree/1"
+  },
+  "components": [
+    {
+      "id": "c001",
+      "sw_path": "bracket-1",
+      "sw_persistent_id": "aEIAAAUAAAD//v8bYgByAGEAYwBrAGUAdAAtADEAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAAA0AAAA=",
+      "step_name": "bracket",
+      "step_occurrence_path": null,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.01905, -0.0063499999999999945, -0.0063499999999999945],
+        "max": [0.01905, 0.088900000000000021, 0.081298179913703417]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c002",
+      "sw_path": "pinforyoke-1",
+      "sw_persistent_id": "aEIAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADEAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAABoAAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.41275481921449481, -0.16734872104981105, 0.89533673261974589, -0.017056164756406582],
+        [0.24551193562988685, -0.92615403780523931, -0.28629108913886503, 0.04990384524809538],
+        [0.87713017772647417, 0.33798388100624527, -0.34118843400895082, 0.044599639667870526],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.019782071292108554, 0.033490496342732962, 0.025890539370144447],
+        "max": [0.019782071292107708, 0.055409503657267045, 0.050309460629855571]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c003",
+      "sw_path": "pinforyoke-2",
+      "sw_persistent_id": "aEIAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADIAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAAB0AAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.059972617617779965, 0.93252381573637277, -0.35609355262423281, 0.0069527266149880182],
+        [0.99793836633100352, -0.064179568435816584, -1.3383798192975803E-16, 0.04445000000000001],
+        [-0.022853930530200132, -0.3553594181668302, -0.934450309957385, 0.056345142301917978],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.0022334022436709018, 0.039459107824530722, 0.04270039883993184],
+        "max": [0.011616467355319182, 0.0494408921754693, 0.058122366827445322]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c004",
+      "sw_path": "pinforyoke-3",
+      "sw_persistent_id": "aEIAAAUAAAD//v8ecABpAG4AZgBvAHIAeQBvAGsAZQAtADMAQAB1AG4AaQB2AGUAcgBzAGEAbAAgAGoAbwBpAG4AdAAgADIABAAAABAAAAABAAAAAQAAACAAAAA=",
+      "step_name": "pinforyoke",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.42265013661776535, 0.83340520984478883, -0.3560935526242337, -0.002430338496660613],
+        [0.89186680229449133, 0.45229813946665631, 2.7205004199913436E-16, 0.044450000000000024],
+        [0.16106045132801303, -0.31758801809666037, -0.93445030995738476, 0.031722376634540875],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.012854930688015924, 0.038133768938664388, 0.01760568854025555],
+        "max": [0.0034718655763669292, 0.050766231061335661, 0.033971545792367414]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c005",
+      "sw_path": "spider-1",
+      "sw_persistent_id": "aEIAAAUAAAD//v8acwBwAGkAZABlAHIALQAxAEAAdQBuAGkAdgBlAHIAcwBhAGwAIABqAG8AaQBuAHQAIAAyAAQAAAAQAAAAAQAAAAEAAAARAAAA",
+      "step_name": "spider",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.35609355262423431, 0.26752479698385095, -0.89533673261974533, -1.0646329971582621E-15],
+        [4.64055470482741E-17, 0.95814268889329923, 0.28629108913886658, 0.044450000000000177],
+        [0.93445030995738432, -0.10194641101612026, 0.34118843400895138, 0.038100000000000335],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.014468047158221153, 0.0325967682642438, 0.02497850139879244],
+        "max": [0.014468047158219022, 0.056303231735756555, 0.051221498601208226]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c006",
+      "sw_path": "yoke_female-1",
+      "sw_persistent_id": "aEIAAAUAAAD//v8feQBvAGsAZQBfAGYAZQBtAGEAbABlAC0AMQBAAHUAbgBpAHYAZQByAHMAYQBsACAAagBvAGkAbgB0ACAAMgAEAAAAEAAAAAEAAAABAAAAFAAAAA==",
+      "step_name": "yoke_female",
+      "step_occurrence_path": null,
+      "transform": [
+        [0.44538986879114834, -2.2078083176772789E-16, 0.89533673261974667, -1.2708777656789245E-15],
+        [0.5755113582252035, -0.76604444311897768, -0.28629108913886403, 0.0517465733207086],
+        [0.68586772874365864, 0.64278760968653981, -0.34118843400894949, 0.031977448017736131],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.025540841756878832, -0.001153629905118192, 0.012412028117298954],
+        "max": [0.025540841756876279, 0.0681639099429941, 0.082155627829494773]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    },
+    {
+      "id": "c007",
+      "sw_path": "yoke_male-1",
+      "sw_persistent_id": "aEIAAAUAAAD//v8deQBvAGsAZQBfAG0AYQBsAGUALQAxAEAAdQBuAGkAdgBlAHIAcwBhAGwAIABqAG8AaQBuAHQAIAAyAAQAAAAQAAAAAQAAAAEAAAAOAAAA",
+      "step_name": "yoke_male",
+      "step_occurrence_path": null,
+      "transform": [
+        [-0.9344503099573841, -1.1764944129522348E-18, -0.35609355262423514, 1.19687398151965E-16],
+        [1.818586207298893E-16, 1, -4.8053214915017745E-16, 0.034925000000000032],
+        [0.35609355262423514, -5.1379228805626447E-16, -0.9344503099573841, 0.03810000000000003],
+        [0, 0, 0, 1]
+      ],
+      "bbox_local": {
+        "min": [-0.024584860582179732, 0.034925000000000025, 0.013515139417820149],
+        "max": [0.024584860582179967, 0.10160000000000004, 0.062684860582179883]
+      },
+      "suppressed": false,
+      "subassembly_solving": "rigid"
+    }
+  ],
+  "rigid_groups": [
+    {
+      "id": "g000",
+      "name": "bracket",
+      "components": [
+        "c001"
+      ],
+      "grounded": true,
+      "frame": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.13493100437699604
+    },
+    {
+      "id": "g001",
+      "name": "pinforyoke",
+      "components": [
+        "c002"
+      ],
+      "grounded": false,
+      "frame": [
+        [0.41275481921449481, -0.16734872104981105, 0.89533673261974589, -0.017056164756406582],
+        [0.24551193562988685, -0.92615403780523931, -0.28629108913886503, 0.04990384524809538],
+        [0.87713017772647417, 0.33798388100624527, -0.34118843400895082, 0.044599639667870526],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.0514008557863268
+    },
+    {
+      "id": "g002",
+      "name": "pinforyoke",
+      "components": [
+        "c003"
+      ],
+      "grounded": false,
+      "frame": [
+        [0.059972617617779965, 0.93252381573637277, -0.35609355262423281, 0.0069527266149880182],
+        [0.99793836633100352, -0.064179568435816584, -1.3383798192975803E-16, 0.04445000000000001],
+        [-0.022853930530200132, -0.3553594181668302, -0.934450309957385, 0.056345142301917978],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.023006347023062194
+    },
+    {
+      "id": "g003",
+      "name": "pinforyoke",
+      "components": [
+        "c004"
+      ],
+      "grounded": false,
+      "frame": [
+        [-0.42265013661776535, 0.83340520984478883, -0.3560935526242337, -0.002430338496660613],
+        [0.89186680229449133, 0.45229813946665631, 2.7205004199913436E-16, 0.044450000000000024],
+        [0.16106045132801303, -0.31758801809666037, -0.93445030995738476, 0.031722376634540875],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.026343588577410874
+    },
+    {
+      "id": "g004",
+      "name": "spider",
+      "components": [
+        "c005"
+      ],
+      "grounded": false,
+      "frame": [
+        [0.35609355262423431, 0.26752479698385095, -0.89533673261974533, -1.0646329971582621E-15],
+        [4.64055470482741E-17, 0.95814268889329923, 0.28629108913886658, 0.044450000000000177],
+        [0.93445030995738432, -0.10194641101612026, 0.34118843400895138, 0.038100000000000335],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.04569451681309359
+    },
+    {
+      "id": "g005",
+      "name": "yoke_female",
+      "components": [
+        "c006"
+      ],
+      "grounded": false,
+      "frame": [
+        [0.44538986879114834, -2.2078083176772789E-16, 0.89533673261974667, -1.2708777656789245E-15],
+        [0.5755113582252035, -0.76604444311897768, -0.28629108913886403, 0.0517465733207086],
+        [0.68586772874365864, 0.64278760968653981, -0.34118843400894949, 0.031977448017736131],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.11080807471483779
+    },
+    {
+      "id": "g006",
+      "name": "yoke_male",
+      "components": [
+        "c007"
+      ],
+      "grounded": false,
+      "frame": [
+        [-0.9344503099573841, -1.1764944129522348E-18, -0.35609355262423514, 1.19687398151965E-16],
+        [1.818586207298893E-16, 1, -4.8053214915017745E-16, 0.034925000000000032],
+        [0.35609355262423514, -5.1379228805626447E-16, -0.9344503099573841, 0.03810000000000003],
+        [0, 0, 0, 1]
+      ],
+      "bbox_diag": 0.096337316673040921
+    }
+  ],
+  "joints": [
+    {
+      "id": "j001",
+      "type": "revolute",
+      "parent_group": "g000",
+      "child_group": "g005",
+      "origin": [0, 0.0517465733207086, 0.031977448017736131],
+      "axis": [0, 0.76604444311897768, -0.64278760968653981],
+      "secondary_axis": [1, 0, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric13",
+          "type": "swMateCONCENTRIC"
+        }
+      ],
+      "confidence": "high",
+      "notes": "The SolidWorks solver reads this pair as revolute; the mate analysis said cylindrical, and the solver is authoritative."
+    },
+    {
+      "id": "j002",
+      "type": "revolute",
+      "parent_group": "g000",
+      "child_group": "g006",
+      "origin": [0, 0.082550000000000012, 0.0381],
+      "axis": [0, 1, 0],
+      "secondary_axis": [1, 0, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric14",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Coincident10",
+          "type": "swMateCOINCIDENT"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j003",
+      "type": "revolute",
+      "parent_group": "g004",
+      "child_group": "g001",
+      "origin": [-0.00852808237820414, 0.047176922624047879, 0.0413498198339356],
+      "axis": [0.89533673261974522, -0.28629108913886658, -0.34118843400895138],
+      "secondary_axis": [0.267524796983851, 0.95814268889329912, -0.10194641101612033],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric10",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Width1",
+          "type": "swMateWIDTH"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j004",
+      "type": "revolute",
+      "parent_group": "g005",
+      "child_group": "g001",
+      "origin": [0, 0.04445000000000001, 0.03810000000000003],
+      "axis": [0.89533673261974678, -0.28629108913886409, -0.34118843400894955],
+      "secondary_axis": [0.267524796983849, 0.9581426888933, -0.10194641101611883],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric15",
+          "type": "swMateCONCENTRIC"
+        }
+      ],
+      "confidence": "medium",
+      "notes": "Read pairwise this is a cylindrical, but the loop cut at this ring removes the slide: no combination of the ring's other joints can reproduce it, so SolidWorks does not permit it either."
+    },
+    {
+      "id": "j005",
+      "type": "revolute",
+      "parent_group": "g002",
+      "child_group": "g004",
+      "origin": [0, 0.044450000000000184, 0.038100000000000335],
+      "axis": [0.35609355262423431, 0, 0.93445030995738432],
+      "secondary_axis": [0, 1, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric11",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Distance1",
+          "type": "swMateDISTANCE"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j006",
+      "type": "revolute",
+      "parent_group": "g006",
+      "child_group": "g002",
+      "origin": [0.0067835821774918, 0.044450000000000045, 0.0559012784046882],
+      "axis": [0.35609355262423514, 0, 0.9344503099573841],
+      "secondary_axis": [0, 1, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric16",
+          "type": "swMateCONCENTRIC"
+        }
+      ],
+      "confidence": "medium",
+      "notes": "Read pairwise this is a cylindrical, but the loop cut at this ring removes the slide: no combination of the ring's other joints can reproduce it, so SolidWorks does not permit it either."
+    },
+    {
+      "id": "j007",
+      "type": "revolute",
+      "parent_group": "g004",
+      "child_group": "g003",
+      "origin": [-0.0062007876281280428, 0.044450000000000184, 0.021828074045762109],
+      "axis": [0.35609355262423431, 0, 0.93445030995738432],
+      "secondary_axis": [0, 1, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Concentric12",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Distance2",
+          "type": "swMateDISTANCE"
+        }
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "id": "j008",
+      "type": "revolute",
+      "parent_group": "g005",
+      "child_group": "g004",
+      "origin": [0, 0.04445000000000001, 0.03810000000000003],
+      "axis": [0.89533673261974678, -0.28629108913886409, -0.34118843400894955],
+      "secondary_axis": [0.267524796983849, 0.9581426888933, -0.10194641101611883],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Width2",
+          "type": "swMateWIDTH"
+        },
+        {
+          "sw_feature": "Concentric15",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Concentric10",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Width1",
+          "type": "swMateWIDTH"
+        }
+      ],
+      "confidence": "high",
+      "notes": "completed from 3 mate(s) written against another body, on a line that body's own joint cannot move."
+    },
+    {
+      "id": "j009",
+      "type": "revolute",
+      "parent_group": "g006",
+      "child_group": "g004",
+      "origin": [0.0033917910887459133, 0.044450000000000038, 0.047000639202343993],
+      "axis": [0.35609355262423514, 0, 0.9344503099573841],
+      "secondary_axis": [0, 1, 0],
+      "limits": null,
+      "coupling": null,
+      "source_mates": [
+        {
+          "sw_feature": "Width3",
+          "type": "swMateWIDTH"
+        },
+        {
+          "sw_feature": "Concentric16",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Concentric11",
+          "type": "swMateCONCENTRIC"
+        },
+        {
+          "sw_feature": "Distance1",
+          "type": "swMateDISTANCE"
+        }
+      ],
+      "confidence": "high",
+      "notes": "completed from 3 mate(s) written against another body, on a line that body's own joint cannot move."
+    }
+  ],
+  "loops": [
+    {
+      "id": "loop001",
+      "member_joints": [
+        "j001",
+        "j002",
+        "j003",
+        "j004",
+        "j009"
+      ],
+      "closure_joint": "j004",
+      "closure_kind": "ik",
+      "suggested_driver_joint": "j001",
+      "mobility": 1,
+      "planar": false,
+      "plane_normal": null,
+      "driver_candidates": [
+        {
+          "joint": "j001",
+          "closure_joint": "j004",
+          "closure_kind": "ik"
+        },
+        {
+          "joint": "j002",
+          "closure_joint": "j009",
+          "closure_kind": "ik"
+        }
+      ]
+    },
+    {
+      "id": "loop002",
+      "member_joints": [
+        "j005",
+        "j006",
+        "j009"
+      ],
+      "closure_joint": "j005",
+      "closure_kind": "ik",
+      "suggested_driver_joint": "j009",
+      "mobility": 1,
+      "planar": true,
+      "plane_normal": [0.35609355262423431, 0, 0.93445030995738432],
+      "driver_candidates": [
+        {
+          "joint": "j009",
+          "closure_joint": "j005",
+          "closure_kind": "ik"
+        },
+        {
+          "joint": "j006",
+          "closure_joint": "j005",
+          "closure_kind": "ik"
+        }
+      ]
+    },
+    {
+      "id": "loop003",
+      "member_joints": [
+        "j001",
+        "j002",
+        "j008",
+        "j009"
+      ],
+      "closure_joint": "j008",
+      "closure_kind": "ik",
+      "suggested_driver_joint": "j001",
+      "mobility": 1,
+      "planar": false,
+      "plane_normal": null,
+      "driver_candidates": [
+        {
+          "joint": "j001",
+          "closure_joint": "j008",
+          "closure_kind": "ik"
+        },
+        {
+          "joint": "j002",
+          "closure_joint": "j009",
+          "closure_kind": "ik"
+        }
+      ]
+    }
+  ],
+  "mechanisms": [
+    {
+      "id": "mech001",
+      "loops": [
+        "loop001",
+        "loop002",
+        "loop003"
+      ],
+      "inputs": [
+        {
+          "joint": "j001",
+          "loops": [
+            {
+              "id": "loop001",
+              "member_joints": [
+                "j001",
+                "j002",
+                "j003",
+                "j004",
+                "j009"
+              ],
+              "closure_joint": "j004",
+              "closure_kind": "ik",
+              "suggested_driver_joint": "j001",
+              "mobility": 1,
+              "planar": false,
+              "plane_normal": null,
+              "driver_candidates": [
+                {
+                  "joint": "j001",
+                  "closure_joint": "j004",
+                  "closure_kind": "ik"
+                },
+                {
+                  "joint": "j002",
+                  "closure_joint": "j009",
+                  "closure_kind": "ik"
+                }
+              ]
+            },
+            {
+              "id": "loop002",
+              "member_joints": [
+                "j005",
+                "j006",
+                "j009"
+              ],
+              "closure_joint": "j005",
+              "closure_kind": "ik",
+              "suggested_driver_joint": "j009",
+              "mobility": 1,
+              "planar": true,
+              "plane_normal": [0.35609355262423431, 0, 0.93445030995738432],
+              "driver_candidates": [
+                {
+                  "joint": "j009",
+                  "closure_joint": "j005",
+                  "closure_kind": "ik"
+                },
+                {
+                  "joint": "j006",
+                  "closure_joint": "j005",
+                  "closure_kind": "ik"
+                }
+              ]
+            },
+            {
+              "id": "loop003",
+              "member_joints": [
+                "j001",
+                "j002",
+                "j008",
+                "j009"
+              ],
+              "closure_joint": "j008",
+              "closure_kind": "ik",
+              "suggested_driver_joint": "j001",
+              "mobility": 1,
+              "planar": false,
+              "plane_normal": null,
+              "driver_candidates": [
+                {
+                  "joint": "j001",
+                  "closure_joint": "j008",
+                  "closure_kind": "ik"
+                },
+                {
+                  "joint": "j002",
+                  "closure_joint": "j009",
+                  "closure_kind": "ik"
+                }
+              ]
+            }
+          ],
+          "flipped_joints": [],
+          "joint_limits": []
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

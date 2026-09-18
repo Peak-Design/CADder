@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from .manifest import Joint, Loop, Manifest, ManifestError, RigidGroup
+from . import hooke
 
 # Blender truncates datablock names at 63 bytes and dedups with ".001". Names are display labels only, so plans keep them short and every module
 # addresses bones through the RigPlan / build maps, never by parsing names.
@@ -217,6 +218,8 @@ class RigPlan:
     # an update asked for it to be kept. See build().
     keep_names: Dict[str, str] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    # What hooke.recognise did, one line per universal joint.
+    hooke_notes: List[str] = field(default_factory=list)
 
 
 class _UnionFind:
@@ -601,6 +604,10 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
     that is taken by then is given up rather than fought over."""
     plan = RigPlan(manifest=manifest)
     plan.keep_names = dict(keep_names or {})
+    # A universal joint built from its parts is driven exactly, before
+    # anything reads the couplings or the loops (hooke.py says why IK
+    # cannot do it).
+    plan.hooke_notes = hooke.recognise(manifest)
     groups = manifest.group_by_id()
     joints = manifest.joint_by_id()
 

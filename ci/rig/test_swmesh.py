@@ -64,6 +64,8 @@ def test_reads_the_scene_the_addin_wrote():
     assert list(d.triangles) == [0, 1, 2, 1, 3, 2]
     # Per TRIANGLE, not per vertex: the whole reason the field exists.
     assert list(d.triangle_materials) == [1, 0]
+    # The BODY section after the nodes: where each body starts.
+    assert list(d.body_starts) == [0, 2]
 
     inst = scene.instances[0]
     assert inst.definition_id == 3
@@ -85,6 +87,35 @@ def test_reads_the_scene_the_addin_wrote():
     assert node.name == "lifter"
     assert node.component_id == "c007"
     assert [node.transform[i] for i in (3, 7, 11)] == pytest.approx([0.25, 0.5, 0.75])
+
+
+def _one_body_file(trailer=b""):
+    """A file with one point-free definition and nothing else, then
+    `trailer` after the (empty) node table."""
+    data = struct.pack("<IIIdIIII", swmesh.MAGIC, swmesh.VERSION, 0,
+                       0.001, 0, 1, 0, 0)
+    data += struct.pack("<i", 0) + struct.pack("<H", 0)
+    data += struct.pack("<II", 0, 0)
+    return data + trailer
+
+
+def test_a_file_with_no_sections_has_no_body_starts():
+    scene = swmesh.parse(_one_body_file())
+    assert scene.definitions[0].body_starts is None
+
+
+def test_steps_over_a_section_it_does_not_know():
+    # A later add-in can add a section this build has never heard of. It
+    # must be skipped, and a known one after it still read.
+    unknown = b"NEWS" + struct.pack("<I", 3) + b"abc"
+    body = b"BODY" + struct.pack("<IIi", 8, 1, 0)
+    scene = swmesh.parse(_one_body_file(unknown + body))
+    assert list(scene.definitions[0].body_starts) == [0]
+
+
+def test_rejects_a_section_that_runs_past_the_end():
+    with pytest.raises(swmesh.SwMeshError):
+        swmesh.parse(_one_body_file(b"BODY" + struct.pack("<I", 400)))
 
 
 def test_rejects_a_file_that_is_not_swmesh():

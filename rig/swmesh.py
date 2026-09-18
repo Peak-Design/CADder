@@ -20,6 +20,12 @@ in the first place.
               whether a second 4x4 follows: where the placement sits
               inside its component
   nodes       (version 3) path, name, component id, 4x4 row-major transform
+  sections    (optional, after the nodes) a 4-byte tag, a uint32 byte
+              length, and the data. A reader skips a tag it does not know,
+              and an older reader stops before the first one, so a section
+              adds to the format without a new version number.
+              BODY: for each definition in file order, a uint32 count and
+              that many int32 first-vertex indices, one for each body
 
 A definition is a part tessellated once. An instance is one placement of
 it. The component id is the same one the rig manifest uses, that is what
@@ -76,6 +82,10 @@ class Definition:
     uvs: Optional[array.array] = None          # 2 per vertex
     triangles: array.array = None              # 3 ints per triangle
     triangle_materials: array.array = None     # 1 int per triangle
+    # The first vertex of each body, from the BODY section. None when the
+    # file has no section, which means one body, or a file from an add-in
+    # that did not write it.
+    body_starts: Optional[array.array] = None
 
 
 @dataclass
@@ -131,6 +141,9 @@ class _Reader:
         chunk = self._data[self._at:end]
         self._at = end
         return chunk
+
+    def left(self):
+        return len(self._data) - self._at
 
     def u8(self):
         return self._take(1)[0]
@@ -241,7 +254,26 @@ def parse(data) -> Scene:
             component_id=r.text(),
             transform=[r.f64() for _ in range(16)]))
 
+    _sections(r, scene)
     return scene
+
+
+def _sections(r, scene):
+    """Reads the tagged sections after the node table, and steps over the
+    ones this build does not know."""
+    while r.left() >= 8:
+        tag = bytes(r._take(4))
+        length = r.u32()
+        if length > r.left():
+            raise SwMeshError("section %r runs past the end of the file" % tag)
+        end = r._at + length
+        if tag == b"BODY":
+            for d in scene.definitions:
+                count = r.u32()
+                if r._at + count * 4 > end:
+                    raise SwMeshError("BODY section is shorter than it says")
+                d.body_starts = r.block("i", count, 4)
+        r._at = end
 
 
 def load(path) -> Scene:

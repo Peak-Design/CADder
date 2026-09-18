@@ -931,11 +931,12 @@ def _uv_modes_on_live(m, objs, want):
     so its geometry comes back from the CAD application and the same passes
     run here, in the same order.
 
-    Smart needs to know which faces touch, and a mesh from the CAD
-    application does not say: every CAD face carries its own copy of the
-    points along its edges, so no two faces share an edge and Smart would
-    find nothing to join. weld() puts that right without changing the shape
-    or the shading.
+    Smart needs to know which faces touch. A part the live link sends now
+    arrives joined (rig/weld.py), but one sent before that carries a copy
+    of the points along each CAD edge for each face, so no two faces share
+    an edge and Smart would find nothing to join. weld() puts that right
+    without changing the shape or the shading, and does nothing to a part
+    that is already joined.
     """
     mode = want["uv_mode"]
     if mode == "SMART":

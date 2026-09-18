@@ -30,10 +30,12 @@ from dataclasses import dataclass, field
 from typing import List
 
 import bpy
+import numpy as np
 from mathutils import Matrix
 
 from . import appearance, matdb, matching, progress, swmesh
 from . import diff as diff_mod
+from . import weld as weld_mod
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -101,60 +103,75 @@ def _build_mesh(definition, materials, unit_scale):
     """One mesh datablock from one definition. foreach_set moves the whole
     buffer in one call: looping in Python over a hundred thousand vertices
     is the difference between instant and unusable."""
-    me = bpy.data.meshes.new(definition.name or "SWMesh")
-    me.vertices.add(definition.vertex_count)
-    if unit_scale == 1.0:
-        me.vertices.foreach_set("co", definition.positions)
-    else:
-        me.vertices.foreach_set(
-            "co", [c * unit_scale for c in definition.positions])
+    # Every CAD face arrives with its own copy of the points on its edges.
+    # They are joined here, before the mesh exists, the same as the STEP
+    # route joins them, so a part from SolidWorks is one connected surface
+    # and not a pile of faces. See weld.py.
+    w = weld_mod.weld(definition.positions, definition.triangles,
+                      definition.normals, definition.uvs,
+                      getattr(definition, "body_starts", None))
 
-    n = definition.triangle_count
+    me = bpy.data.meshes.new(definition.name or "SWMesh")
+    me.vertices.add(len(w.positions))
+    me.vertices.foreach_set(
+        "co", (w.positions.astype(np.float64) * unit_scale).ravel())
+
+    n = len(w.triangles)
     me.loops.add(n * 3)
     me.polygons.add(n)
-    me.loops.foreach_set("vertex_index", definition.triangles)
-    me.polygons.foreach_set("loop_start", range(0, n * 3, 3))
-    me.polygons.foreach_set("loop_total", [3] * n)
+    me.loops.foreach_set("vertex_index", w.triangles.ravel().astype(np.int32))
+    me.polygons.foreach_set("loop_start", np.arange(0, n * 3, 3, dtype=np.int32))
+    me.polygons.foreach_set("loop_total", np.full(n, 3, dtype=np.int32))
 
     if definition.uvs is not None:
+        # UVs are per corner in Blender and per point in the file. Each
+        # corner takes the UV of the point it came from, so a joined point
+        # keeps a UV for each face around it.
         uv = me.uv_layers.new(name="UVMap")
-        # UVs are per LOOP in Blender and per vertex in the file, so they
-        # have to be scattered through the triangle list.
-        flat = []
-        for v in definition.triangles:
-            flat.append(definition.uvs[v * 2])
-            flat.append(definition.uvs[v * 2 + 1])
-        uv.data.foreach_set("uv", flat)
-
-    me.update()
-    me.validate(verbose=False)
+        uvs = np.frombuffer(definition.uvs, dtype=np.float32).reshape(-1, 2)
+        uv.data.foreach_set("uv", uvs[w.corners].ravel())
 
     if definition.triangle_materials is not None and materials:
         # Only the materials this definition uses, so a part does not
         # carry every appearance in the assembly as an empty slot.
         top = len(materials) - 1
-        used = sorted({min(max(int(i), 0), top) for i in definition.triangle_materials})
-        slot = {}
+        per_triangle = np.clip(np.frombuffer(
+            definition.triangle_materials, dtype=np.int32)[w.kept], 0, top)
+        used = np.unique(per_triangle)
         for scene_index in used:
-            slot[scene_index] = len(me.materials)
-            me.materials.append(materials[scene_index])
+            me.materials.append(materials[int(scene_index)])
         me.polygons.foreach_set(
             "material_index",
-            [slot[min(max(int(i), 0), top)] for i in definition.triangle_materials])
+            np.searchsorted(used, per_triangle).astype(np.int32))
+
+    me.update(calc_edges=True)
+    _mark_edges(me, w)
 
     if definition.normals is not None:
-        # Custom split normals last: they are invalidated by geometry edits,
-        # and they are what makes a coarse tessellation still read as a
-        # smooth surface.
+        # Custom normals last: they are invalidated by geometry edits, and
+        # they are what makes a coarse tessellation still read as a smooth
+        # surface. Each corner takes the normal of the point it came from.
+        normals = np.frombuffer(definition.normals, dtype=np.float32).reshape(-1, 3)
         try:
-            me.normals_split_custom_set_from_vertices(
-                [(definition.normals[i * 3],
-                  definition.normals[i * 3 + 1],
-                  definition.normals[i * 3 + 2])
-                 for i in range(definition.vertex_count)])
-        except (RuntimeError, ValueError):
+            me.normals_split_custom_set(normals[w.corners])
+        except (RuntimeError, ValueError, TypeError):
             me.shade_smooth()
+    me.validate(verbose=False)
     return me
+
+
+def _mark_edges(me, w):
+    """Puts the CAD edges the weld found back on the mesh: sharp where two
+    faces do not meet smoothly, a UV seam where their UVs do not agree."""
+    if not len(w.sharp) and not len(w.seams):
+        return
+    ends = np.empty(len(me.edges) * 2, dtype=np.int64)
+    me.edges.foreach_get("vertices", ends)
+    keys = weld_mod.edge_keys(ends[0::2], ends[1::2], len(me.vertices))
+    if len(w.sharp):
+        me.edges.foreach_set("use_edge_sharp", np.isin(keys, w.sharp))
+    if len(w.seams):
+        me.edges.foreach_set("use_seam", np.isin(keys, w.seams))
 
 
 def _matrix(transform, unit_scale):

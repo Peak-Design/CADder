@@ -1,5 +1,3 @@
-
-
 <p align="center">
   <img src="docs/images/hero.png" alt="An assembly imported into Blender with CADder" width="100%">
 </p>
@@ -30,7 +28,9 @@
   line in place of the image below, on a line of its own, and GitHub shows
   a player. Keep the file small: GitHub caps uploaded videos.
 -->
-[![CADder Bridge: SolidWorks assemblies sent to Blender](https://img.youtube.com/vi/vcaNa9JF-_M/0.jpg)](https://www.youtube.com/watch?v=vcaNa9JF-_M)
+https://github.com/user-attachments/assets/15615e1b-af0d-496c-b1ca-24b47a547dbb
+
+https://www.youtube.com/watch?v=vcaNa9JF-_M
 
 
 <table>

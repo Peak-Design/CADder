@@ -29,23 +29,6 @@ if bpy is not None:
             # and two file buttons with different behavior reads as a bug.
             default="",
         )
-        # How fine Rebuild from CAD asks the CAD application to tessellate.
-        # The four names are the names of its own Export Options, so the
-        # same name gives the same triangles over either route.
-        update_quality: bpy.props.EnumProperty(
-            name="Quality",
-            description="How fine the CAD application cuts the parts that "
-                        "Rebuild from CAD brings over",
-            items=ui.QUALITY_ITEMS,
-            default="BALANCED",
-        )
-        update_quality_factor: bpy.props.FloatProperty(
-            name="Fineness",
-            description="How fine the CAD application cuts the parts. 0 is "
-                        "up to 5 mm from the true surface, 1 is up to "
-                        "0.05 mm. Draft is 0.15, Balanced 0.45, Fine 0.75",
-            default=0.75, min=0.0, max=1.0, subtype="FACTOR",
-        )
         # One entry per mechanism that offers a choice of input
         # (inputs.py); filled on manifest load, drawn as dropdowns.
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)

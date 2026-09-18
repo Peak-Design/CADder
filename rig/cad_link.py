@@ -141,9 +141,13 @@ def poses(component_ids=None, persistent_ids=None, instance=None):
 
 def retessellate(component_ids, quality, persistent_ids=None, instance=None,
                  separate_solids=None, defeature=None, paths=None):
-    """Asks for those components again at `quality` (0..1). The reply names
-    a .swmesh on disk. Persistent ids name the same occurrences after an
-    edit; see `poses`.
+    """Asks for those components again at `quality`. The reply names a
+    .swmesh on disk. Persistent ids name the same occurrences after an edit;
+    see `poses`.
+
+    quality is what quality.cad_request gives: the 0..1 dial that Bridge
+    1.0.0 reads, and the distance, angle and relative setting a newer
+    bridge cuts to. A bare number is taken as the dial alone.
 
     separate_solids says whether this scene holds a multibody part as one
     object per body. The geometry has to come back in the same pieces it
@@ -159,8 +163,9 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
     paths name the PLACEMENTS wanted, where the scene can say. A component
     id is the rig body's, and every part of a rigid subassembly shares it,
     so the ids alone ask for the whole branch (native_import.cad_paths)."""
-    payload = dict(components=list(component_ids), quality=float(quality),
-                   persistent_ids=list(persistent_ids or []))
+    fields = dict(quality) if isinstance(quality, dict) else {"quality": float(quality)}
+    payload = dict(components=list(component_ids),
+                   persistent_ids=list(persistent_ids or []), **fields)
     if separate_solids is not None:
         payload["separate_solids"] = bool(separate_solids)
     if defeature:

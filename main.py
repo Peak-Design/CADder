@@ -44,6 +44,7 @@ from . import curves as curves_mod
 from . import analyzer as analyzer_mod
 from . import refresh as refresh_mod
 from . import empties as empties_mod
+from . import quality as quality_mod
 from . import background as background_mod
 from . import updater as updater_mod
 from .formats import classes as formats_classes
@@ -385,15 +386,6 @@ def bpy_update_object_data(objdata, bm, vcol_name, colors, uvs, norms, mat_names
 
     if prev_mode != "OBJECT":
         bpy.ops.object.mode_set(mode=prev_mode)
-
-
-def calculate_detail_level(dlev):
-    """Angular deflection, Linear deflection"""
-    if dlev < 100:
-        l_def = 100.0 / float(dlev)
-    else:
-        l_def = (100.0 / float(dlev)) ** 2.0
-    return 0.8, l_def
 
 
 def set_obj_matrix_world(obj, mtx):
@@ -2327,13 +2319,11 @@ def import_defaults():
     arguments. Used when a blend predates the import registry and a refresh
     has nothing recorded to reproduce."""
     prefs = _get_addon_prefs()
-    lin, ang = calculate_detail_level(bpy.context.scene.stepper.detail_level)
     return {
         "up_as": prefs.preferred_up_axis,
         "htypes": prefs.preferred_hierarchy,
         "apply_scale": True,
-        "lin_deflection": lin,
-        "ang_deflection": ang,
+        "deflection_spec": quality_mod.spec_of(bpy.context.scene.stepper),
     }
 
 
@@ -2542,7 +2532,7 @@ def load_step(
         deflection_spec and deflection_spec.get("mode") == "relative")
     if deflection_spec is not None:
         lin_deflection, ang_deflection = import_ui.resolve_deflections(
-            deflection_spec, step_reader.scale, calculate_detail_level)
+            deflection_spec, step_reader.scale)
         unit = "(relative factor)" if tessellation_relative else "file units"
         print(f"Deflection resolved: {lin_deflection:.4f} {unit} "
               f"/ {ang_deflection:.3f} rad")
@@ -2582,6 +2572,7 @@ def load_step(
         "scene_unit_scale": context.scene.unit_settings.scale_length,
         "lin_deflection": lin_deflection,
         "ang_deflection": ang_deflection,
+        "tessellation_relative": tessellation_relative,
         "material_database": material_database,
         "skip_construction": skip_construction,
         "uv_mode": _uv_options["mode"],
@@ -3172,32 +3163,13 @@ class PG_Stepper(bpy.types.PropertyGroup):
     Persistent settings (build_materials, debug_timing, etc.) live on
     STEP_AddonPreferences and are accessed via _get_addon_prefs().
     """
-    detail_level: bpy.props.IntProperty(
-        name="Mesh Detail",
-        description="Tessellation detail level (100 = balanced default). "
-                    "Higher values produce more polygons",
-        default=100,
-        min=1,
-    )
-
-    lin_deflection: bpy.props.FloatProperty(
-        name="Linear Deflection",
-        description="Maximum distance between the mesh and the true "
-                    "surface, in file units. Smaller values produce more "
-                    "polygons",
-        default=0.8,
-        min=0.002,
-        # max=2.0,
-    )
-
-    ang_deflection: bpy.props.FloatProperty(
-        name="Angular Deflection",
-        description="Maximum angle between adjacent facets, in radians. "
-                    "Smaller values produce more polygons",
-        default=0.5,
-        min=0.002,
-        # max=2.0,
-    )
+    # How fine Regenerate and Rebuild from CAD cut the parts: the same five
+    # settings as the import dialog, and the same meaning on either route.
+    quality_preset: bpy.props.EnumProperty(**import_ui.QUALITY_KW["quality_preset"])
+    lin_deflection_len: bpy.props.FloatProperty(**import_ui.QUALITY_KW["lin_deflection_len"])
+    ang_deflection_rot: bpy.props.FloatProperty(**import_ui.QUALITY_KW["ang_deflection_rot"])
+    tessellation_relative: bpy.props.BoolProperty(**import_ui.QUALITY_KW["tessellation_relative"])
+    lin_deflection_rel: bpy.props.FloatProperty(**import_ui.QUALITY_KW["lin_deflection_rel"])
 
     tris_to_quads: bpy.props.BoolProperty(
         name="Triangles to Quads",
@@ -3382,14 +3354,6 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         max=2.0,
     )
 
-    detail_level: bpy.props.IntProperty(
-        name="Mesh Detail",
-        description="Tessellation detail level (100 = balanced default). "
-                    "Higher values produce more polygons",
-        default=100,
-        min=1,
-    )
-
     custom_scale: bpy.props.BoolProperty(
         name="Custom Scale",
         description="Set the unit scale by hand instead of reading it from the "
@@ -3409,34 +3373,9 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         description="Replace the STEP materials with materials from a database",
     )
 
-    quality_preset: bpy.props.EnumProperty(
-        items=import_ui.QUALITY_PRESET_ITEMS,
-        name="Quality",
-        description="Tessellation quality preset (physical deflection, "
-                    "independent of the file's unit system)",
-        default="BALANCED",
-    )
-
-    lin_deflection_len: bpy.props.FloatProperty(
-        name="Linear Deflection",
-        description="Maximum distance between the mesh and the true surface. "
-                    "Smaller values increase polygon count",
-        unit="LENGTH",
-        default=0.0008,
-        min=0.000002,
-        soft_max=0.01,
-        precision=4,
-    )
-
-    ang_deflection_rot: bpy.props.FloatProperty(
-        name="Angular Deflection",
-        description="Maximum angle between adjacent mesh faces. "
-                    "Smaller values increase polygon count",
-        unit="ROTATION",
-        default=0.5,
-        min=0.002,
-        max=1.5,
-    )
+    quality_preset: bpy.props.EnumProperty(**import_ui.QUALITY_KW["quality_preset"])
+    lin_deflection_len: bpy.props.FloatProperty(**import_ui.QUALITY_KW["lin_deflection_len"])
+    ang_deflection_rot: bpy.props.FloatProperty(**import_ui.QUALITY_KW["ang_deflection_rot"])
 
     skip_construction: bpy.props.BoolProperty(
         name="Skip Construction Geometry",
@@ -3604,23 +3543,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
-    tessellation_relative: bpy.props.BoolProperty(
-        name="Relative Tessellation",
-        description="Scale the deflection with the size of each feature. Small "
-                    "parts keep their detail and large parts do not explode the"
-                    " triangle count. This also turns on parallel meshing",
-        default=False,
-    )
-
-    lin_deflection_rel: bpy.props.FloatProperty(
-        name="Relative Deflection",
-        description="Deflection as a fraction of each edge's size "
-                    "(smaller = finer mesh)",
-        default=0.005,
-        min=0.00001,
-        max=0.5,
-        precision=4,
-    )
+    tessellation_relative: bpy.props.BoolProperty(**import_ui.QUALITY_KW["tessellation_relative"])
+    lin_deflection_rel: bpy.props.FloatProperty(**import_ui.QUALITY_KW["lin_deflection_rel"])
 
     def draw(self, context):
         import_ui.draw_import_dialog(self, self.layout, _get_addon_prefs())
@@ -3651,7 +3575,6 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "custom_scale": self.custom_scale,
             "apply_scale": self.apply_scale,
             "material_database": self.material_database,
-            "detail_level": self.detail_level,
             "skip_construction": self.skip_construction,
             "uv_mode": self.uv_mode,
             "uv_normalize": self.uv_normalize,
@@ -3942,11 +3865,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
             self.report({"WARNING"}, "No rebuildable STEP objects selected")
             return {"CANCELLED"}
 
-        ang_def = context.scene.stepper.ang_deflection
-        lin_def = context.scene.stepper.lin_deflection
-        # merge_distance = context.scene.stepper.merge_distance
-        if _get_addon_prefs().simpler_parameters:
-            ang_def, lin_def = calculate_detail_level(bpy.context.scene.stepper.detail_level)
+        wanted = quality_mod.spec_of(context.scene.stepper)
 
         # select all objs with the same meshes
         for obj in my_selection:
@@ -3990,6 +3909,8 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                     # Reset pre-tessellation flag so shapes get re-tessellated
                     # with the new deflection values
                     step_reader._pre_tessellated = False
+                    lin_def, ang_def, _relative = quality_mod.resolve(
+                        wanted, step_reader.scale)
                     build_mesh(step_reader, obj, shp, lin_def, ang_def)
                     # Re-apply baked scale if it was applied during import
                     applied_scale = obj.get("STEP_applied_scale", 0.0)
@@ -4464,28 +4385,15 @@ class CADLINK_PT_quality(bpy.types.Panel):
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
-        if live:
-            col.prop(settings, "update_quality", text="Quality")
-            if settings.update_quality == "CUSTOM":
-                col.prop(settings, "update_quality_factor", text="Fineness")
-        if step:
-            if _get_addon_prefs().simpler_parameters:
-                col.prop(prg, "detail_level", text="Detail")
-            else:
-                col.prop(prg, "lin_deflection", text="Linear")
-                col.prop(prg, "ang_deflection", text="Angular")
+        # The same settings whichever route the parts came from: a name
+        # cuts a part from SolidWorks and a part from a file the same way.
+        import_ui.draw_quality(prg, col)
         col.prop(prg, "tris_to_quads")
 
         tools_mod.scope_hint(layout, context)
         if live:
-            rebuild = layout.operator("cadlink.update_from_cad",
-                                      text="Rebuild from CAD",
-                                      icon="FILE_REFRESH")
-            try:
-                from .rig import ui as rig_ui
-                rebuild.quality = rig_ui.quality_dial(settings)
-            except Exception:
-                pass
+            layout.operator("cadlink.update_from_cad",
+                            text="Rebuild from CAD", icon="FILE_REFRESH")
         if step:
             layout.operator("stepper.regenerate",
                             text="Rebuild from %s" % step,
@@ -4654,13 +4562,6 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         name="Skip Faulty Solids",
         description="Skip corrupted/empty parts entirely (no healing or recovery attempts)",
         default=False,
-    )
-
-    simpler_parameters: bpy.props.BoolProperty(
-        name="Artist-Friendly Parameters",
-        description="Show one detail slider instead of the linear and angular "
-                    "deflection values",
-        default=True,
     )
 
     skip_empty_objects: bpy.props.BoolProperty(
@@ -4859,7 +4760,6 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         col.prop(self, "build_materials")
         col.prop(self, "skip_empty_objects")
         col.prop(self, "hack_skip_zero_solids")
-        col.prop(self, "simpler_parameters")
 
         layout.separator()
 

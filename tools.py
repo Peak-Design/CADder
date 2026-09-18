@@ -10,6 +10,7 @@ import bmesh
 import bpy
 import numpy as np
 
+from . import quality as quality_mod
 from . import uv as uv_mod
 
 
@@ -236,11 +237,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         prefs = m._get_addon_prefs()
         hacks = {"skip_solids"} if prefs.hack_skip_zero_solids else set()
 
-        scene_lin = context.scene.stepper.lin_deflection
-        scene_ang = context.scene.stepper.ang_deflection
-        if prefs.simpler_parameters:
-            scene_ang, scene_lin = m.calculate_detail_level(
-                context.scene.stepper.detail_level)
+        # What the Mesh Quality panel asks for. It is a distance, so each
+        # file turns it into its own units below.
+        wanted = quality_mod.spec_of(context.scene.stepper)
 
         by_file = defaultdict(list)
         for me, obj in targets.items():
@@ -312,11 +311,16 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 except Exception:
                     pass
 
-                if self.use_scene_settings:
-                    lin_def, ang_def = scene_lin, scene_ang
+                scene_lin, scene_ang, scene_rel = quality_mod.resolve(
+                    wanted, reader.scale)
+                if self.use_scene_settings or "lin_deflection" not in stored:
+                    lin_def, ang_def, relative = scene_lin, scene_ang, scene_rel
                 else:
-                    lin_def = stored.get("lin_deflection", scene_lin)
+                    # The record holds the linear value as the import used
+                    # it: file units, or a share when it was relative.
+                    lin_def = stored["lin_deflection"]
                     ang_def = stored.get("ang_deflection", scene_ang)
+                    relative = bool(stored.get("tessellation_relative", False))
 
                 # Restore per-import UV options for the apply path. Older
                 # records name the UV map in other terms (uv.migrate_settings).
@@ -339,7 +343,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     mesh, colors, mat_names, norms, uvs = m.precompute_mesh_data(
                         reader, shp, lin_def, ang_def, hacks,
                         part_name=obj.get("STEP_name", ""),
-                        fallback_color=node.color_override)
+                        fallback_color=node.color_override,
+                        relative=relative)
                     m.apply_mesh_to_blender(
                         obj, mesh, colors, mat_names, norms, uvs,
                         build_materials=prefs.build_materials)
@@ -1029,7 +1034,7 @@ def _ask_cad_link(context, objs):
     """Asks the CAD application for these parts again, with whatever the
     scene now holds them defeatured to. Returns how many came back, or None
     when the CAD application could not be reached."""
-    from .rig import cad_link, native_import, defeature as defeature_mod, ui as rig_ui
+    from .rig import cad_link, native_import, defeature as defeature_mod
 
     ids, persistent = [], []
     for obj in objs:
@@ -1043,7 +1048,8 @@ def _ask_cad_link(context, objs):
         return 0
     try:
         reply = cad_link.retessellate(
-            ids, rig_ui.quality_dial(context.scene.cad_link),
+            ids, quality_mod.cad_request(
+                quality_mod.spec_of(context.scene.stepper)),
             persistent_ids=persistent,
             paths=native_import.cad_paths(objs),
             defeature=defeature_mod.orders(objs, context.scene))

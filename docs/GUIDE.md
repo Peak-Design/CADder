@@ -232,15 +232,21 @@ in the addon preferences.
 
 How fine the mesh of a part is, whichever way the part came in. A part
 from a STEP file and a part from the live link are tessellated by
-different programs, but the question is the same one, so it is asked in
-one place.
+different programs, but the settings are the same, and so is what they
+mean. The import dialog, this panel and **Export Options** in SolidWorks
+all show the same five:
 
-The panel shows the controls of the route the parts in scope came in by.
-For a part from the live link that is **Quality**: the four names the CAD
-add-in uses (Draft, Balanced, Fine, Ultra), with Custom taking a chord of
-its own. Balanced is the default, and it is the default of the CAD add-in
-too, so the same name gives the same triangles over either route. For a part from a file it is **Linear** and **Angular**
-deflection, or **Detail** with **Simpler Parameters** on.
+| Setting | What it does |
+| --- | --- |
+| **Quality** | Draft (2 mm, 34°), Balanced (0.8 mm, 29°), Fine (0.2 mm, 14°), Ultra (0.05 mm, 6°), or Custom. Balanced is the default everywhere |
+| **Distance** | For Custom: the largest distance between the mesh and the true surface |
+| **Angle** | For Custom and Relative Tessellation: the largest angle one facet may turn through |
+| **Relative Tessellation** | Cuts to a share of the size of each feature instead of a distance |
+| **Relative Distance** | That share. A file import measures each edge. SolidWorks measures each body |
+
+At the same numbers, OpenCASCADE cuts a little finer than SolidWorks: a
+STEP import of an assembly has about a quarter more vertices than a send
+of it.
 
 The button says which file it is going to read again: **Rebuild from
 CAD**, **Rebuild from STEP**, **Rebuild from IGES**. With parts of both

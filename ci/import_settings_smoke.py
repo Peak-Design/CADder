@@ -112,7 +112,6 @@ WANT = {
     "lin_deflection_len": 0.123,
     "ang_deflection_rot": 0.456,
     "lin_deflection_rel": 0.0123,
-    "detail_level": 42,
     "eng_materials": False,
     "uv_mode": "MINIMUM_STRETCH",
     "uv_normalize": True,
@@ -171,27 +170,11 @@ def compare(restored, skip=()):
     return wrong
 
 
-# With the full parameter set on screen, everything must come back.
-prefs.simpler_parameters = False
+# Everything must come back, the quality settings included.
 wrong = compare(round_trip())
 check(not wrong,
       "every option came back with the value it was saved with (%s)"
       % ("; ".join(wrong) if wrong else "all %d" % len(WANT)))
-
-# With the simple detail slider on screen, quality_preset is deliberately
-# left alone. Assigning it marks it as chosen for the whole session, which
-# would override the slider the user is actually looking at. Everything
-# else still has to come back.
-prefs.simpler_parameters = True
-restored = round_trip()
-wrong = compare(restored, skip=("quality_preset",))
-check(not wrong,
-      "and again with the simple detail slider on screen (%s)"
-      % ("; ".join(wrong) if wrong else "all but quality_preset"))
-check(getattr(restored, "quality_preset", None) is None,
-      "quality_preset stays untouched in simple mode, so the detail slider "
-      "still wins")
-prefs.simpler_parameters = False
 
 print("\n== settings saved by an older version come back as the same map")
 # The UV Map dropdown holds what used to be three settings. A user who last
@@ -215,7 +198,6 @@ for old, want in OLD:
         wrong.append("%s -> %s" % (old, got))
 check(not wrong, "each older record maps to the mode that makes the same "
       "map (%s)" % ("; ".join(wrong) if wrong else "%d cases" % len(OLD)))
-prefs.simpler_parameters = False
 prefs.last_import_settings = json.dumps(
     {"uv_mode": "UNWRAP", "uv_unwrap_method": "CONFORMAL"})
 import_ui._session_seeded.clear()

@@ -224,6 +224,14 @@ def import_settings(scene, path):
 
     accepted = _accepted_kwargs()
     kwargs = {k: v for k, v in record.items() if k in accepted}
+    if record.get("tessellation_relative") and "lin_deflection" in record:
+        # The recorded linear value is a share of each edge, not a length
+        # in file units, and only a relative spec reads it that way.
+        kwargs.pop("lin_deflection", None)
+        kwargs.pop("ang_deflection", None)
+        kwargs["deflection_spec"] = {
+            "mode": "relative", "lin": record["lin_deflection"],
+            "ang": record.get("ang_deflection", 0.5)}
     override = _scale_override(record, scene)
     if override is not None:
         kwargs["custom_scale"] = override

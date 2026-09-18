@@ -10,26 +10,52 @@ import os
 
 import bpy
 
+from . import quality as quality_mod
 from . import uv as uv_mod
 
 STEP_EXTENSIONS = (".step", ".stp", ".st", ".iges", ".igs", ".brep", ".brp")
 
-# Quality presets: name -> (linear deflection in METERS, angular in RADIANS).
-# BALANCED reproduces the historical defaults (0.8 file units on a mm file).
-QUALITY_PRESETS = {
-    "DRAFT": (0.002, 0.6),
-    "BALANCED": (0.0008, 0.5),
-    "FINE": (0.0002, 0.25),
-    "ULTRA": (0.00005, 0.1),
-}
+# The quality names and what they cut to live in quality.py, shared with
+# the Mesh Quality panel and the bridge.
+QUALITY_PRESETS = quality_mod.PRESETS
+QUALITY_PRESET_ITEMS = quality_mod.ITEMS
 
-QUALITY_PRESET_ITEMS = [
-    ("DRAFT", "Draft", "Fast preview quality (2 mm deflection)", 0),
-    ("BALANCED", "Balanced", "Good default quality (0.8 mm deflection)", 1),
-    ("FINE", "Fine", "High quality (0.2 mm deflection)", 2),
-    ("ULTRA", "Ultra Fine", "Maximum quality (0.05 mm deflection)", 3),
-    ("CUSTOM", "Custom", "Manually set linear/angular deflection", 4),
-]
+# The five quality settings, for the import dialog and for the scene's Mesh
+# Quality settings alike. One definition, so the two cannot come to differ
+# in a name, a default or a limit.
+QUALITY_KW = {
+    "quality_preset": dict(
+        items=QUALITY_PRESET_ITEMS, name="Quality",
+        description="How fine the parts are cut. A name cuts the same way "
+                    "for a file import and for SolidWorks",
+        default=quality_mod.DEFAULT),
+    "lin_deflection_len": dict(
+        name="Distance",
+        description="Largest distance between the mesh and the true "
+                    "surface, for Custom. A smaller distance gives more "
+                    "polygons",
+        unit="LENGTH", default=0.0008, min=0.000002, soft_max=0.01,
+        precision=4),
+    "ang_deflection_rot": dict(
+        name="Angle",
+        description="Largest angle one facet may turn through, for Custom "
+                    "and Relative Tessellation. A smaller angle gives more "
+                    "polygons",
+        unit="ROTATION", default=0.5, min=0.002, max=1.5),
+    "tessellation_relative": dict(
+        name="Relative Tessellation",
+        description="Cut to a share of the size of each feature instead of a "
+                    "distance. Small parts keep their detail and large parts "
+                    "do not explode the triangle count",
+        default=False),
+    "lin_deflection_rel": dict(
+        name="Relative Distance",
+        description="Largest distance between the mesh and the true "
+                    "surface, as a share of the size of each feature. A file "
+                    "import measures each edge, SolidWorks each body",
+        default=quality_mod.DEFAULT_RELATIVE, min=0.00001, max=0.5,
+        precision=4),
+}
 
 # Operators seeded from preferences this session (keyed by operator idname)
 _session_seeded = set()
@@ -43,7 +69,7 @@ _session_seeded = set()
 PERSISTED_PROPS = (
     "up_as", "hierarchy_types", "custom_scale", "user_scale", "apply_scale",
     "tessellation_relative", "quality_preset", "lin_deflection_len",
-    "ang_deflection_rot", "lin_deflection_rel", "detail_level",
+    "ang_deflection_rot", "lin_deflection_rel",
     "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
     "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
     "uv_unwrap_compound",
@@ -84,11 +110,6 @@ def _restore_last_used(op, prefs):
     for key, value in stored.items():
         if key not in PERSISTED_PROPS:
             continue
-        # Assigning quality_preset marks it "set" for the session, which
-        # would override the artist-friendly detail slider (see
-        # make_deflection_spec). Same rule as seeding below.
-        if key == "quality_preset" and prefs.simpler_parameters:
-            continue
         try:
             setattr(op, key, value)
         except (AttributeError, TypeError, ValueError):
@@ -102,32 +123,20 @@ def make_deflection_spec(op, prefs):
       legacy:    raw file-unit values (old lin_deflection/ang_deflection
                  semantics). Used when the legacy props were explicitly set
                  (scripts, parity harness) so old callers are unaffected.
-      detail:    simple-mode integer detail level (resolved by caller).
-      physical:  linear deflection is a physical length in meters, converted
-                 to file units per file once the unit scale is known.
+      physical:  a quality name, or Custom: a distance in metres, converted
+                 to file units once the unit scale is known.
+      relative:  Relative Tessellation: a share of each feature's size.
     """
     legacy_set = (op.properties.is_property_set("lin_deflection")
                   or op.properties.is_property_set("ang_deflection"))
     if legacy_set:
         return {"mode": "legacy", "lin": op.lin_deflection, "ang": op.ang_deflection}
-    # Artist-friendly mode: the dialog shows only the detail slider, so the
-    # detail gate must come before the relative/preset modes (neither is
-    # visible or editable in this mode). An explicitly passed quality_preset
-    # (scripts, the background worker) still wins.
-    preset_set = op.properties.is_property_set("quality_preset")
-    if prefs.simpler_parameters and not preset_set:
-        return {"mode": "detail", "detail": op.detail_level}
-    if op.quality_preset != "CUSTOM":
-        lin_m, ang = QUALITY_PRESETS[op.quality_preset]
-    else:
-        lin_m, ang = op.lin_deflection_len, op.ang_deflection_rot
-    if getattr(op, "tessellation_relative", False):
-        return {"mode": "relative", "lin": op.lin_deflection_rel, "ang": ang}
-    return {"mode": "physical", "lin_m": lin_m, "ang": ang}
+    return quality_mod.spec_of(op)
 
 
-def resolve_deflections(spec, scale, calculate_detail_level):
-    """Resolve a deflection spec to (lin_def, ang_def) in FILE UNITS.
+def resolve_deflections(spec, scale):
+    """Resolve a deflection spec to (lin_def, ang_def) in FILE UNITS, or a
+    share when the spec is relative.
 
     scale is meters-per-file-unit (known after the STEP header is read), so
     physical mode yields the same real-world deflection regardless of the
@@ -137,14 +146,8 @@ def resolve_deflections(spec, scale, calculate_detail_level):
         return 0.8, 0.5
     if spec["mode"] == "legacy":
         return spec["lin"], spec["ang"]
-    if spec["mode"] == "detail":
-        a_def, l_def = calculate_detail_level(spec["detail"])
-        return l_def, a_def
-    if spec["mode"] == "relative":
-        return spec["lin"], spec["ang"]
-    # physical
-    lin_file_units = spec["lin_m"] / scale if scale > 0 else spec["lin_m"]
-    return lin_file_units, spec["ang"]
+    lin, ang, _relative = quality_mod.resolve(spec, scale)
+    return lin, ang
 
 
 def seed_from_prefs(op, prefs):
@@ -161,11 +164,7 @@ def seed_from_prefs(op, prefs):
     try:
         op.up_as = prefs.preferred_up_axis
         op.hierarchy_types = prefs.preferred_hierarchy
-        # Assigning quality_preset marks it "set" for the whole session,
-        # which would permanently override the artist-friendly detail
-        # slider (see make_deflection_spec), so skip seeding it in that mode.
-        if not prefs.simpler_parameters:
-            op.quality_preset = prefs.default_quality_preset
+        op.quality_preset = prefs.default_quality_preset
     except (AttributeError, TypeError):
         pass
     if getattr(prefs, "remember_import_settings", False) \
@@ -205,6 +204,28 @@ def draw_uv_mode(owner, layout):
     sub.prop(owner, "uv_closed_seams")
 
 
+def draw_quality(owner, layout):
+    """Quality, and what goes with it. The import dialog and the Mesh
+    Quality panel show the same settings for every route, so both draw them
+    here. A setting that does not apply stays in place but inactive, so the
+    layout does not move."""
+    relative = owner.tessellation_relative
+    custom = owner.quality_preset == "CUSTOM"
+    sub = layout.column()
+    sub.active = not relative
+    sub.prop(owner, "quality_preset", text="Quality")
+    sub = layout.column()
+    sub.active = custom and not relative
+    sub.prop(owner, "lin_deflection_len")
+    sub = layout.column()
+    sub.active = custom or relative
+    sub.prop(owner, "ang_deflection_rot")
+    layout.prop(owner, "tessellation_relative")
+    sub = layout.column()
+    sub.active = relative
+    sub.prop(owner, "lin_deflection_rel")
+
+
 def draw_import_dialog(op, layout, prefs):
     """Collapsible import dialog (Blender 4.1+ layout.panel API)."""
     layout.use_property_split = True
@@ -213,20 +234,7 @@ def draw_import_dialog(op, layout, prefs):
     header, body = layout.panel("stepper_geometry", default_closed=False)
     header.label(text="Geometry")
     if body:
-        if prefs.simpler_parameters:
-            body.prop(op, "detail_level")
-        else:
-            # Relative tessellation replaces the quality preset, so the
-            # toggle lives here where its effect is visible.
-            body.prop(op, "tessellation_relative")
-            if op.tessellation_relative:
-                body.prop(op, "lin_deflection_rel")
-                body.prop(op, "ang_deflection_rot")
-            else:
-                body.prop(op, "quality_preset", text="Quality")
-                if op.quality_preset == "CUSTOM":
-                    body.prop(op, "lin_deflection_len")
-                    body.prop(op, "ang_deflection_rot")
+        draw_quality(op, body)
 
     header, body = layout.panel("stepper_scene", default_closed=False)
     header.label(text="Scene")
@@ -322,12 +330,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
         # Honor the user's preference defaults (quality, up axis, hierarchy)
         # rather than the raw file-unit fallback deflections.
         prefs = _main._get_addon_prefs()
-        if prefs.simpler_parameters:
-            spec = {"mode": "detail",
-                    "detail": context.scene.stepper.detail_level}
-        else:
-            lin_m, ang = QUALITY_PRESETS[prefs.default_quality_preset]
-            spec = {"mode": "physical", "lin_m": lin_m, "ang": ang}
+        spec = quality_mod.spec(prefs.default_quality_preset)
 
         # Content options follow the import dialog: its current defaults,
         # overlaid with the remembered last-used settings when enabled.

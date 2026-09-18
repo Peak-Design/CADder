@@ -192,35 +192,6 @@ def _cad_link_enabled(context):
     return bool(getattr(prefs, "enable_bridge", False))
 
 
-# The quality names of the CAD add-in's own Export Options, and the dial
-# each one sends. The numbers are SendToBlenderCommand.QualityDial in the
-# SolidWorks add-in: a send and an update at the same name must give the
-# same triangles.
-QUALITY_DIAL = {
-    "DRAFT": 0.15,
-    "BALANCED": 0.45,
-    "FINE": 0.75,
-    "ULTRA": 1.0,
-}
-
-QUALITY_ITEMS = [
-    ("DRAFT", "Draft", "A coarse preview, up to 2 mm from the true surface"),
-    ("BALANCED", "Balanced", "The default, up to 0.8 mm from the true surface"),
-    ("FINE", "Fine", "Smooth enough for a close-up, up to 0.2 mm from the true surface"),
-    ("ULTRA", "Ultra", "The finest, up to 0.05 mm from the true surface"),
-    ("CUSTOM", "Custom", "The fineness set below, not one of the four names"),
-]
-
-def quality_dial(settings):
-    """The quality dial for Rebuild from CAD: 0 is coarse, 1 is fine.
-
-    The CAD application turns it into a distance from the true surface and
-    an angle, the same two numbers a STEP import cuts to, so a name gives
-    the same mesh over either route."""
-    if settings.update_quality == "CUSTOM":
-        return settings.update_quality_factor
-    return QUALITY_DIAL.get(settings.update_quality, 0.75)
-
 
 
 
@@ -724,7 +695,7 @@ if bpy is not None:
         bl_label = "Rebuild from CAD"
         bl_description = ((
             "Ask the CAD application for the geometry of these parts again, at the "
-            "quality set here. The addon swaps the new geometry in and keeps the "
+            "quality set in Mesh Quality. The addon swaps the new geometry in and keeps the "
             "pose, the materials, the rig and which parts are defeatured"
         ))
         bl_options = {"REGISTER", "UNDO"}
@@ -780,11 +751,6 @@ if bpy is not None:
                  "manifest"),
             ],
             default="APPEND")
-        quality: bpy.props.FloatProperty(
-            name="Quality", default=0.75, min=0.0, max=1.0, subtype="FACTOR",
-            description=("Chord tolerance, relative to each part's own size: "
-                         "0 is a coarse preview, 1 is a smooth close-up"))
-
         @classmethod
         def poll(cls, context):
             return bool(_linked_objects())
@@ -847,8 +813,13 @@ if bpy is not None:
                     # this scene's decision, so it is sent every time. A
                     # rebuild that left it out would quietly put the holes
                     # back.
+                    # The quality in Mesh Quality, the same settings that
+                    # rebuild a part from a file.
+                    from .. import quality as quality_mod
                     reply = cad_link.retessellate(
-                        ids, self.quality, persistent_ids=persistent,
+                        ids, quality_mod.cad_request(
+                            quality_mod.spec_of(context.scene.stepper)),
+                        persistent_ids=persistent,
                         separate_solids=split or None,
                         paths=native_import.cad_paths(covered),
                         defeature=defeature.orders(covered, context.scene))

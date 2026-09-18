@@ -53,7 +53,7 @@ _PUMP_INTERVAL_S = 0.2
 # which is how the UV rework of 2026-09-14 left the bridge unable to pass
 # the smart-unwrap, packing and tris-to-quads settings for a while.
 _IMPORT_OPTION_KEYS = {
-    "up_as", "fw_as", "hierarchy_types", "quality_preset", "detail_level",
+    "up_as", "fw_as", "hierarchy_types", "quality_preset",
     "custom_scale", "user_scale", "apply_scale",
     "lin_deflection", "ang_deflection", "lin_deflection_len",
     "ang_deflection_rot", "tessellation_relative", "lin_deflection_rel",
@@ -419,7 +419,7 @@ def _leave_object_modes():
     return left
 
 
-def _ask_again_without_small_features(asked, preset, separate_solids):
+def _ask_again_without_small_features(asked, opts, separate_solids):
     """Asks the CAD application for the marked parts again, AFTER the send
     this is answering has finished.
 
@@ -431,14 +431,15 @@ def _ask_again_without_small_features(asked, preset, separate_solids):
     again, and the marked parts come back a moment later.
 
     The quality is the one the send itself used, which the import options
-    carry by name, so the parts that come back match the ones beside them.
+    carry, so the parts that come back match the ones beside them.
     """
     def run():
-        from .rig import cad_link, native_import, ui as rig_ui
+        from . import quality as quality_mod
+        from .rig import cad_link, native_import
         try:
-            dial = rig_ui.QUALITY_DIAL.get(preset or "FINE", 0.75)
             reply = cad_link.retessellate(
-                [row["component"] for row in asked], dial,
+                [row["component"] for row in asked],
+                quality_mod.cad_request(quality_mod.spec_of(opts)),
                 separate_solids=separate_solids, defeature=asked)
             changed = native_import.refine(bpy.context, reply["mesh"])
             print("[CADLink defeature] %d part(s) came back without their "
@@ -681,7 +682,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 log.append("defeature: asking again for %d part(s) without "
                            "their small features" % len(asked))
                 _ask_again_without_small_features(
-                    asked, opts.get("quality_preset"),
+                    asked, opts,
                     opts.get("separate_solids"))
 
         if not mesh_path and want("import", bool(step_path)):

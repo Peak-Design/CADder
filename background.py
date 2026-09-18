@@ -26,7 +26,6 @@ FORWARDED_PREFS = (
     "hack_skip_zero_solids",
     "skip_empty_objects",
     "construction_filter_names",
-    "simpler_parameters",
     "active_matdb",
 )
 

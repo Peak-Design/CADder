@@ -40,9 +40,10 @@ if bpy is not None:
             default="BALANCED",
         )
         update_quality_factor: bpy.props.FloatProperty(
-            name="Chord",
-            description="Chord tolerance against the size of each part: "
-                        "0 is a coarse preview, 1 is a smooth close-up",
+            name="Fineness",
+            description="How fine the CAD application cuts the parts. 0 is "
+                        "up to 5 mm from the true surface, 1 is up to "
+                        "0.05 mm. Draft is 0.15, Balanced 0.45, Fine 0.75",
             default=0.75, min=0.0, max=1.0, subtype="FACTOR",
         )
         # One entry per mechanism that offers a choice of input

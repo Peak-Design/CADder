@@ -204,18 +204,19 @@ QUALITY_DIAL = {
 }
 
 QUALITY_ITEMS = [
-    ("DRAFT", "Draft", "A coarse preview, fastest to send"),
-    ("BALANCED", "Balanced", "The default of the CAD add-in"),
-    ("FINE", "Fine", "Smooth enough for a close-up"),
-    ("ULTRA", "Ultra", "The finest the CAD application gives"),
-    ("CUSTOM", "Custom", "The chord set below, not one of the four names"),
+    ("DRAFT", "Draft", "A coarse preview, up to 2 mm from the true surface"),
+    ("BALANCED", "Balanced", "The default, up to 0.8 mm from the true surface"),
+    ("FINE", "Fine", "Smooth enough for a close-up, up to 0.2 mm from the true surface"),
+    ("ULTRA", "Ultra", "The finest, up to 0.05 mm from the true surface"),
+    ("CUSTOM", "Custom", "The fineness set below, not one of the four names"),
 ]
 
 def quality_dial(settings):
-    """The chord dial for Rebuild from CAD: 0 is coarse, 1 is fine.
+    """The quality dial for Rebuild from CAD: 0 is coarse, 1 is fine.
 
-    The CAD application turns it into a chord tolerance against the size
-    of each part, so one dial suits a bracket and a chassis alike."""
+    The CAD application turns it into a distance from the true surface and
+    an angle, the same two numbers a STEP import cuts to, so a name gives
+    the same mesh over either route."""
     if settings.update_quality == "CUSTOM":
         return settings.update_quality_factor
     return QUALITY_DIAL.get(settings.update_quality, 0.75)

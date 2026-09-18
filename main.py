@@ -4467,7 +4467,7 @@ class CADLINK_PT_quality(bpy.types.Panel):
         if live:
             col.prop(settings, "update_quality", text="Quality")
             if settings.update_quality == "CUSTOM":
-                col.prop(settings, "update_quality_factor", text="Chord")
+                col.prop(settings, "update_quality_factor", text="Fineness")
         if step:
             if _get_addon_prefs().simpler_parameters:
                 col.prop(prg, "detail_level", text="Detail")

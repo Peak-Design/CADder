@@ -75,7 +75,7 @@ jobs:
           ADDON_DIR="CADder"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
+          for f in *.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi
@@ -174,7 +174,7 @@ jobs:
             local dir="CADder-$plat"
             mkdir -p "$dir/wheels" "$dir/native_libs"
 
-            for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
+            for f in *.py LICENSE README.md; do
               cp "$f" "$dir/"
             done
             if [ -d "docs" ]; then cp -r docs "$dir/docs"; fi
@@ -307,7 +307,7 @@ jobs:
           ADDON_DIR="CADder"
           mkdir -p "$ADDON_DIR/wheels" "$ADDON_DIR/native_libs"
 
-          for f in __init__.py main.py importer.py import_ui.py uv.py tools.py formats.py curves.py analyzer.py background.py worker.py trimesh.py nurbs.py ocp_utils.py stepanalyzer.py updater.py refresh.py bridge.py LICENSE README.md; do
+          for f in *.py LICENSE README.md; do
             cp "$f" "$ADDON_DIR/"
           done
           if [ -d "docs" ]; then cp -r docs "$ADDON_DIR/docs"; fi
@@ -376,6 +376,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.version != ''
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -384,35 +387,41 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f -name "*.zip"
 
+      # The release page is docs/RELEASE_<version>.md (its title line
+      # dropped, the release has one) plus the list of downloads.
+      - name: Write the release notes
+        run: |
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${TAG#v}"
+          NOTES="docs/RELEASE_${VERSION}.md"
+          if [ -f "$NOTES" ]; then
+            sed '1{/^# /d}' "$NOTES" > notes.md
+          else
+            echo "No $NOTES in this commit." > notes.md
+          fi
+          cat >> notes.md <<'EOF'
+
+          ## Downloads
+
+          | Platform | File |
+          |---|---|
+          | Windows (64-bit) | `cadder-@VERSION@-windows_x64.zip` |
+          | macOS, Apple silicon | `cadder-@VERSION@-macos_arm64.zip` |
+          | macOS, Intel | `cadder-@VERSION@-macos_x64.zip` |
+          | Linux (64-bit) | `cadder-@VERSION@-linux_x64.zip` |
+
+          To install, drag the zip into Blender, or use **Edit > Preferences >
+          Get Extensions > Install from Disk**. On Windows you also need the
+          [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
+          EOF
+          sed -i "s/@VERSION@/${VERSION}/g" notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           name: CADder ${{ github.event.inputs.version || github.ref_name }}
-          body: |
-            ## CADder ${{ github.event.inputs.version || github.ref_name }}
-
-            Blender **extension** packages (Blender 5.1+, Python 3.13). The
-            OpenCASCADE (OCP) bindings ship as a bundled wheel that Blender
-            installs automatically.
-
-            ### Downloads
-            - **Windows (64-bit):** `cadder-*-windows_x64.zip`
-            - **macOS Apple Silicon:** `cadder-*-macos_arm64.zip`
-            - **macOS Intel:** `cadder-*-macos_x64.zip`
-            - **Linux (64-bit):** `cadder-*-linux_x64.zip`
-
-            ### Installation
-            1. Download the `.zip` for your platform
-            2. In Blender: **Edit > Preferences > Get Extensions >** (drop-down top-right) **> Install from Disk...** → select the `.zip` (or drag & drop the zip into Blender)
-            3. Enable it under **Add-ons** if not enabled automatically
-
-            If upgrading from a pre-2.3 legacy addon install, remove the old
-            "CADder" addon first (Preferences > Add-ons).
-
-            ---
-            *Built automatically by GitHub Actions*
+          body_path: notes.md
           draft: false
           prerelease: false
           files: artifacts/**/*.zip
-          generate_release_notes: true

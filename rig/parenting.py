@@ -57,6 +57,11 @@ class ParentReport:
     # almost always a manifest limit whose value_at_rest lies outside its
     # own min/max. Geometry is preserved regardless. This is the tell.
     posed_bones: List[Tuple[str, float]] = field(default_factory=list)
+    # Tree empties hung on a bone with their parts still under them: a
+    # subassembly the rig moves as one body keeps its place in the tree.
+    carried: List[str] = field(default_factory=list)
+    # Tree empties that held nothing once the parts were on their bones.
+    removed_empties: int = 0
 
 
 def _bone_parent_matrix(arm_obj, bone_name):
@@ -243,6 +248,8 @@ def relink(context, arm_obj) -> ParentReport:
                   "pose (check that joint's limits against value_at_rest). "
                   "Geometry keeps its place regardless" % (bone_name, off))
 
+    plan, report.carried, doomed = _keep_tree(plan)
+
     # Whatever the import left over rides the ground bone: the assembly
     # stays one object when the rig is moved, instead of half of it walking
     # away. Same world-preserving parenting as everything else, so nothing
@@ -251,7 +258,10 @@ def relink(context, arm_obj) -> ParentReport:
     if ground and ground in arm_obj.pose.bones:
         files = {obj.get("STEP_file") for obj, _, _ in plan}
         files.discard(None)
+        going = {e.name for e in doomed}
         for obj in _leftovers(arm_obj, [o for o, _, _ in plan], files):
+            if obj.name in going:
+                continue
             plan.append((obj, ground, obj.matrix_world.copy()))
             report.grounded.append(obj.name)
 
@@ -278,4 +288,90 @@ def relink(context, arm_obj) -> ParentReport:
         if drift >= _DRIFT_TOL:
             report.violations.append((obj.name, drift))
 
+    report.removed_empties = _remove_bare(doomed)
     return report
+
+
+def _is_tree_empty(obj):
+    """An empty an import made to hold part of the assembly tree. Not a
+    part sent as a collection instance, and not anything of the rig's."""
+    return (obj.type == "EMPTY" and obj.instance_collection is None
+            and not (obj.get("RIG_rig") or obj.get("RIG_helper")
+                     or obj.get("CADLINK_widget") or obj.get("RIG_group_empty")))
+
+
+def _keep_tree(plan):
+    """Keeps the assembly tree where the rig allows it.
+
+    An empty whose parts all ride one bone is a subassembly that moves as
+    one body, usually a rigid one. That empty goes on the bone, and its parts
+    stay under it, so the tree survives the rig. An empty whose parts ride
+    different bones cannot hold them: each part goes to its own bone, as
+    before. That empty then holds nothing. When the bridge made it, it is
+    returned to be removed. The empties of a STEP import stay, because
+    matching reads a part's place in the assembly from the chain of empties
+    above it (matching._occurrence_path). They ride the ground bone as
+    leftovers, as before.
+
+    Returns (the plan with the carried parts swapped for their empties,
+    the names of the carried empties, the empties to check afterwards).
+    """
+    bone_of = {obj.name: bone for obj, bone, _ in plan}
+    bones = {}          # empty name -> the bones of the parts under it
+    empties = {}
+    for obj, bone, _ in plan:
+        parent = obj.parent
+        while parent is not None and _is_tree_empty(parent):
+            empties[parent.name] = parent
+            bones.setdefault(parent.name, set()).add(bone)
+            parent = parent.parent
+
+    def carried(empty):
+        return len(bones.get(empty.name, ())) == 1
+
+    kept = []
+    tops = {}
+    for obj, bone, world in plan:
+        # The highest empty above this part that rides one bone, when the
+        # part's own parent is one.
+        top = None
+        parent = obj.parent
+        while parent is not None and _is_tree_empty(parent) and carried(parent):
+            top = parent
+            parent = parent.parent
+        if top is None:
+            kept.append((obj, bone, world))
+        elif top.name not in tops:
+            tops[top.name] = (top, next(iter(bones[top.name])))
+    for top, bone in tops.values():
+        kept.append((top, bone, top.matrix_world.copy()))
+
+    inside = set()
+    for top, _ in tops.values():
+        inside.update(c.name for c in top.children_recursive)
+    doomed = [e for name, e in empties.items()
+              if name not in tops and name not in inside
+              and e.get("SWMESH_path") is not None]
+    return kept, sorted(tops), doomed
+
+
+def _remove_bare(empties):
+    """Removes the tree empties that hold nothing now, deepest first, so a
+    branch that held only empty branches goes too. An empty that still
+    holds anything, a part or an object of the user's, stays."""
+    removed = 0
+    left = list(empties)
+    while True:
+        bare = []
+        for e in left:
+            try:
+                if not e.children:
+                    bare.append(e)
+            except ReferenceError:
+                continue
+        if not bare:
+            return removed
+        for e in bare:
+            left.remove(e)
+            bpy.data.objects.remove(e, do_unlink=True)
+            removed += 1

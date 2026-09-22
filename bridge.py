@@ -474,10 +474,16 @@ def _run_job(payload: dict) -> dict:
     # nothing meanwhile. The stage names match the ones the add-in shows
     # in SolidWorks.
     said = rig_progress.JobProgress(bpy.context)
+    rig_hold = {}
     try:
         return _run_stages(payload, stages, log, manifest_path, step_path,
-                           mesh_path, want, have_manifest, said)
+                           mesh_path, want, have_manifest, said, rig_hold)
     finally:
+        # An update takes the animation off the rig while it binds the
+        # parts again. Whatever ended the job, the rig gets it back.
+        released = rig_hold.get("release")
+        if released is not None:
+            released.finish()
         said.close()
 
 
@@ -529,10 +535,13 @@ def _update_rig(mode, log):
 
 
 def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
-                want, have_manifest, said):
+                want, have_manifest, said, rig_hold=None):
     """The stages themselves. Split out so the reporter closes whatever
     ends the job."""
     from .rig import matching, ui as rig_ui
+
+    if rig_hold is None:
+        rig_hold = {}
 
     # A pose push. The CAD application moved parts and says where they
     # are now: no geometry, no manifest file, no rig rebuild beyond what
@@ -609,6 +618,14 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             rig_ui._STATE["rig_snapshot"] = (
                 rig_update.snapshot(standing, bpy.data.objects)
                 if updating and standing is not None else {})
+            # And before the update moves a part, the rig goes to its rest
+            # pose and lets go of the parts it holds: moved while on a
+            # posed bone, a part is bound again with the pose in it.
+            if updating and standing is not None:
+                rig_hold["release"] = rig_update.release(bpy.context, standing)
+                if rig_hold["release"].posed:
+                    log.append("the rig was put back to its rest pose before "
+                               "the update")
             # Which parts the scene holds without their small features is
             # this scene's own decision, and a send replaces every object
             # and collection that carries it. So it is written down here
@@ -648,6 +665,27 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
             rig_ui._STATE["match_report"] = report
+            released = rig_hold.get("release")
+            if released is not None and released.parts:
+                # The parts that were on the rig go back to where the CAD
+                # has them, all of them and not only the ones the CAD
+                # moved: the rig binds them where they stand, and a part
+                # bound off its pose by an earlier update is put right
+                # here. A part that was never on the rig is left alone,
+                # because a free part may have been placed by hand.
+                from .rig import pose_sync
+                back = pose_sync.sync(rig_ui._STATE["manifest"], report,
+                                      objects=rig_update.alive(released.parts))
+                stages["poses"] = {
+                    "moved": [{"object": n, "distance_m": d}
+                              for n, d in back.moved],
+                    "already_ok": back.already_ok,
+                    "skipped": [{"object": n, "reason": r}
+                                for n, r in back.skipped],
+                }
+                if back.moved:
+                    log.append("%d part(s) of the rig put back on their CAD "
+                               "pose" % len(back.moved))
             made = native_import.quads(objects)
             if made:
                 log.append("tris to quads: %d mesh(es)" % made)
@@ -728,9 +766,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
         # A skipped earlier stage can fail a later operator's poll(), and a
         # failed poll RAISES instead of returning CANCELLED: every optional
         # stage below runs only when its precondition actually holds.
-        # An update has already put every part where the CAD says it is,
-        # so syncing the poses again has nothing to do and would report
-        # every bone-parented part as one it could not move.
+        # An update has already put every part where the CAD says it is:
+        # it moves the parts the CAD moved, and the parts that were on the
+        # rig were put on their CAD pose above. A free part it did not move
+        # stays where the user put it.
         if have_manifest and want("sync_poses") and not updating \
                 and rig_ui._STATE.get("match_report") is not None:
             said.stage("syncing the poses", 85, 88)
@@ -791,6 +830,11 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         "drift_violations": len(rep.violations),
                         "posed_bones": [name for name, _ in rep.posed_bones],
                     }
+        # The parts are bound at rest, so the animation can have the rig
+        # back.
+        released = rig_hold.get("release")
+        if released is not None:
+            released.finish()
 
         if want("cleanup", False):
             _cleanup_leftover_empties(stages)

@@ -78,6 +78,106 @@ def snapshot(arm_obj, objects) -> Dict[str, frozenset]:
     return out
 
 
+@dataclass
+class Released:
+    """What release() took off a standing rig, to give back once the parts
+    are bound to the rig again."""
+    arm_obj: object = None
+    objects: list = field(default_factory=list)   # were on a bone
+    parts: list = field(default_factory=list)     # those and what they hold
+    animation: bool = False
+    action: object = None
+    slot: object = None
+    use_nla: bool = True
+    posed: bool = False
+    done: bool = False
+
+    def finish(self):
+        """Gives the rig its animation back. Safe to call twice: the job
+        calls it when relink is done, and again whatever ended the job."""
+        if self.done:
+            return
+        self.done = True
+        if not self.animation or self.arm_obj is None:
+            return
+        try:
+            anim = self.arm_obj.animation_data
+            if anim is None:
+                anim = self.arm_obj.animation_data_create()
+            if self.action is not None:
+                anim.action = self.action
+                if self.slot is not None and hasattr(anim, "action_slot"):
+                    anim.action_slot = self.slot
+            anim.use_nla = self.use_nla
+        except (ReferenceError, AttributeError, RuntimeError, TypeError):
+            pass
+
+
+def release(context, arm_obj) -> Released:
+    """Takes the parts off a standing rig at its rest pose, before an update
+    moves any of them.
+
+    The rest pose is the CAD pose the manifest describes, and relink binds
+    each part where it finds it. A part left on a posed bone through an
+    update is moved by the update against the pose, and then bound with the
+    pose in it, so it carries the pose as an offset for ever after (Oscar,
+    2026-09-22: "the parts that were parented to the old bones don't reset
+    to the SW pose before being re-parented"). So the rig goes to rest
+    first, and only the parts relink attached come off it, with their world
+    transforms kept. A bone the user parented something to by hand keeps
+    it.
+
+    The animation comes off too, until the parts are bound again: a keyed
+    bone would otherwise take its keyed pose back on the next depsgraph
+    update, in the middle of the rebind."""
+    out = Released(arm_obj=arm_obj)
+    if arm_obj is None:
+        return out
+    from . import rig_build
+
+    anim = arm_obj.animation_data
+    if anim is not None:
+        out.animation = True
+        out.action = anim.action
+        out.slot = getattr(anim, "action_slot", None)
+        out.use_nla = anim.use_nla
+        anim.use_nla = False
+        if anim.action is not None:
+            anim.action = None
+    out.posed = rig_build.rest_pose(arm_obj)
+    context.view_layer.update()
+
+    for obj in list(bpy.data.objects):
+        if obj.parent is arm_obj and obj.parent_type == "BONE"                 and obj.get("RIG_parent_mode") == "BONE":
+            world = obj.matrix_world.copy()
+            obj.parent = None
+            obj.matrix_world = world
+            out.objects.append(obj)
+    context.view_layer.update()
+
+    released = set(out.objects)
+    for obj in bpy.data.objects:
+        holder = obj
+        while holder is not None and holder not in released:
+            holder = holder.parent
+        if holder is not None and obj.get("RIG_component_id"):
+            out.parts.append(obj)
+    return out
+
+
+def alive(objects):
+    """The objects of a list that still exist: an update removes the parts
+    CAD removed."""
+    out = []
+    for obj in objects:
+        try:
+            obj.name
+        except ReferenceError:
+            continue
+        out.append(obj)
+    return out
+
+
 def keep_names(before: Dict[str, frozenset], occurrences) -> Dict[str, str]:
     """new group id -> the bone name that group's parts already have.
 

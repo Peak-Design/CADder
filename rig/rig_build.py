@@ -838,20 +838,26 @@ def _remove_previous_rig(collection):
     with it (live cam-follower, 2026-09-15, switching the input)."""
     doomed = [o for o in list(collection.objects)
               if o.get("RIG_rig") and not is_locked(o)]
-    posed = False
     for obj in doomed:
-        if obj.type != "ARMATURE":
-            continue
-        for pb in obj.pose.bones:
-            if pb.matrix_basis != Matrix.Identity(4):
-                pb.matrix_basis = Matrix.Identity(4)
-                posed = True
+        if obj.type == "ARMATURE":
+            rest_pose(obj)
+    _remove_rig_objects(doomed)
+
+
+def rest_pose(arm_obj):
+    """Puts every bone of a rig back to its rest pose, which is the CAD
+    pose the manifest describes. True when a bone had to move."""
+    posed = False
+    for pb in arm_obj.pose.bones:
+        if pb.matrix_basis != Matrix.Identity(4):
+            pb.matrix_basis = Matrix.Identity(4)
+            posed = True
     if posed:
         try:
             bpy.context.view_layer.update()
         except (AttributeError, RuntimeError):
             pass
-    _remove_rig_objects(doomed)
+    return posed
 
 
 def _bone_collection(arm_data, name):
@@ -871,6 +877,12 @@ def _rig_collection_of(arm_obj):
     return None
 
 
+# Every bone a build makes carries RIG_generated. The others are the tags
+# of rigs built before it: a group, a helper, a joint and a spin bone.
+_GENERATED_TAGS = ("RIG_generated", "RIG_group", "RIG_helper", "RIG_joint",
+                   "RIG_spin")
+
+
 def _clear_generated(context, arm_obj, collection):
     """Everything the last build made, out of a rig that is standing: its
     bones, the drivers on them, and the helper objects beside it. A bone
@@ -880,8 +892,13 @@ def _clear_generated(context, arm_obj, collection):
     generated = set()
     for pb in arm_obj.pose.bones:
         keys = pb.keys()
-        if "RIG_group" in keys or "RIG_helper" in keys or "RIG_joint" in keys:
+        if any(k in keys for k in _GENERATED_TAGS):
             generated.add(pb.name)
+    # A limit dial of a rig built before RIG_generated carries no tag at
+    # all. It is in the limits collection, and nothing else is.
+    limits = arm_obj.data.collections.get(_LIMITS_COLLECTION)
+    if limits is not None:
+        generated.update(b.name for b in limits.bones)
     animation = arm_obj.animation_data
     if animation is not None:
         for fcurve in list(animation.drivers):
@@ -1214,6 +1231,10 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
     arm_obj["RIG_source"] = manifest.source_path or ""
     arm_obj["RIG_frame"] = [v for row in frame for v in row]
     arm_obj.show_in_front = True
+    # What is left in the armature now is the user's own. Every bone added
+    # below is this build's, and says so, so the next rebuild in place
+    # takes all of them out and not only the ones it has a name for.
+    users_bones = {b.name for b in arm_data.bones}
     result.armature_object = arm_obj
     result.collection = collection
 
@@ -1571,6 +1592,10 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                      + list(result.cam_rel_names.values())
                      + list(result.cam_off_names.values())):
             pose.bones[name].rotation_mode = "YXZ"
+
+        for pb in pose.bones:
+            if pb.name not in users_bones:
+                pb["RIG_generated"] = True
 
         source = manifest.source_path or ""
         for bp in plan.bones:

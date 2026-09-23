@@ -3634,6 +3634,10 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                     " file. This applies only when Custom scale is on",
         default=0.01, min=0.00001)
 
+    # Legacy deflection, for scripts only. When a caller sets one of these,
+    # the import ignores Quality (see make_deflection_spec). A preset writes
+    # and sets every property that has no SKIP_PRESET, so without it each
+    # applied preset went back to legacy 0.8 and 0.5 in file units.
     lin_deflection: bpy.props.FloatProperty(
         name="Linear Deflection",
         description="Maximum distance between the mesh and the true "
@@ -3642,6 +3646,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=0.8,
         min=0.002,
         max=2.0,
+        options={"HIDDEN", "SKIP_SAVE", "SKIP_PRESET"},
     )
 
     ang_deflection: bpy.props.FloatProperty(
@@ -3651,6 +3656,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=0.5,
         min=0.002,
         max=2.0,
+        options={"HIDDEN", "SKIP_SAVE", "SKIP_PRESET"},
     )
 
     custom_scale: bpy.props.BoolProperty(

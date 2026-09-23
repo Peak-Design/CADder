@@ -9,6 +9,8 @@ checks what the join SAYS about it:
   * a clean join of rigs with limit dials reports no missing bone and no
     drift, for rigs built now and for rigs built before every bone was
     tagged with its manifest;
+  * a join onto a posed bone merges nothing, so the user can clear the
+    pose and join again, as the message tells them to;
 """
 
 import os
@@ -140,9 +142,53 @@ def clean_join_is_quiet(legacy):
     check(not report.drift, "a clean join reports drift: %s" % report.drift)
 
 
+# ── A posed attach bone stops the join before anything is merged ────────
+
+def posed_attach_joins_nothing():
+    print("-- a join onto a posed bone")
+    fresh()
+    machine = build("machine", 0.0)
+    gripper = build("gripper", 1.0)
+    host, sub = machine.armature_object, gripper.armature_object
+    attach = machine.bone_names["g001"]
+    posed = host.pose.bones[attach]
+    posed.rotation_mode = "XYZ"
+    posed.rotation_euler[1] = 0.4
+    bpy.context.view_layer.update()
+    count = len(host.data.bones)
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    sub.select_set(True)
+    host.select_set(True)
+    bpy.context.view_layer.objects.active = host
+
+    report = joining.join(bpy.context, host, [sub], attach_bone=attach)
+    check(any("rest pose" in w for w in report.warnings),
+          "the posed attach bone was not reported: %s" % report.warnings)
+    check("gripper_Rig" in bpy.data.objects,
+          "the gripper's rig was merged although nothing was attached")
+    check(len(host.data.bones) == count,
+          "the host has %d bone(s), had %d" % (len(host.data.bones), count))
+    check(not report.joined and not report.bones_added,
+          "the report says %s joined, %d bone(s) added"
+          % (report.joined, report.bones_added))
+    _host, others = joining.joinable(bpy.context)
+    check([o.name for o in others] == ["gripper_Rig"],
+          "the rigs cannot be joined again: %s" % [o.name for o in others])
+
+    # As the message says: clear the pose and join again.
+    posed.rotation_euler[1] = 0.0
+    bpy.context.view_layer.update()
+    again = joining.join(bpy.context, host, [sub], attach_bone=attach)
+    check(again.attached_to == attach and not again.warnings,
+          "the join after the pose was cleared: attached to %r, %s"
+          % (again.attached_to, again.warnings))
+
+
 def main():
     clean_join_is_quiet(legacy=False)
     clean_join_is_quiet(legacy=True)
+    posed_attach_joins_nothing()
 
     print()
     if FAILS:

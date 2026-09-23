@@ -179,13 +179,16 @@ def join(context, host, others, attach_bone=None, relink=True):
     if attach_bone is not None:
         off_m, off_rad = bone_off_rest(host, attach_bone)
         if off_m > _REST_TOL or off_rad > _REST_TOL:
+            # Stop before the merge. Merged, the rigs cannot be joined
+            # again once the pose is cleared: there is one rig left.
             report.warnings.append(
                 "{} is {:.1f} mm and {:.3f} rad off its rest pose. Parenting "
                 "to a posed bone would carry that offset into everything "
-                "joined under it, so nothing was attached: clear the pose "
+                "joined under it, so nothing was joined: clear the pose "
                 "(Alt+G, Alt+R) and join again."
                 .format(attach_bone, off_m * 1000.0, off_rad))
-            attach_bone = None
+            report.joined = []
+            return report
 
     before_bones, before_objects = _snapshot(context)
     names_before = {pb.name for pb in host.pose.bones}

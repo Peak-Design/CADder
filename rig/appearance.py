@@ -286,7 +286,11 @@ def _group(name, fill):
 
     An older file can hold a group of the same name from an earlier
     version of this addon. Such a group is filled again in place, so
-    every material that already points at it gets the new contents.
+    every material that already points at it gets the new contents. Its
+    sockets stay where the new version has a socket of the same name and
+    type: a group node holds its links and its values by socket, so a
+    socket made again cut every decal in the file off its image and put
+    its placement back to the defaults.
 
     Only a group carrying the version stamp is ever refilled. The name
     alone is not enough: a group of the same name can be somebody else's,
@@ -312,14 +316,42 @@ def _group(name, fill):
         group = bpy.data.node_groups.new(name, "ShaderNodeTree")
     else:
         group.nodes.clear()
-        group.interface.clear()
     group[_VERSION_KEY] = GROUP_VERSION
-    fill(group)
+    declared = _declared.setdefault(group.as_pointer(), [])
+    del declared[:]
+    try:
+        fill(group)
+    finally:
+        _declared.pop(group.as_pointer(), None)
+    # What the new version no longer has.
+    for item in list(group.interface.items_tree):
+        if item.item_type == "SOCKET" and item.identifier not in declared:
+            group.interface.remove(item)
     return group
 
 
+# group pointer -> the identifiers of the sockets the fill running on it
+# declared. By identifier: a socket whose subtype is set is the same socket
+# under another Python type, and no longer compares equal to itself.
+_declared = {}
+
+
 def _socket(tree, name, kind, into, **props):
-    socket = tree.interface.new_socket(name=name, in_out=into, socket_type=kind)
+    """A socket of the group's interface: the one it has of this name,
+    side and type, or a new one."""
+    socket = None
+    declared = _declared.get(tree.as_pointer())
+    for item in tree.interface.items_tree:
+        if (item.item_type == "SOCKET" and item.name == name
+                and item.in_out == into and item.socket_type == kind
+                and (declared is None or item.identifier not in declared)):
+            socket = item
+            break
+    if socket is None:
+        socket = tree.interface.new_socket(name=name, in_out=into,
+                                           socket_type=kind)
+    if declared is not None:
+        declared.append(socket.identifier)
     for key, value in props.items():
         try:
             setattr(socket, key, value)

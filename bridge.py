@@ -826,8 +826,15 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 in_rig.frame_rows = [list(r) for r in (
                     released.arm_obj.matrix_world
                     @ Matrix([tuple(r) for r in report.frame_rows]))]
+                # A part new in this update goes on the rig too, so it is
+                # placed in the rig's frame as well, not at the CAD origin.
+                on_rig = rig_update.alive(released.parts)
+                for name in (stages.get("update") or {}).get("added") or []:
+                    obj = bpy.data.objects.get(name)
+                    if obj is not None and obj not in on_rig:
+                        on_rig.append(obj)
                 back = pose_sync.sync(rig_ui._STATE["manifest"], in_rig,
-                                      objects=rig_update.alive(released.parts))
+                                      objects=on_rig)
                 stages["poses"] = {
                     "moved": [{"object": n, "distance_m": d}
                               for n, d in back.moved],

@@ -375,11 +375,12 @@ def run_without_relink(tmp, only=None):
     return done
 
 
-def run_moved_rig(tmp, mode):
+def run_moved_rig(tmp, mode, new_part=False):
     """Found 2026-09-23: after the user moved the rig object to place the
     machine, Refresh put every part back at the CAD origin and bound it
-    there, away from its bone."""
-    where = "moved rig: " + mode
+    there, away from its bone. A part new in the refresh has to land in the
+    placed rig too."""
+    where = "moved rig: " + mode + (" with a new part" if new_part else "")
     bpy.ops.wm.read_factory_settings(use_empty=True)
     frame = Matrix([tuple(r) for r in native_import.up_frame("ZPOS")])
     mesh, man = export(tmp, BEFORE, 0.4)
@@ -391,10 +392,13 @@ def run_moved_rig(tmp, mode):
     bpy.context.view_layer.update()
     placed = arm_obj.matrix_world.copy()
 
-    mesh, man = export(tmp, AFTER, 0.45)
+    after = AFTER + ([("c005", "nut-1", "pnut", 0.5, 2, "nut")] if new_part else [])
+    mesh, man = export(tmp, after, 0.45)
     result = send(mesh, man, "FLAT", "ZPOS", update=True, rig_mode=mode)
     if not result.get("ok"):
         fail(where, "the refresh failed: %s" % result.get("error"))
+    if new_part and "c005" not in parts():
+        fail(where, "the new part did not arrive")
     arm_obj = rig_object()
     if off(arm_obj.matrix_world, placed) > TOL:
         fail(where, "the rig is no longer where the user placed it")
@@ -495,6 +499,7 @@ def main():
     done.extend(run_without_relink(tmp))
     for mode in ("KEEP", "APPEND", "REGENERATE"):
         done.append(run_moved_rig(tmp, mode))
+        done.append(run_moved_rig(tmp, mode, new_part=True))
         done.append(run_other_assembly(tmp, mode))
     done.append(run_nla_tweak(tmp))
     print("rig_refresh_pose_smoke: OK: %d refreshes of a posed rig put every "

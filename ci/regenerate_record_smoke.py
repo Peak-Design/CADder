@@ -124,6 +124,64 @@ check(len(part.data.polygons) == quads,
       "Apply UVs keeps the quads (%d faces against %d)"
       % (len(part.data.polygons), quads))
 
+# ---- each part unwraps with its own Normalize UVs ------------------------
+# Apply UVs on some parts of a file can leave two records that disagree
+# about Normalize UVs. A Regenerate of both must follow each record. It
+# once took the setting of the part it rebuilt last for all of them.
+print("\n== each part keeps its own Normalize UVs")
+ASSEMBLY = os.path.join(_HERE, "fixtures", "assembly.step")
+
+
+def load_assembly():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="CADder")
+    m = sys.modules["CADder.main"]
+    m._cache_drop(ASSEMBLY)
+    m.load_step(bpy.context, ASSEMBLY, htypes="FLAT", up_as="Z",
+                tris_to_quads=False, uv_mode="ANGLE_BASED",
+                uv_normalize=True)
+    bpy.context.view_layer.update()
+    parts = {}
+    for o in bpy.data.objects:
+        if o.type == "MESH" and "STEP_tag" in o:
+            parts.setdefault(o.data, o)
+    parts = sorted(parts.values(), key=lambda o: o.name)[:2]
+    assert len(parts) == 2, "the assembly has fewer than two meshes"
+    a, b = parts
+    rec = record(b)
+    rec["uv_normalize"] = False
+    b["STEP_import_settings"] = json.dumps(rec)
+    return a, b
+
+
+def extent(obj):
+    layer = obj.data.uv_layers.active
+    us = [d.uv[0] for d in layer.data]
+    vs = [d.uv[1] for d in layer.data]
+    return max(max(us) - min(us), max(vs) - min(vs))
+
+
+def regenerate(*objs):
+    for o in bpy.context.view_layer.objects:
+        o.select_set(o in objs)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.stepper.regenerate(use_scene_settings=False)
+
+
+a, b = load_assembly()
+regenerate(a)
+alone_a = extent(a)
+regenerate(b)
+alone_b = extent(b)
+check(abs(alone_a - alone_b) > 0.1,
+      "the two records give two sizes of map (%.3f and %.3f)"
+      % (alone_a, alone_b))
+for first, second in ((a, b), (b, a)):
+    regenerate(first, second)
+    check(abs(extent(a) - alone_a) < 1e-3 and abs(extent(b) - alone_b) < 1e-3,
+          "together, %s first: %.3f and %.3f, as alone"
+          % (first.name, extent(a), extent(b)))
+
 if FAILS:
     print("\nregenerate_record_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

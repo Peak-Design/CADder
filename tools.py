@@ -414,7 +414,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 if quads and uv_mode != "BOX":
                     quad_objs.append(obj)
                 if uv_mode in uv_mod.UNWRAP_MODES:
-                    unwrap_objs.setdefault(uv_mode, []).append(obj)
+                    unwrap_objs.setdefault(
+                        (uv_mode, bool(m._uv_options["normalize"])),
+                        []).append(obj)
                 elif uv_mode == "SMART":
                     smart_objs.setdefault(
                         (stored.get("uv_pack", "NONE"),
@@ -446,14 +448,15 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         for smart_set, objs_s in smart_objs.items():
             m._smart_merge_objects(objs_s, *smart_set)
 
-        # One unwrap for each method, so every part gets the one it was
-        # imported with. Regenerated meshes are already scaled to scene
-        # units, so real-world UV mode needs no extra unit conversion.
-        for method, objs_m in unwrap_objs.items():
+        # One unwrap for each method and each Normalize UVs setting, so
+        # every part gets the map its own record asks for. The setting was
+        # once read after the loop, which gave every part the setting of
+        # the part rebuilt last. Regenerated meshes are already scaled to
+        # scene units, so real-world UV mode needs no extra unit conversion.
+        for (method, normalize), objs_m in unwrap_objs.items():
             m._unwrap_uv_objects(
                 objs_m,
-                world_scale=(None if m._uv_options.get("normalize", True)
-                             else 1.0),
+                world_scale=None if normalize else 1.0,
                 method=method)
 
         wm.progress_end()

@@ -1110,6 +1110,17 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                     "warnings": list(build.warnings),
                 }
 
+        # A build puts the rig collection next to the assembly, in the top
+        # collection of the send. A rig this send kept (KEEP, or a locked
+        # rig) is not built, and its collection is moved here instead, so
+        # a scene from before the top collection gets the same layout.
+        if mesh_path and have_manifest and built is None and own is not None:
+            from .rig import rig_build
+            try:
+                rig_build.settle_collection(bpy.context, manifest, own)
+            except (ReferenceError, RuntimeError) as exc:
+                log.append("the rig collection was not moved: %s" % exc)
+
         # The parts go on the rig this job built, or else on the rig of
         # their own assembly. Not on the first rig in the scene: parts of
         # a direct send carry no manifest path, so relink would bind them

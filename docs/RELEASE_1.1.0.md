@@ -22,6 +22,11 @@ Install the zip for your platform the same way as the first time.
 - **Refresh Model keeps your rig.** The parts go back on the SolidWorks
   pose before they are bound again. Your handles, mechanism inputs,
   drivers and bones of your own stay on the rig.
+- **The rig is next to its assembly.** A send puts the assembly
+  collection and the rig collection side by side in one collection,
+  `<assembly>_Top_Level`, with each Tree hierarchy option. The next send
+  uses it again, also when you moved it. Refresh Model gives a scene from
+  an older version the same layout.
 - **Refresh Model is offered only when it can work.** The button in
   SolidWorks stays gray until a running Blender holds a scene of the
   document, from a send or from a saved file opened again.

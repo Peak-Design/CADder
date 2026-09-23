@@ -737,6 +737,25 @@ def _usable_home(context, col, prototypes):
     return bool(walk(context.view_layer.layer_collection, False))
 
 
+def _is_top(col):
+    """True for the top collection of a direct send, which holds the
+    assembly's collection and the rig's (native_import._ROLE_TOP)."""
+    try:
+        return col.get("SWMESH_role") == "top"
+    except (AttributeError, ReferenceError):
+        return False
+
+
+def _top_above(col, paths):
+    """The top collection of a direct send that is `col` or holds it, the
+    nearest one, or None."""
+    for name in reversed((paths.get(col.name) or [])[1:]):
+        found = bpy.data.collections.get(name)
+        if found is not None and _is_top(found):
+            return found
+    return None
+
+
 def _rig_home(context, manifest):
     """The collection the rig belongs in: the one that holds the geometry it
     drives.
@@ -746,13 +765,34 @@ def _rig_home(context, manifest):
     or hides the bones and leaves the parts (live, 2026-08-25). Inside the
     import's own collection, one switch takes the whole machine.
 
-    Preference order: the single top collection the import made (what the
-    user calls "the collection I imported into"), then the nearest collection
+    A direct send puts its assembly in a top collection, and that is the
+    home: the rig collection stands next to the assembly collection, and
+    not somewhere in its tree (Oscar, 2026-09-23). A STEP import has no
+    top collection, and its rig is not put in one that the user moved it
+    into.
+    """
+    driven = _driven_objects(manifest)
+    home = _import_home(context, driven)
+    if home == context.scene.collection \
+            or not any(o.get("SWMESH_file") for o in driven):
+        return home
+    top = _top_above(home, _collection_paths(context.scene))
+    if top is not None and _usable_home(context, top,
+                                        _prototype_collections()):
+        return top
+    return home
+
+
+def _import_home(context, driven):
+    """The collection that holds the geometry the rig drives, the objects
+    `driven`.
+
+    Preference order: the single outermost collection the import made (what
+    the user calls "the collection I imported into"), then the nearest collection
     that contains every driven object, then the scene root. Only a
     collection the view layer reaches is ever chosen (see _usable_home).
     """
     scene = context.scene
-    driven = _driven_objects(manifest)
     if not driven:
         return scene.collection
     prototypes = _prototype_collections()
@@ -805,29 +845,89 @@ def _place_rig_collection(context, manifest, rig_name):
     """The rig's own collection, put where the assembly it drives lives.
 
     An existing one is left where it is if the user has moved it somewhere
-    deliberate. Only the default parking spot (loose at the scene root)
-    is re-homed, so old scenes gain the fix on their next rebuild without
-    overriding anyone's arrangement.
+    deliberate. Only a default parking spot is re-homed (see
+    _rehome_rig_collection), so old scenes gain the fix on their next
+    rebuild without overriding anyone's arrangement.
     """
-    scene_col = context.scene.collection
     home = _rig_home(context, manifest)
     collection = bpy.data.collections.get(rig_name)
     if collection is None or collection.name not in _collection_paths(context.scene):
         collection = bpy.data.collections.new(rig_name)
         home.children.link(collection)
         return collection
+    _rehome_rig_collection(context, home, collection)
+    return collection
 
+
+def _import_collection_in(col, top):
+    """True when `col` is a collection a direct send made for its assembly
+    (not the top collection itself), inside the top collection `top`."""
+    try:
+        if col.get("SWMESH_file") is None or _is_top(col):
+            return False
+        return col.name in {c.name for c in top.children_recursive}
+    except ReferenceError:
+        return False
+
+
+def _rehome_rig_collection(context, home, collection, from_root=True):
+    """Moves an existing rig collection into `home` when it stands in a
+    default parking spot, and nowhere else. There are two.
+
+      * Loose at the scene root, unless `from_root` is False.
+      * Inside a collection of a direct send, when `home` is the top
+        collection that holds it. A build before the top collection put
+        the rig in the collection that holds every part it drives: the
+        assembly's own collection, or a deeper one of its tree when all
+        the parts are there (one flat group, one branch).
+    """
+    scene_col = context.scene.collection
+    if home == scene_col:
+        return
     # A user who dragged geometry into the rig collection could make the
     # home the rig collection itself, or something inside it. Linking a
     # collection into its own descendant is a cycle Blender refuses.
     if home.name == collection.name or home.name in {
             c.name for c in collection.children_recursive}:
-        return collection
+        return
     parents = [c for c in [scene_col] + list(bpy.data.collections)
                if collection.name in [x.name for x in c.children]]
-    if [c.name for c in parents] == [scene_col.name] and home is not scene_col:
-        scene_col.children.unlink(collection)
+    if len(parents) != 1 or parents[0].name == home.name:
+        return
+    parent = parents[0]
+    if (from_root and parent.name == scene_col.name) \
+            or (_is_top(home) and _import_collection_in(parent, home)):
+        parent.children.unlink(collection)
         home.children.link(collection)
+
+
+def settle_collection(context, manifest, arm_obj):
+    """Moves the collection of a standing rig next to its assembly, in the
+    top collection of a direct send, when the rig collection stands in a
+    default parking spot (see _rehome_rig_collection).
+
+    A rebuild inside a standing armature calls this. The bridge calls it
+    for a send that builds no rig: KEEP, or a locked rig. A scene from
+    before the top collection then gets the new layout from that send too.
+    Only the rig's own collection moves, the one with the name of the rig.
+    A collection of the user's own that also holds the armature stays
+    where it is. Returns the rig's own collection, or None.
+
+    From the scene root, only the collection with this assembly's rig name
+    moves. A rig of a different name can be the rig of a machine that this
+    assembly was joined into (Join Rigs), and its home is not this
+    assembly's top collection."""
+    collection = _rig_collection_of(arm_obj)
+    rig_name = _rig_name(manifest)
+    if collection is None or collection.name not in (rig_name, arm_obj.name):
+        return None
+    if collection.name not in _collection_paths(context.scene):
+        return None
+    home = _rig_home(context, manifest)
+    if not _is_top(home):
+        return None
+    _rehome_rig_collection(context, home, collection,
+                           from_root=collection.name == rig_name)
     return collection
 
 
@@ -1295,7 +1395,11 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         # update keep an animation. Only what this addon generated goes.
         arm_obj = into
         arm_data = arm_obj.data
-        collection = _rig_collection_of(arm_obj)             or _place_rig_collection(context, manifest, rig_name)
+        # A rig collection in a default parking spot of an older build
+        # moves next to the assembly (settle_collection).
+        collection = settle_collection(context, manifest, arm_obj) \
+            or _rig_collection_of(arm_obj) \
+            or _place_rig_collection(context, manifest, rig_name)
         orphans = _clear_generated(context, arm_obj, collection,
                                    manifest.source_path or "")
     else:

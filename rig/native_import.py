@@ -253,6 +253,20 @@ def _rehome_children(coll, home):
 
 
 _TAG_FILE = "SWMESH_file"      # on every collection and object of an import
+_TAG_ROLE = diff_mod.TAG_ROLE  # what a collection of an import is for
+
+# A direct send puts its assembly collection in a top collection, and the
+# rig build puts the rig collection next to it. The rig is then easy to
+# find, and it does not stand among all the other collections of the
+# scene (Oscar, 2026-09-23). The top collection has the tag of the import
+# and this role. It is not a part of the assembly: an update does not
+# take it for the assembly collection, and a send does not remove it with
+# the assembly. Objects and collections the user puts in it are the
+# user's.
+_ROLE_TOP = "top"
+_TOP_SUFFIX = "_Top_Level"
+# Blender cuts a longer name at this many bytes.
+_NAME_BYTES = 63
 
 # ".body003" at the end of a path: a part that came in as one object per
 # solid body. The CAD application knows the part, not the body.
@@ -287,9 +301,12 @@ def cad_paths(objects):
 def _own_collections(stem, scope):
     """Every collection a previous import of this file made in the scene
     (of any file, with stem None), leaves first, so each is empty of
-    children by the time it is removed."""
+    children by the time it is removed. The top collection is not one of
+    them: it can hold the user's work, and remove_previous decides about
+    it apart."""
     mine = [c for c in scope.collections
-            if c.get(_TAG_FILE) is not None and (stem is None or c.get(_TAG_FILE) == stem)]
+            if c.get(_TAG_FILE) is not None and c.get(_TAG_ROLE) != _ROLE_TOP
+            and (stem is None or c.get(_TAG_FILE) == stem)]
     depth = {}
 
     def d(c):
@@ -353,6 +370,82 @@ class _Scope:
             return False
 
 
+def _top_name(stem):
+    """The name of the top collection of the import `stem`.
+
+    The stem is made short as _short_name does. When its characters take
+    more bytes than the name has room for, it is made shorter again, so
+    Blender does not cut the suffix off the end."""
+    base = _short_name(stem)
+    room = _NAME_BYTES - len(_TOP_SUFFIX.encode("utf-8"))
+    if len(base.encode("utf-8")) > room:
+        keep = len(base) // 2
+        while keep > 1 and len((stem[:keep] + "_" + stem[-keep:])
+                               .encode("utf-8")) > room:
+            keep -= 1
+        base = stem[:keep] + "_" + stem[-keep:]
+    return base + _TOP_SUFFIX
+
+
+def _tops(scope):
+    """stem -> the top collection of that import in this scene."""
+    out = {}
+    for col in scope.collections:
+        try:
+            if col.get(_TAG_ROLE) == _ROLE_TOP and col.get(_TAG_FILE):
+                out.setdefault(col[_TAG_FILE], col)
+        except ReferenceError:
+            continue
+    return out
+
+
+def _new_top(stem):
+    col = bpy.data.collections.new(_top_name(stem))
+    col[_TAG_FILE] = stem
+    col[_TAG_ROLE] = _ROLE_TOP
+    return col
+
+
+def _top_collection(stem, scope, destination):
+    """The top collection for a send of `stem`. The scene's own is used
+    again, where it is and with what is in it: the user can have moved it
+    into a collection of their own, or put work of their own in it.
+    Otherwise a new one goes in `destination`."""
+    top = _tops(scope).get(stem)
+    if top is None:
+        top = _new_top(stem)
+        destination.children.link(top)
+    return top
+
+
+def _wrap(root, stem, scope, scene_collection):
+    """Puts the assembly collection of an import from before the top
+    collection into a new top collection, in the place the assembly
+    collection has now. The rig build then moves the rig collection out
+    of the assembly collection and next to it (rig_build).
+
+    An import that has a top collection keeps its layout, also when the
+    user moved the assembly collection out of it. Returns the new top
+    collection, or None."""
+    if _tops(scope).get(stem) is not None:
+        return None
+    holders = []
+    for col in [scene_collection] + scope.collections:
+        try:
+            if root.name in col.children:
+                holders.append(col)
+        except ReferenceError:
+            continue
+    top = _new_top(stem)
+    for holder in holders or [scene_collection]:
+        if root.name in holder.children:
+            holder.children.unlink(root)
+        holder.children.link(top)
+    top.children.link(root)
+    print("[CADLink native] %s is now inside %s" % (root.name, top.name))
+    return top
+
+
 def _renamed(root, stem, scope):
     """Puts the new name of the document on everything the import that is
     standing tagged with the old one."""
@@ -362,7 +455,12 @@ def _renamed(root, stem, scope):
     for coll in scope.collections:
         if coll.get(_TAG_FILE) == was:
             coll[_TAG_FILE] = stem
-            if coll.name == was or coll.name.startswith(was + "."):
+            if coll.get(_TAG_ROLE) == _ROLE_TOP:
+                # A name the user gave it stays.
+                old = _top_name(was)
+                if coll.name == old or coll.name.startswith(old + "."):
+                    coll.name = _top_name(stem) + coll.name[len(old):]
+            elif coll.name == was or coll.name.startswith(was + "."):
                 coll.name = stem + coll.name[len(was):]
     for obj in scope.objects + scope.aside:
         if obj.get(_TAG_FILE) == was:
@@ -423,7 +521,8 @@ def standing(stem, scene, scope):
     return best
 
 
-def remove_previous(stem=None, scene_collection=None, scene=None):
+def remove_previous(stem=None, scene_collection=None, scene=None,
+                    keep_top=None):
     """Clears the previous native import so a send replaces rather than
     accumulates: one direct send stands in a scene at a time, whatever
     assembly it was (a different one otherwise stacks a dead rig beside
@@ -432,10 +531,20 @@ def remove_previous(stem=None, scene_collection=None, scene=None):
     and very much present in the file. `stem` narrows the removal to one
     file's import. None takes every native import. Only in `scene` (the
     current one by default), and never a part another add-on keeps aside
-    (see _Scope)."""
+    (see _Scope).
+
+    A top collection is not removed with its import. It goes only when
+    nothing is left in it, and never the one of `keep_top`, the stem the
+    send is about to build again: the send uses it again, in the place the
+    user gave it."""
     removed = 0
-    scope = _Scope(scene or bpy.context.scene)
+    scene = scene or bpy.context.scene
+    scene_collection = scene_collection or scene.collection
+    scope = _Scope(scene)
     colls = _own_collections(stem, scope)
+    tops = _tops(scope)
+    doomed_tops = [top for name, top in tops.items()
+                   if stem is None or name == stem]
     objects = [o for o in scope.objects
                if o.get(_TAG_FILE) is not None and (stem is None or o.get(_TAG_FILE) == stem)]
     for coll in colls:
@@ -451,7 +560,7 @@ def remove_previous(stem=None, scene_collection=None, scene=None):
                     coll.objects.unlink(obj)
             except (ReferenceError, RuntimeError):
                 continue
-    if not colls and not objects:
+    if not colls and not objects and not doomed_tops:
         return 0
     # The rigs these parts hang from. One whose every part goes with this
     # replace is left driving nothing, so it goes too: a DIFFERENT assembly
@@ -471,14 +580,20 @@ def remove_previous(stem=None, scene_collection=None, scene=None):
         removed += 1
         if isinstance(data, bpy.types.Mesh) and data.users == 0:
             bpy.data.meshes.remove(data)
-    # The rig build parks its collection inside the one holding the parts
-    # it drives, which is this one. Removing it with the rig still inside
-    # cut the rig (and the bone widgets under it) out of the scene while
-    # keeping it in the file, so the next build found no rig collection
-    # in the scene and made a numbered copy. Children move up first.
+    # A build before the top collection parked the rig collection inside
+    # the one holding the parts it drives, which is this one. Removing it
+    # with the rig still inside cut the rig (and the bone widgets under
+    # it) out of the scene while keeping it in the file, so the next build
+    # found no rig collection in the scene and made a numbered copy. So
+    # children move up first. A collection of the user's own inside the
+    # assembly (the rig of one part, say) goes into the top collection of
+    # the same import, so a re-send keeps it inside the model. An import
+    # from before the top collection has none, and the scene root takes
+    # the children.
     for coll in colls:
         try:
-            _rehome_children(coll, scene_collection or bpy.context.scene.collection)
+            home = tops.get(coll.get(_TAG_FILE)) or scene_collection
+            _rehome_children(coll, home)
             bpy.data.collections.remove(coll)
         except ReferenceError:
             pass
@@ -501,6 +616,16 @@ def remove_previous(stem=None, scene_collection=None, scene=None):
             rig_build.remove_rig(arm)
         print("[CADLink native] removed %d rig(s) whose every part was "
               "replaced: %s" % (len(names), ", ".join(names)))
+    # Last, when the rigs have gone from them too. A top collection that
+    # still holds something (a locked rig, a collection or an object of
+    # the user's) stays, also the one of a different assembly.
+    for top in doomed_tops:
+        try:
+            if top.get(_TAG_FILE) == keep_top or top.objects or top.children:
+                continue
+            bpy.data.collections.remove(top)
+        except ReferenceError:
+            continue
     return removed
 
 
@@ -976,9 +1101,11 @@ class _Placer:
 
     def unplace(self, obj):
         """Out of the collections THIS import made, and off its branch
-        empty. A collection of the user's own keeps the object."""
+        empty. A collection of the user's own keeps the object, and so
+        does the top collection: what is in it the user put there."""
         for col in list(obj.users_collection):
-            if col.get(_TAG_FILE) == self.stem:
+            if col.get(_TAG_FILE) == self.stem \
+                    and col.get(_TAG_ROLE) != _ROLE_TOP:
                 col.objects.unlink(obj)
         parent = obj.parent
         if parent is not None and parent.get(_TAG_FILE) == self.stem \
@@ -1080,7 +1207,9 @@ def build(context, path, manifest=None, collection_name=None,
     option, same spelling): the geometry is turned and the report's frame
     says so, so the rig lands on it. hierarchy is the STEP importer's
     hierarchy_types; group_in_collection wraps the import in one
-    collection named after the file, as the importer does.
+    collection named after the file, as the importer does. That
+    collection goes in the top collection, "<file>_Top_Level", and the
+    rig build puts the rig collection next to it.
 
     unit_scale is Blender units per meter. None takes the scene's
     (scene_unit_scale), which is what every caller wants.
@@ -1103,8 +1232,12 @@ def build(context, path, manifest=None, collection_name=None,
                 if o.get(_TAG_FILE) is not None]
     locks = material_lock.take(previous)
     shapes = geometry_lock.take(previous, tags=_MESH_TAGS)
-    remove_previous(None, context.scene.collection, context.scene)
-    destination = context.scene.collection
+    remove_previous(None, context.scene.collection, context.scene,
+                    keep_top=stem)
+    # The top collection holds the assembly, and the rig next to it. A
+    # re-send uses the one it made before, in the place it has now.
+    destination = _top_collection(stem, _Scope(context.scene),
+                                  context.scene.collection)
     # One collection, named after the assembly. The shape of what is
     # inside it is the hierarchy option's business, not the name's
     # (Oscar, 2026-09-16: a send should simply put the assembly in a
@@ -1255,6 +1388,9 @@ def update(context, path, manifest=None, unit_scale=None,
             report_to=report_to)
         out = UpdateReport(added=[o.name for o in objects], structural=True)
         return objects, report, out
+    # A scene from before the top collection gets one around its
+    # assembly. Nothing else about the layout changes.
+    _wrap(root, stem, scope, context.scene.collection)
 
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,

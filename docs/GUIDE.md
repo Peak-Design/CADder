@@ -300,6 +300,22 @@ STEP import of that assembly. If the scene has one, the send stops before
 it changes anything, and SolidWorks tells you. Delete the STEP import, or
 open a new Blender file, and send again.
 
+A send puts the assembly in one collection, `<assembly>_Top_Level`. In it
+are two collections side by side: the assembly collection, `<assembly>`,
+and the rig collection, `<assembly>_Rig`. The layout is the same for each
+**Tree hierarchy** option, also **Flat collection**. So the rig is easy to
+find, and one switch hides the machine and its bones together.
+
+The next send of the same assembly uses the same `_Top_Level` collection.
+You can move it into a collection of your own, and put your own objects
+and collections in it. A send keeps them there. A send makes the assembly
+collection again, so a collection of your own inside it moves up into
+`_Top_Level`. **Refresh Model** leaves your collections where they are. It
+also puts a scene from an older version in this layout: it makes the
+`_Top_Level` collection and moves the rig collection next to the assembly.
+When Refresh Model finds the assembly under a new document name, the
+`_Top_Level` collection takes the new name too.
+
 The **CADder** tab holds **Mesh Quality** at the top, then the link and
 the panels that work on any part. Mesh Quality asks one question for both
 routes: how fine the mesh is, and the button to read the CAD again. See
@@ -576,7 +592,9 @@ different thing and never in the way.
 Join as many as you like. Each keeps its own joints, limits and couplings.
 
 The rig is built inside the collection you imported into, so hiding that
-collection hides the machine and its bones together. Anything the rig has no
+collection hides the machine and its bones together. For a send from
+SolidWorks, that is the `<assembly>_Top_Level` collection, and the rig
+collection is next to the assembly collection. Anything the rig has no
 bone for (the import's own empties, a part that did not match) is hung off
 the ground bone rather than left behind, so moving the rig moves the whole
 assembly. Nothing is moved between collections: everything stays exactly
@@ -892,7 +910,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
+| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |
 | 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |

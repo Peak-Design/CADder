@@ -289,6 +289,17 @@ def apply(context, mode, manifest, arm_obj, objects, frame_rows=None,
     result = rig_build.build(
         context, manifest, plan, frame_rows=frame_rows,
         into=arm_obj if mode == APPEND else None)
+    if mode == REGENERATE:
+        # The input the user chose for each mechanism is kept on the
+        # armature, and the old one went with its choices. The manifest
+        # already carries them (load_manifest read them off the old rig),
+        # so the new rig takes them as Build Rig writes them. Without this
+        # the next send went back to the default input.
+        from . import ui
+        try:
+            ui._store_choices(context, result.armature_object)
+        except AttributeError as exc:
+            print("[CADLink] the mechanism inputs were not kept:", exc)
 
     now = {b.name for b in result.armature_object.data.bones}
     report.bones_after = len(now)

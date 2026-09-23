@@ -819,6 +819,28 @@ def _deselect_all():
             pass
 
 
+def _editable(objs):
+    """Objects edit mode can take, one for each of `objs`, and the holders
+    made for them.
+
+    Edit mode takes only an object that is shown in the view layer. The
+    prototype of a collection instance sits in an excluded collection,
+    select_set fails on it, and the pack or unwrap did nothing while the UV
+    panel reported it done. Such a mesh gets a holder object of its own in
+    the scene collection, as in _unwrap_compound_objects. The caller
+    removes the holders."""
+    out, holders = [], []
+    for o in objs:
+        if o.visible_get():
+            out.append(o)
+            continue
+        holder = bpy.data.objects.new("CADder UV", o.data)
+        bpy.context.scene.collection.objects.link(holder)
+        holders.append(holder)
+        out.append(holder)
+    return out, holders
+
+
 def _crowd_margin(margin, count):
     """The margin to ask for when `count` meshes share one tile.
 
@@ -922,6 +944,9 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
         return
 
     t0 = time.time()
+    view_layer = bpy.context.view_layer
+    active = view_layer.objects.active
+    targets, holders = _editable(targets)
     try:
         _deselect_all()
         if mode == "ALL":
@@ -959,6 +984,10 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
+    finally:
+        if holders:
+            bpy.data.batch_remove(holders)
+            view_layer.objects.active = active
 
 
 def _tris_to_quads_objects(objs):
@@ -1051,6 +1080,8 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
     if not targets:
         return
     view_layer = bpy.context.view_layer
+    active = view_layer.objects.active
+    targets, holders = _editable(targets)
     try:
         for o in view_layer.objects:
             try:
@@ -1084,6 +1115,10 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
+    finally:
+        if holders:
+            bpy.data.batch_remove(holders)
+            view_layer.objects.active = active
 
 
 def _unwrap_compound_objects(targets, method="MINIMUM_STRETCH"):

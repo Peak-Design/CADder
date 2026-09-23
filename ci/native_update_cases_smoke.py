@@ -538,7 +538,37 @@ def case_a_geometry_tag_of_an_older_send():
               "%s kept the older hash" % path)
 
 
+def case_a_renamed_document(hierarchy):
+    """A document renamed for a new revision is found by the paths of its
+    parts. The count took in the prototypes and the subassembly empties,
+    which no export has, so an assembly of mostly unique parts in
+    subassemblies was never found: the update built it again and threw
+    away the Blender work."""
+    fresh()
+    defs = [(i, "part%d" % i, 0.01 * (i + 1), None) for i in range(6)]
+    inst = [(i, "c%03d" % i, "part%d" % i,
+             "sub%d-1/part%d-1" % (i // 3, i), 0.1 * i, None)
+            for i in range(6)]
+    nodes = [("sub0-1", "sub0", "", 0.0), ("sub1-1", "sub1", "", 0.3)]
+    native_import.build(bpy.context,
+                        write_mesh("rev_a", defs, inst, nodes),
+                        hierarchy=hierarchy)
+    mine = by_path("sub0-1/part0-1")
+    mine.name = "my part"
+    _objects, _report, out = native_import.update(
+        bpy.context, write_mesh("rev_b", defs, inst, nodes),
+        hierarchy=hierarchy)
+    check(not out.added and not out.removed,
+          "added %s, removed %s" % (out.added, out.removed))
+    check(bpy.data.objects.get("my part") is not None,
+          "the update rebuilt the assembly and lost the renamed part")
+
+
 CASES = [
+    ("COLLECTION_INSTANCES: a renamed document is found",
+     lambda: case_a_renamed_document("COLLECTION_INSTANCES")),
+    ("EMPTIES: a renamed document is found",
+     lambda: case_a_renamed_document("EMPTIES")),
     ("FLAT: shifted material numbers are not new geometry",
      case_material_numbers_shift),
     ("FLAT: a new colour on the old number is seen",

@@ -367,7 +367,11 @@ def standing(stem, scene, scope):
 
     best, score = None, 0
     for coll in roots:
-        held = [o for o in coll.all_objects if o.get(_TAG_FILE) is not None]
+        # Parts only. The prototypes and the subassembly empties have no
+        # path any export holds, and counted in, they kept an assembly of
+        # mostly unique parts from ever reaching half.
+        held = [o for o in coll.all_objects
+                if o.get(_TAG_FILE) is not None and diff_mod.is_part(o)]
         if not held:
             continue
         hit = sum(1 for o in held if (o.get(tag) or "") in known)

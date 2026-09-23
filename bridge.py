@@ -645,6 +645,14 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             if not step_path and m.step_file:
                 step_path = os.path.join(os.path.dirname(manifest_path),
                                          m.step_file)
+        elif mesh_path or step_path:
+            # A send without a manifest means "no rig": a part document, or
+            # an assembly the user sent without its rig. The manifest of the
+            # last send is for a different export, and its component ids
+            # (c001, c002) are positions, not parts. Left loaded, it gave
+            # these parts the group ids and persistent ids of other parts,
+            # and the next refresh paired the parts by those wrong ids.
+            rig_ui._reset_state()
         manifest = rig_ui._STATE.get("manifest") if have_manifest else None
         # The direct link's import, by the name its parts carry.
         stem = (os.path.splitext(os.path.basename(mesh_path))[0]
@@ -709,12 +717,26 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 _remove_previous_import(mesh_path, stages, by_stem=True)
             try:
                 if updating:
+                    # Without a manifest the update knows no groups, and it
+                    # would take the group off every part it touches. A
+                    # part that stays keeps the group it has: the rig it
+                    # hangs on still knows it by that group.
+                    groups = {} if manifest is not None else {
+                        o: o["RIG_group"] for o in bpy.data.objects
+                        if o.get("SWMESH_file") is not None
+                        and o.get("RIG_group") is not None}
                     objects, report, changed = native_import.update(
                         bpy.context, mesh_path,
-                        manifest=rig_ui._STATE.get("manifest"),
+                        manifest=manifest,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
                         report_to=said, before_changes=before_changes)
+                    for obj, gid in groups.items():
+                        try:
+                            if obj.get("RIG_group") is None:
+                                obj["RIG_group"] = gid
+                        except ReferenceError:
+                            continue
                     stages["update"] = {
                         "added": changed.added,
                         "removed": changed.removed,
@@ -727,7 +749,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 else:
                     objects, report = native_import.build(
                         bpy.context, mesh_path,
-                        manifest=rig_ui._STATE.get("manifest"),
+                        manifest=manifest,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
                         report_to=said)

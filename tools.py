@@ -490,11 +490,22 @@ class STEPPER_OT_prune_hierarchy(bpy.types.Operator):
         for o in group:
             if o.parent is not None:
                 children[o.parent].append(o)
+        # Every child an object has, the objects of the user included. An
+        # empty that also holds a light or a helper of the user is not a
+        # level with one child. Removing it dropped those objects from
+        # their parent and moved them, and Restore did not put them back.
+        # A prune moves one child up in the place of the empty it removes,
+        # so these counts stay true through the loop below.
+        held = defaultdict(int)
+        for o in bpy.data.objects:
+            if o.parent is not None:
+                held[o.parent] += 1
 
         def prunable(o):
             return (o.type == "EMPTY" and o.data is None
                     and o.instance_type != "COLLECTION"
-                    and len(children.get(o, [])) == 1)
+                    and len(children.get(o, [])) == 1
+                    and held.get(o, 0) == 1)
 
         removed_total = 0
         changed = True

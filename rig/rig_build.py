@@ -267,11 +267,16 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
         # before it becomes local Y. Where the pin already stands square to
         # the ram (every ram on live ClampRig), the projection changes
         # nothing and +Y still lies exactly along the ram.
+        #
+        # A ball has no pin. The axis a limited ball carries is its swing
+        # cone's, and projecting the aim off it rested the half off the
+        # ram's line (sliders._pinned leaves such a half on Damped Track).
         origin = joint.origin
         toward = Vector((bone_plan.aim_at[0] - origin[0],
                          bone_plan.aim_at[1] - origin[1],
                          bone_plan.aim_at[2] - origin[2]))
-        pin = None if joint.axis is None else _normalized(joint.axis)
+        pin = None if (joint.axis is None or joint.type in sliders._NO_PIN) \
+            else _normalized(joint.axis)
         in_plane = toward
         if pin is not None:
             flat = toward - pin * toward.dot(pin)

@@ -35,6 +35,9 @@ except ImportError:
     bpy = None
 
 _TRACK_NAME = "CADLink Aim "
+# Mounts that turn about no pin of their own, whatever axis they carry.
+# rig_build rests their halves along the aim unprojected.
+_NO_PIN = ("ball", "free")
 
 
 def _pinned(plan, gid):
@@ -42,6 +45,11 @@ def _pinned(plan, gid):
     rig_build rests with local Z ON that axis, so LOCK_Z is the pin."""
     bp = getattr(plan, "bone_by_group", {}).get(gid)
     if bp is None or bp.joint is None or bp.joint.axis is None:
+        return False
+    # A limited ball has an axis too, but it is the swing cone's axis and
+    # not a pin: nothing is known to lock, so the half keeps its Damped
+    # Track (see the module docstring).
+    if bp.joint.type in _NO_PIN:
         return False
     if bp.joint.origin is None or bp.aim_at is None:
         return False

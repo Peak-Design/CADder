@@ -91,6 +91,38 @@ class Released:
     use_nla: bool = True
     posed: bool = False
     done: bool = False
+    # (object, bone, parent inverse) for each object taken off a bone
+    links: list = field(default_factory=list)
+
+    def rebind(self, context):
+        """Puts every part release() took off back on its bone, where it
+        stands, when nothing bound it again. The job ended before relink
+        (a failed import or rig update), or relink did not run. Without
+        this the parts stay loose and the rig drives nothing. Returns how
+        many went back."""
+        arm = self.arm_obj
+        try:
+            bones = arm.data.bones
+        except (ReferenceError, AttributeError):
+            return 0
+        back = []
+        for obj, bone, mpi in self.links:
+            try:
+                if obj.parent is not None or bones.get(bone) is None:
+                    continue
+                back.append((obj, bone, mpi, obj.matrix_world.copy()))
+            except ReferenceError:
+                continue
+        for obj, bone, mpi, world in back:
+            obj.parent = arm
+            obj.parent_type = "BONE"
+            obj.parent_bone = bone
+            obj.matrix_parent_inverse = mpi
+        if back:
+            context.view_layer.update()
+        for obj, bone, mpi, world in back:
+            obj.matrix_world = world
+        return len(back)
 
     def finish(self):
         """Gives the rig its animation back. Safe to call twice: the job
@@ -113,7 +145,7 @@ class Released:
             pass
 
 
-def release(context, arm_obj) -> Released:
+def release(context, arm_obj, hold=None) -> Released:
     """Takes the parts off a standing rig at its rest pose, before an update
     moves any of them.
 
@@ -129,14 +161,23 @@ def release(context, arm_obj) -> Released:
 
     The animation comes off too, until the parts are bound again: a keyed
     bone would otherwise take its keyed pose back on the next depsgraph
-    update, in the middle of the rebind."""
+    update, in the middle of the rebind.
+
+    `hold` (a dict) gets the Released under "release" before anything
+    changes, so the job can give everything back whatever happens after."""
     out = Released(arm_obj=arm_obj)
+    if hold is not None:
+        hold["release"] = out
     if arm_obj is None:
         return out
     from . import rig_build
 
     anim = arm_obj.animation_data
     if anim is not None:
+        # The action cannot be changed while an NLA strip is tweaked, so
+        # tweak mode ends first, as the other object modes do before a job.
+        if getattr(anim, "use_tweak_mode", False):
+            anim.use_tweak_mode = False
         out.animation = True
         out.action = anim.action
         out.slot = getattr(anim, "action_slot", None)
@@ -150,6 +191,8 @@ def release(context, arm_obj) -> Released:
     for obj in list(bpy.data.objects):
         if obj.parent is arm_obj and obj.parent_type == "BONE"                 and obj.get("RIG_parent_mode") == "BONE":
             world = obj.matrix_world.copy()
+            out.links.append((obj, obj.parent_bone,
+                              obj.matrix_parent_inverse.copy()))
             obj.parent = None
             obj.matrix_world = world
             out.objects.append(obj)
@@ -211,14 +254,16 @@ def apply(context, mode, manifest, arm_obj, objects, frame_rows=None,
     else:
         was = set()
 
+    if arm_obj is None and mode in (KEEP, APPEND):
+        # Nothing to keep or append to: the first rig of a scene is a fresh
+        # one, and so is the rig of an assembly whose rig went with the
+        # import this send replaced.
+        mode = REGENERATE
+        report.mode = REGENERATE
     if mode == KEEP:
         report.kept = sorted(was)
         report.bones_after = report.bones_before
         return None, report
-    if mode == APPEND and arm_obj is None:
-        # Nothing to append to: the first rig of a scene is a fresh one.
-        mode = REGENERATE
-        report.mode = REGENERATE
 
     names = keep_names(before or {}, diff_mod.from_objects(objects)) \
         if mode == APPEND else {}

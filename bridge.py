@@ -479,10 +479,17 @@ def _run_job(payload: dict) -> dict:
         return _run_stages(payload, stages, log, manifest_path, step_path,
                            mesh_path, want, have_manifest, said, rig_hold)
     finally:
-        # An update takes the animation off the rig while it binds the
-        # parts again. Whatever ended the job, the rig gets it back.
+        # An update takes the parts and the animation off the rig while it
+        # binds the parts again. Whatever ended the job, the rig gets both
+        # back: a part nothing bound again goes back on its bone.
         released = rig_hold.get("release")
         if released is not None:
+            if not rig_hold.get("relinked"):
+                try:
+                    released.rebind(bpy.context)
+                except Exception as exc:        # noqa: BLE001
+                    print("[CADLink] could not put the parts back on the "
+                          "rig:", exc)
             released.finish()
         said.close()
 
@@ -496,6 +503,17 @@ def _apply_poses_from(poses: dict) -> int:
     return rig_ui._apply_poses(bpy.context, poses)
 
 
+def _rig_of(stem):
+    """The rig that holds the parts of the import `stem`, or None."""
+    counts = {}
+    for obj in bpy.data.objects:
+        arm = obj.parent
+        if (arm is not None and arm.type == "ARMATURE" and arm.get("RIG_rig")
+                and obj.get("SWMESH_file") == stem):
+            counts[arm] = counts.get(arm, 0) + 1
+    return max(counts, key=counts.get) if counts else None
+
+
 def _find_rig():
     """The rig standing in the scene, if there is one."""
     for obj in bpy.context.scene.objects:
@@ -504,8 +522,9 @@ def _find_rig():
     return None
 
 
-def _update_rig(mode, log):
-    """The rig half of an update: KEEP, APPEND or REGENERATE."""
+def _update_rig(mode, log, rig=None):
+    """The rig half of an update: KEEP, APPEND or REGENERATE. `rig` is the
+    rig of the assembly being updated, when the update found one."""
     from .rig import rig_update, ui as rig_ui
 
     manifest = rig_ui._STATE.get("manifest")
@@ -514,15 +533,24 @@ def _update_rig(mode, log):
     report = rig_ui._STATE.get("match_report")
     frame_rows = (report.frame_rows
                   if report is not None and report.frame_agree > 0 else None)
+    arm = rig or _find_rig()
+    # Where the user placed the rig. The parts were put on their poses in
+    # its frame, so a new rig takes the same place and the machine stays
+    # where it was put.
+    placed = arm.matrix_world.copy() if arm is not None else None
     try:
         result, rig_report = rig_update.apply(
-            bpy.context, mode, manifest, _find_rig(), bpy.data.objects,
+            bpy.context, mode, manifest, arm, bpy.data.objects,
             frame_rows=frame_rows,
             before=rig_ui._STATE.get("rig_snapshot") or {})
     except Exception as exc:
         return {"error": "the rig could not be brought up to date: %s" % exc}
     if result is not None:
         rig_ui._STATE["build"] = result
+        new_arm = result.armature_object
+        if placed is not None and new_arm is not None and new_arm is not arm:
+            new_arm.matrix_world = placed
+            bpy.context.view_layer.update()
     log.append("rig (%s): %s" % (mode.lower(), rig_report.describe()))
     return {
         "mode": rig_report.mode,
@@ -614,18 +642,30 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # replaces it. The rig snapshot has to be taken before either
             # touches the parts: it reads the group ids of the export the
             # rig was built from, which the update overwrites.
-            standing = _find_rig()
-            rig_ui._STATE["rig_snapshot"] = (
-                rig_update.snapshot(standing, bpy.data.objects)
-                if updating and standing is not None else {})
-            # And before the update moves a part, the rig goes to its rest
-            # pose and lets go of the parts it holds: moved while on a
-            # posed bone, a part is bound again with the pose in it.
-            if updating and standing is not None:
-                rig_hold["release"] = rig_update.release(bpy.context, standing)
-                if rig_hold["release"].posed:
-                    log.append("the rig was put back to its rest pose before "
-                               "the update")
+            rig_ui._STATE["rig_snapshot"] = {}
+
+            def before_changes(stem):
+                # Runs once the update has found this assembly in the
+                # scene, and before a part moves. The rig is the one that
+                # holds this assembly's parts, not merely the first one.
+                rig = _rig_of(stem)
+                rig_hold["rig"] = rig or _find_rig()
+                if rig_hold["rig"] is None:
+                    return
+                rig_ui._STATE["rig_snapshot"] = rig_update.snapshot(
+                    rig_hold["rig"], bpy.data.objects)
+                # The rig goes to its rest pose and lets go of its parts,
+                # because a part moved while on a posed bone is bound again
+                # with the pose in it. Only a rig this assembly's parts
+                # hang on, only when relink will bind them again, and only
+                # with the manifest of THIS send loaded: the parts are put
+                # on its poses below.
+                if rig is not None and have_manifest and want("relink"):
+                    released = rig_update.release(bpy.context, rig,
+                                                  hold=rig_hold)
+                    if released.posed:
+                        log.append("the rig was put back to its rest pose "
+                                   "before the update")
             # Which parts the scene holds without their small features is
             # this scene's own decision, and a send replaces every object
             # and collection that carries it. So it is written down here
@@ -644,7 +684,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         manifest=rig_ui._STATE.get("manifest"),
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
-                        report_to=said)
+                        report_to=said, before_changes=before_changes)
                     stages["update"] = {
                         "added": changed.added,
                         "removed": changed.removed,
@@ -673,8 +713,17 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # bound off its pose by an earlier update is put right
                 # here. A part that was never on the rig is left alone,
                 # because a free part may have been placed by hand.
+                # In the rig's own frame: bones stand at the armature's
+                # transform times the CAD frame, so a rig the user moved
+                # keeps its parts with it.
+                import copy
+                from mathutils import Matrix
                 from .rig import pose_sync
-                back = pose_sync.sync(rig_ui._STATE["manifest"], report,
+                in_rig = copy.copy(report)
+                in_rig.frame_rows = [list(r) for r in (
+                    released.arm_obj.matrix_world
+                    @ Matrix([tuple(r) for r in report.frame_rows]))]
+                back = pose_sync.sync(rig_ui._STATE["manifest"], in_rig,
                                       objects=rig_update.alive(released.parts))
                 stages["poses"] = {
                     "moved": [{"object": n, "distance_m": d}
@@ -801,7 +850,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # it inside the armature that is there (which keeps the
                 # animation), or build a new one.
                 said.stage("bringing the rig up to date", 88, 96)
-                stages["rig"] = _update_rig(mode, log)
+                stages["rig"] = _update_rig(mode, log, rig_hold.get("rig"))
                 if stages["rig"].get("error"):
                     return {"ok": False, "error": stages["rig"]["error"],
                             "stages": stages}
@@ -822,6 +871,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
         if have_manifest and want("relink") \
                 and bpy.ops.cadlink.relink_geometry.poll():
             if "FINISHED" in bpy.ops.cadlink.relink_geometry():
+                rig_hold["relinked"] = True
                 rep = rig_ui._STATE["parent_report"]
                 if rep is not None:
                     stages["relink"] = {

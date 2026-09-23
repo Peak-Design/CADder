@@ -893,9 +893,13 @@ class UpdateReport:
 
 def update(context, path, manifest=None, unit_scale=1.0,
            material_prefix="SW ", up_as="ZPOS", hierarchy="FLAT",
-           report_to=None):
+           report_to=None, before_changes=None):
     """Brings the scene up to date with a new export, changing only what
     changed. Returns (objects, MatchReport, UpdateReport).
+
+    `before_changes(stem)` runs once the import this export updates is
+    found, and before any part moves. It does not run when there is none
+    and the update falls back to a fresh import.
 
     A send replaces the import outright, which throws away everything done
     in Blender since. This compares the two assemblies part by part
@@ -929,6 +933,8 @@ def update(context, path, manifest=None, unit_scale=1.0,
         out = UpdateReport(added=[o.name for o in objects], structural=True)
         return objects, report, out
 
+    if before_changes is not None:
+        before_changes(stem)
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
                      hierarchy, material_prefix)

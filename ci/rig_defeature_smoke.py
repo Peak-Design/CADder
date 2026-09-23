@@ -64,6 +64,13 @@ def main():
     assert asked[0]["component"] == "c001", asked
     assert abs(asked[0]["size_m"] - 0.008) < 1e-6, asked
     assert asked[0]["curved"] is False, asked
+    # A part with no SolidWorks reference is named by its component id
+    # alone. A part that has one sends it too: an edit to the assembly can
+    # give the component id to another part.
+    assert "persistent_id" not in asked[0], asked
+    plate["SWMESH_persistent_id"] = "pid-plate"
+    asked = defeature.orders(everything, scene)
+    assert asked[0]["persistent_id"] == "pid-plate", asked
 
     # 3. The collection covers everything in it, including the parts of the
     #    subassembly below it, and it overrides a part's own switch.

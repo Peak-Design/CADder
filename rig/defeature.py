@@ -191,11 +191,18 @@ def orders(objects, scene=None):
         if not enabled or not size > 0.0:
             continue
         seen.add(component)
-        rows.append({
+        row = {
             "component": component,
             "size_m": float(size) * metres,
             "curved": bool(curved),
-        })
+        }
+        # The component id is a number of one export, and an edit to the
+        # assembly gives it to another part. SolidWorks' own reference
+        # still names this part, so the add-in takes that first.
+        persistent = obj.get("SWMESH_persistent_id")
+        if persistent:
+            row["persistent_id"] = str(persistent)
+        rows.append(row)
     return rows
 
 

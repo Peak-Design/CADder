@@ -322,6 +322,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 # out because SolidWorks holds the part; here the STEP file
                 # holds it, so the same decision is made on the shape.
                 want, size, curved = defeature_settings(obj, context.scene)
+                carried = []
                 if want:
                     from . import defeature_brep
                     lines = []
@@ -330,7 +331,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     for line in lines:
                         print("[CADder] " + line)
                     if lighter is not None:
-                        defeature_brep.carry_colors(reader, shp, lighter, history)
+                        carried = defeature_brep.carry_colors(
+                            reader, shp, lighter, history)
                         shp = lighter
                         defeatured += 1
                     features[0] += taken
@@ -383,6 +385,12 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     failed.append(obj.name)
                     print(f"Regenerate failed for {obj.name}: {e}")
                     continue
+                finally:
+                    # The colors of the defeatured shape are needed for this
+                    # tessellation only. The reader stays in the file cache,
+                    # and each entry left there kept the shape alive.
+                    if carried:
+                        defeature_brep.forget_colors(carried)
 
                 applied_scale = obj.get("STEP_applied_scale", 0.0)
                 if applied_scale and applied_scale != 1.0:

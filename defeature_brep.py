@@ -323,6 +323,10 @@ def apply(shape, max_extent_m, curved=False, log=None):
     return result, history, removed, declined
 
 
+#: What a table held for a key before carry_colors wrote it: nothing.
+_ABSENT = object()
+
+
 def carry_colors(reader, old, new, history):
     """Gives the rebuilt shape the colors the old one had.
 
@@ -334,10 +338,21 @@ def carry_colors(reader, old, new, history):
     The history says what became of each shape: gone, changed into others,
     or left as it was. Each one that survives is entered again under its new
     name with the color it had.
+
+    Returns what it wrote, for forget_colors once the shape is tessellated.
+    The reader stays in the file cache, and a key holds its shape, so each
+    entry left behind kept one more defeatured shape alive, with its
+    triangulation, for each Regenerate of the part.
     """
     if reader is None or new is None:
-        return
+        return []
     from .ocp_utils import ShapeKey as key_of
+
+    written = []
+
+    def put(table, key, value):
+        written.append((table, key, table.get(key, _ABSENT)))
+        table[key] = value
 
     def color_of(shape):
         return (reader.face_colors.get(key_of(shape)),
@@ -345,8 +360,8 @@ def carry_colors(reader, old, new, history):
 
     color, priority = color_of(old)
     if color is not None:
-        reader.face_colors[key_of(new)] = color
-    reader.face_color_priority[key_of(new)] = priority
+        put(reader.face_colors, key_of(new), color)
+    put(reader.face_color_priority, key_of(new), priority)
 
     carried = []
     for sub_shape in reader.sub_shapes.get(key_of(old), []) or []:
@@ -360,7 +375,19 @@ def carry_colors(reader, old, new, history):
         for now in (changed or [sub_shape]):
             carried.append(now)
             if color is not None:
-                reader.face_colors[key_of(now)] = color
-            reader.face_color_priority[key_of(now)] = priority
+                put(reader.face_colors, key_of(now), color)
+            put(reader.face_color_priority, key_of(now), priority)
     if carried:
-        reader.sub_shapes[key_of(new)] = carried
+        put(reader.sub_shapes, key_of(new), carried)
+    return written
+
+
+def forget_colors(written):
+    """Takes out of the reader what carry_colors wrote, and puts back what
+    it wrote over. Last in, first out, so a key written twice gets its
+    first value back."""
+    for table, key, was in reversed(written or []):
+        if was is _ABSENT:
+            table.pop(key, None)
+        else:
+            table[key] = was

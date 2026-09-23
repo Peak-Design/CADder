@@ -57,6 +57,14 @@ ROLE_PROP = "STEP_role"
 # a refresh has to carry over onto the new CAD placement.
 BASIS_PROP = "STEP_import_basis"
 
+# Says the stamp above is where the import put the object. Versions before
+# this one wrote the stamp again at the end of every refresh, from where the
+# object ended up, so after such a refresh it holds the user's move too and
+# cannot tell it apart. A stamp without this mark is not trusted to find
+# the user's move (see apply_import).
+BASIS_VERSION_PROP = "STEP_import_basis_version"
+BASIS_VERSION = 2
+
 # The object color the import wrote. Set in main.set_object_colors, and read
 # back here to tell it apart from a color the user picked.
 OBJECT_COLOR_PROP = "STEP_object_color"
@@ -514,8 +522,9 @@ def _user_move(obj):
     return delta
 
 
-def _flat(matrix):
-    return [v for row in matrix for v in row]
+def _stamp(obj, matrix):
+    obj[BASIS_PROP] = [v for row in matrix for v in row]
+    obj[BASIS_VERSION_PROP] = BASIS_VERSION
 
 
 def stamp_basis(objects):
@@ -524,7 +533,7 @@ def stamp_basis(objects):
     (apply_import), never its placement after the user's move."""
     for obj in objects:
         try:
-            obj[BASIS_PROP] = _flat(obj.matrix_basis)
+            _stamp(obj, obj.matrix_basis)
         except (AttributeError, TypeError, ReferenceError):
             pass
 
@@ -683,6 +692,10 @@ def _once(names):
     return out
 
 
+# An object whose stamp cannot be trusted, and which keeps its placement.
+_KEEP = object()
+
+
 def apply_import(path, old_objs, old_cols):
     """Folds a completed re-import into the objects that were already here.
 
@@ -705,7 +718,13 @@ def apply_import(path, old_objs, old_cols):
     # stamps onto each object, and that includes where the NEW import put
     # it. A move read after that is measured against the new CAD placement,
     # so every CAD move cancels itself out and the part never moves.
-    moves = {old: _user_move(old) for old, _ in pairs}
+    #
+    # A stamp an older version left behind may hold the user's move as
+    # well. Such an object stays where it is, as older versions kept it,
+    # rather than lose the move. It gets a true stamp below, so the next
+    # refresh finds its move and brings the next CAD move through.
+    moves = {old: (_user_move(old) if old.get(BASIS_VERSION_PROP)
+                   else _KEEP) for old, _ in pairs}
 
     # 1. The geometry, the material slots and the import's own stamps.
     stale = [_adopt(old, fresh, col_map) for old, fresh in pairs]
@@ -733,7 +752,9 @@ def apply_import(path, old_objs, old_cols):
     #    part of the CAD placement, and the next refresh would drop it.
     for old, fresh in pairs:
         move = moves[old]
-        old[BASIS_PROP] = _flat(fresh.matrix_basis)
+        _stamp(old, fresh.matrix_basis)
+        if move is _KEEP:
+            continue
         old.matrix_basis = (move @ fresh.matrix_basis if move is not None
                             else fresh.matrix_basis.copy())
 

@@ -113,6 +113,11 @@ BEFORE = {"alpha": (0.0, 0.0, 0.0), "beta": (30.0, 0.0, 0.0),
 AFTER = {"alpha": (0.0, 50.0, 0.0), "beta": (80.0, 0.0, 0.0),
          "gamma": (60.0, 0.0, 0.0)}
 USER_MOVE = Vector((0.0, 0.0, 1.0))
+fresh_after = {}
+
+# What says a stamp is where the import put the object. Stamps from older
+# versions do not have it.
+LEGACY_MARK = getattr(R, "BASIS_VERSION_PROP", "STEP_import_basis_version")
 
 
 for mode in MODES:
@@ -124,6 +129,7 @@ for mode in MODES:
     write_step(STEP, AFTER)
     m.load_step(bpy.context, STEP, htypes=mode, up_as="Z")
     fresh = {name: where(name) for name in AFTER}
+    fresh_after[mode] = fresh
     check(all(v is not None for v in fresh.values()),
           "%s: every part found in a fresh import" % mode)
     check(near(fresh["beta"], Vector((0.08, 0.0, 0.0))),
@@ -156,6 +162,41 @@ for mode in MODES:
     again = {name: where(name) for name in AFTER}
     check(all(near(again[n], got[n]) for n in AFTER),
           "%s: a second refresh moves nothing (%s)" % (mode, again))
+
+
+for mode in MODES:
+    print("\n== a stamp an older version left behind: %s" % mode)
+
+    # Older versions wrote the stamp again at the end of every refresh, from
+    # where the object ended up. After such a refresh the stamp holds the
+    # user's move as well, so it cannot tell the two apart. The first
+    # refresh with such a stamp has to keep the part where it is, not snap
+    # it back to the CAD placement.
+    clean()
+    write_step(STEP, BEFORE)
+    m.load_step(bpy.context, STEP, htypes=mode, up_as="Z")
+    user = carrier("alpha")
+    user.location = user.location + USER_MOVE
+    bpy.context.view_layer.update()
+    for obj in R.file_objects(STEP):
+        obj[R.BASIS_PROP] = [v for row in obj.matrix_basis for v in row]
+        if LEGACY_MARK in obj:
+            del obj[LEGACY_MARK]
+    at = where("alpha")
+
+    bpy.ops.stepper.refresh_file(filepath=STEP)
+    check(near(where("alpha"), at),
+          "%s: the part stays where the user put it (%s, was %s)"
+          % (mode, where("alpha"), at))
+
+    # From then on the stamp is right: the next CAD move comes through and
+    # the user's move rides on top.
+    write_step(STEP, AFTER)
+    bpy.ops.stepper.refresh_file(filepath=STEP)
+    check(near(where("beta"), fresh_after[mode]["beta"]),
+          "%s: the next CAD move comes through (%s)" % (mode, where("beta")))
+    check(near(where("alpha"), fresh_after[mode]["alpha"] + USER_MOVE),
+          "%s: with the user's move on top (%s)" % (mode, where("alpha")))
 
 
 if FAILS:

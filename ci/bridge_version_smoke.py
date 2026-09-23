@@ -154,9 +154,15 @@ try:
               [found["title"]] + found["versions"] + [found["advice"]]),
           "the panel shows the title, both versions and the advice (%s)"
           % drawn)
-    check(("operator", "wm.url_open", found["button"], "url",
-           bridge.CADDER_RELEASES) in drawn,
-          "the panel has the download button (%s)" % drawn)
+    if name == "CADder":
+        check(("operator", "wm.url_open", found["button"], "url",
+               bridge.CADDER_RELEASES) in drawn,
+              "the panel has the download button (%s)" % drawn)
+    else:
+        # CADder Pro has no public download: the advice says where.
+        check(not [d for d in drawn if d[0] == "operator"]
+              and "from where you got it" in found["advice"],
+              "the Pro build has no download button (%s)" % drawn)
 
     # The same add-in, updated: the warning goes.
     addin(os.getpid(), "v" + ours)

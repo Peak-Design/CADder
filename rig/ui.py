@@ -12,6 +12,7 @@ broken file can never take the UI down with it.
 
 import json
 import os
+import re
 
 from . import (graph, inputs, joining, manifest as manifest_mod, matching,
                parenting, pose_sync, rig_build, defeature)
@@ -204,6 +205,32 @@ def _up_of_parts(stem):
 # a part took the pose of the part that now has its old number. So a row
 # is matched by the persistent id first, which names the same occurrence
 # after an edit. The id is only for a side that has no persistent id.
+
+
+# The name the add-in gives the file of a geometry reply when the request
+# names no file: cadlink-refine-<guid>.swmesh, in the temp folder.
+_REPLY_MESH = re.compile(r"^cadlink-refine-[0-9a-fA-F]+\.swmesh$")
+
+
+def refine_from_reply(context, reply):
+    """Swaps in the geometry a reply to "retessellate" names, and deletes
+    the reply's file once it is read. Returns the objects that changed.
+
+    No request names a file for the answer, so the add-in writes one to
+    the temp folder, and it is Blender's to delete: nothing else reads it.
+    Kept, each rebuild left one there, hundreds of MB over a session at a
+    fine quality. Only a file with the name the add-in gives such a reply
+    is deleted."""
+    from . import native_import
+    path = reply["mesh"]
+    try:
+        return native_import.refine(context, path)
+    finally:
+        if _REPLY_MESH.match(os.path.basename(str(path or ""))):
+            try:
+                os.unlink(path)
+            except OSError as exc:
+                print("[CADLink] the geometry reply was not deleted:", exc)
 
 
 class PosesNotApplied(Exception):
@@ -1191,7 +1218,7 @@ if bpy is not None:
                         paths=native_import.cad_paths(covered),
                         defeature=defeature.orders(covered, context.scene))
                     said.stage("replacing the geometry", 60, 90, len(ids))
-                    changed = native_import.refine(context, reply["mesh"])
+                    changed = refine_from_reply(context, reply)
                     if not changed:
                         self.report({"WARNING"},
                                     "The CAD application sent geometry for parts that "

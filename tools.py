@@ -1164,7 +1164,8 @@ def _ask_cad_link(context, objs):
             persistent_ids=persistent,
             paths=native_import.cad_paths(objs),
             defeature=defeature_mod.orders(objs, context.scene))
-        return len(native_import.refine(context, reply["mesh"])), None
+        from .rig import ui as rig_ui
+        return len(rig_ui.refine_from_reply(context, reply)), None
     except cad_link.CadLinkError as exc:
         return 0, _report(context, str(exc))
     except (OSError, ValueError) as exc:

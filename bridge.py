@@ -469,13 +469,13 @@ def _ask_again_without_small_features(asked, opts, separate_solids):
     """
     def run():
         from . import quality as quality_mod
-        from .rig import cad_link, native_import
+        from .rig import cad_link, ui as rig_ui
         try:
             reply = cad_link.retessellate(
                 [row["component"] for row in asked],
                 quality_mod.cad_request(quality_mod.spec_of(opts)),
                 separate_solids=separate_solids, defeature=asked)
-            changed = native_import.refine(bpy.context, reply["mesh"])
+            changed = rig_ui.refine_from_reply(bpy.context, reply)
             print("[CADLink defeature] %d part(s) came back without their "
                   "small features" % len(changed))
         except Exception as exc:                       # noqa: BLE001

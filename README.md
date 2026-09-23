@@ -73,6 +73,9 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
 - **Refresh Model keeps your rig**: your handles, mechanism inputs,
   drivers and bones stay. SolidWorks offers the button only when a
   running Blender holds the document.
+- **The rig next to its assembly**: a send puts the assembly collection
+  and the rig collection side by side in one `<assembly>_Top_Level`
+  collection.
 - **Automatic rig engine**: more mechanisms move as they do in SolidWorks.
 - **The SolidWorks Bridge** is in the Windows version only.
 

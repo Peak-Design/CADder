@@ -2787,6 +2787,14 @@ def load_step(
         print(f"Deflection resolved: {lin_deflection:.4f} {unit} "
               f"/ {ang_deflection:.3f} rad")
 
+    # The curve sampler has no relative mode, and read a share of 0.005 as
+    # 0.005 file units. A relative import samples its curves at the
+    # distance of the default quality instead.
+    curve_deflection = lin_deflection
+    if tessellation_relative:
+        curve_deflection = quality_mod.resolve(
+            quality_mod.spec(quality_mod.DEFAULT), step_reader.scale)[0]
+
     if custom_scale is not None:
         scale = custom_scale
     if scale_override is not None:
@@ -3097,7 +3105,7 @@ def load_step(
                     cobj = created_names[ckey].copy()  # linked curve data
                 elif ckey not in _no_curve_shapes:
                     polylines = curves_mod.extract_free_curves(
-                        shp, lin_deflection, ang_deflection)
+                        shp, curve_deflection, ang_deflection)
                     if polylines:
                         cobj = curves_mod.build_curve_object(
                             bpy, name + ".curves", polylines)

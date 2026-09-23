@@ -2185,7 +2185,12 @@ def _write_material_database(filepath, mappings_dict):
             datablocks.add(mat)
 
     print(f"CADder MatDB: Writing {len(datablocks)} datablocks to {filepath}")
-    bpy.data.libraries.write(filepath, datablocks, fake_user=True)
+    # A relative path (a texture next to the blend, Blender's default for a
+    # new image) is relative to THIS file. Blender reads the paths in the
+    # database from the database's own folder, so written as they are they
+    # pointed at nothing. RELATIVE rebases them to the database file.
+    bpy.data.libraries.write(filepath, datablocks, path_remap="RELATIVE",
+                             fake_user=True)
 
     # Clean up temporary text datablock and any temporary material copies
     bpy.data.texts.remove(text)

@@ -164,6 +164,41 @@ put("metal")
 check(PREFS.active_matdb == "NONE", "None stays None (%r)" % PREFS.active_matdb)
 PREFS.matdb_dir = ""
 
+# ---- a relative texture path still points at the texture -----------------
+# Blender gives a new image a path relative to the blend file. The database
+# is a file in another folder, and Blender reads a relative path in it from
+# that folder, so the path has to be rebased when the database is written.
+print("\n== a texture keeps its file through the database")
+proj_a = os.path.join(TMP, "projA")
+os.makedirs(os.path.join(proj_a, "tex"))
+bpy.ops.wm.save_as_mainfile(filepath=os.path.join(proj_a, "a.blend"))
+texture = os.path.join(proj_a, "tex", "t.png")
+img = bpy.data.images.new("t", 4, 4)
+img.filepath_raw = texture
+img.file_format = "PNG"
+img.save()
+img.filepath = "//tex/t.png"
+mat = bpy.data.materials.new("Textured")
+node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+node.image = img
+db_path = os.path.join(TMP, "db", "db.blend")
+os.makedirs(os.path.dirname(db_path))
+m._write_material_database(db_path, {"STEP_part": "Textured"})
+check(img.filepath == "//tex/t.png",
+      "the image in the open file keeps its path (%r)" % img.filepath)
+bpy.data.materials.remove(mat)
+bpy.data.images.remove(img)
+
+proj_c = os.path.join(TMP, "projC")
+os.makedirs(proj_c)
+bpy.ops.wm.save_as_mainfile(filepath=os.path.join(proj_c, "c.blend"))
+m._append_matdb_materials(db_path)
+got = bpy.data.images.get("t")
+where = bpy.path.abspath(got.filepath) if got else ""
+check(got is not None and os.path.isfile(where),
+      "the appended image finds its file (%r reads as %r)"
+      % (got.filepath if got else None, where))
+
 if FAILS:
     print("\nmatdb_store_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

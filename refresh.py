@@ -424,12 +424,17 @@ def _user_move(obj):
     return delta
 
 
+def _flat(matrix):
+    return [v for row in matrix for v in row]
+
+
 def stamp_basis(objects):
     """Writes down where the import put each object. Called at the end of an
-    import and again after a refresh."""
+    import. A refresh gives each object it keeps the stamp of the new import
+    (apply_import), never its placement after the user's move."""
     for obj in objects:
         try:
-            obj[BASIS_PROP] = [v for row in obj.matrix_basis for v in row]
+            obj[BASIS_PROP] = _flat(obj.matrix_basis)
         except (AttributeError, TypeError, ReferenceError):
             pass
 
@@ -605,6 +610,12 @@ def apply_import(path, old_objs, old_cols):
     fresh_to_old = {fresh: old for old, fresh in pairs}
     col_map = _map_collections(old_cols, fresh_cols, fresh_to_old)
 
+    # The user's moves are read FIRST. Step 1 copies the fresh import's
+    # stamps onto each object, and that includes where the NEW import put
+    # it. A move read after that is measured against the new CAD placement,
+    # so every CAD move cancels itself out and the part never moves.
+    moves = {old: _user_move(old) for old, _ in pairs}
+
     # 1. The geometry, the material slots and the import's own stamps.
     stale = [_adopt(old, fresh, col_map) for old, fresh in pairs]
 
@@ -625,9 +636,13 @@ def apply_import(path, old_objs, old_cols):
         if obj.parent in fresh_to_old:
             obj.parent = fresh_to_old[obj.parent]
 
-    # 3. Placement, with the user's own move carried over onto it.
+    # 3. Placement, with the user's own move carried over onto it. The
+    #    stamp is where the NEW import put the object, not where it ends up.
+    #    A stamp of the final placement would take the user's move in as
+    #    part of the CAD placement, and the next refresh would drop it.
     for old, fresh in pairs:
-        move = _user_move(old)
+        move = moves[old]
+        old[BASIS_PROP] = _flat(fresh.matrix_basis)
         old.matrix_basis = (move @ fresh.matrix_basis if move is not None
                             else fresh.matrix_basis.copy())
 
@@ -666,7 +681,6 @@ def apply_import(path, old_objs, old_cols):
         bpy.data.objects.remove(obj, do_unlink=True)
     _purge(stale)
 
-    stamp_basis(file_objects(path))
     return len(pairs), added_names, gone_names
 
 

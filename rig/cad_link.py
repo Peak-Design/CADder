@@ -28,6 +28,12 @@ _REGISTRY = os.path.join(
 _TIMEOUT_PING = 1.5
 _TIMEOUT_JOB = 600.0     # tessellating a big assembly finely is not quick
 
+# No proxy, ever. urllib sends 127.0.0.1 through a proxy set in the
+# environment or in Internet Options: it bypasses only host names without a
+# dot. The proxy cannot reach this machine's listener, and every call
+# carries the session token. The add-in's own client makes the same choice.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 
 class CadLinkError(Exception):
     """The CAD application could not be reached, or refused the request."""
@@ -55,7 +61,7 @@ def _post(inst, path, payload, timeout):
         inst.url + path, data=data,
         headers={"Content-Type": "application/json",
                  "X-CADLink-Token": inst.token or ""})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

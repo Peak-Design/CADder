@@ -153,8 +153,8 @@ def main():
         for o in objects:
             o.select_set(True)
         bpy.context.view_layer.objects.active = first
-        result = bpy.ops.cadlink.update_from_cad(quality=0.9,
-                                                 what="GEOMETRY")
+        bpy.context.scene.stepper.quality_preset = "FINE"
+        result = bpy.ops.cadlink.update_from_cad(what="GEOMETRY")
         _check("FINISHED" in result, "the update failed: %s" % (result,))
 
         asked = server.seen[-1]

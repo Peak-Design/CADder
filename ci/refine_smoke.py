@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from CADder.rig import native_import, cad_link, swmesh  # noqa: E402
+from CADder import quality as quality_mod  # noqa: E402
 
 TOKEN = "smoke-token"
 COARSE_TRIS = 1
@@ -143,6 +144,13 @@ class Handler(BaseHTTPRequestHandler):
                          "tolerance_m": 0.00002})
 
 
+def rebuild(preset):
+    """Rebuild from CAD at a Mesh Quality preset: the operator reads the
+    quality from the scene."""
+    bpy.context.scene.stepper.quality_preset = preset
+    return bpy.ops.cadlink.update_from_cad()
+
+
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     # The operator is the thing under test here, so the add-on has to be
@@ -207,7 +215,7 @@ def main():
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         assert bpy.ops.cadlink.update_from_cad.poll(), "operator refused the selection"
-        result = bpy.ops.cadlink.update_from_cad(quality=0.9)
+        result = rebuild("FINE")
         assert "FINISHED" in result, result
 
         # 4. The request said what it should have.
@@ -215,8 +223,10 @@ def main():
         asked = server.seen[-1]
         assert asked["op"] == "retessellate"
         assert asked["components"] == ["c009"], asked
-        # Blender's FloatProperty is float32, so 0.9 arrives as 0.89999998.
-        assert abs(asked["quality"] - 0.9) < 1e-6, asked["quality"]
+        # The quality is the scene's Mesh Quality: its preset goes as the
+        # dial an older add-in reads, and as the distance a newer one cuts to.
+        assert asked["quality"] == quality_mod.DIAL["FINE"], asked["quality"]
+        assert abs(asked["chord_m"] - quality_mod.PRESETS["FINE"][0]) < 1e-9, asked
         # And the PLACEMENT, not only the component id. Every part of a
         # rigid subassembly carries the subassembly's id, so the id alone
         # asks for every part of the branch (Oscar, 2026-09-17).
@@ -237,7 +247,7 @@ def main():
         # active in the outliner, which at the root is the whole scene.
         for o in bpy.context.selected_objects:
             o.select_set(False)
-        result = bpy.ops.cadlink.update_from_cad(quality=0.5)
+        result = rebuild("BALANCED")
         assert "FINISHED" in result, result
         assert server.seen[-1]["components"] == ["c009"], server.seen[-1]
         # A rebuild that said nothing about defeaturing leaves the key out,
@@ -250,7 +260,7 @@ def main():
         obj.cad_defeature.enabled = True
         obj.cad_defeature.size = 0.008
         obj.cad_defeature.curved = True
-        result = bpy.ops.cadlink.update_from_cad(quality=0.5)
+        result = rebuild("BALANCED")
         assert "FINISHED" in result, result
         asked = server.seen[-1].get("defeature")
         assert asked and asked[0]["component"] == "c009", server.seen[-1]
@@ -465,7 +475,7 @@ def main():
             o.select_set(False)
         empty.select_set(True)
         bpy.context.view_layer.objects.active = empty
-        result = bpy.ops.cadlink.update_from_cad(quality=0.9)
+        result = rebuild("FINE")
         assert "FINISHED" in result, result
         holder = next(o for o in empty.instance_collection.all_objects
                       if o.type == "MESH")

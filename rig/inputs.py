@@ -123,7 +123,7 @@ def _turn_coupling_round(manifest: Manifest, mech: Mechanism):
 
     The number stays what the mate said: a rack and pinion's metres per
     radian is the same fact whichever end is held, and drivers.py reads the
-    channel to write off the joint's own type. A ratio of like for like has
+    channel to write off the types of the two joints. A ratio of like for like has
     no such handle, so it is the one that inverts here.
     """
     found = _pair(manifest, mech)

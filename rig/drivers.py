@@ -232,12 +232,22 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
                     "joint {}: rack_pinion coupling without meters_per_radian".format(joint.id))
                 continue
             travel = c.meters_per_radian * unit_scale
-            if joint.type == "revolute":
+            driver_joint = manifest.joint_by_id().get(c.driver_joint)
+            driver_type = driver_joint.type if driver_joint is not None else None
+            # Which half is the rack: the one that slides. A pinion held
+            # by a concentric mate alone is cylindrical, so it slides too,
+            # and only the other half's type then tells them apart. With
+            # two cylindrical halves the exporter's order holds: the
+            # coupling is on the rack.
+            rack_drives = (driver_type == "prismatic"
+                           or (joint.type == "revolute"
+                               and driver_type != "revolute"))
+            if rack_drives:
                 # The pair held from the RACK instead: the pinion is the
                 # driven half and turns as the rack runs. The mate's number
-                # says the same thing either way round, so the joint's own
-                # type decides which channel is written and which way up
-                # the number goes (inputs.py turns the pair round).
+                # says the same thing either way round, so the joint types
+                # decide which channel is written and which way up the
+                # number goes (inputs.py turns the pair round).
                 if abs(travel) < 1e-12:
                     warnings.append(
                         "joint {}: rack_pinion travel per radian is zero".format(joint.id))

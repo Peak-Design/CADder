@@ -330,18 +330,19 @@ def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False)
             continue
     # Import collections ("<name>.flat/.hierarchy/.components" and their
     # per-part children) die once emptied: bottom-up, and never a
-    # collection that still holds anything.
-    stem = os.path.splitext(want_base)[0]
-
+    # collection that still holds anything. Only the ones the importer
+    # made for this file, which it tags: a match on the name also took the
+    # user's own empty "gearbox renders".
     def prune_collection(coll):
         for child in list(coll.children):
-            prune_collection(child)
+            if is_same_file(child.get("STEP_file")):
+                prune_collection(child)
         if not coll.objects and not coll.children:
             bpy.data.collections.remove(coll)
 
     for coll in list(bpy.data.collections):
         try:
-            if coll.name.casefold().startswith(stem):
+            if is_same_file(coll.get("STEP_file")):
                 prune_collection(coll)
         except ReferenceError:
             continue
@@ -361,11 +362,22 @@ def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False)
     stages["replace"] = {"removed_objects": removed}
 
 
-def _cleanup_leftover_empties(stages: dict):
+def _cleanup_leftover_empties(stages: dict, step_path: str = ""):
     """After relink the matched parts hang from the rig. The import's
     occurrence empties are dead weight. Childless STEP empties are removed
-    repeatedly until stable (parents become childless as leaves go)."""
+    repeatedly until stable (parents become childless as leaves go).
+
+    Only the empties of this job's import, the STEP file `step_path`: the
+    empties of a different import in the scene are not this job's to
+    remove."""
     removed = 0
+    want = os.path.normcase(os.path.abspath(step_path)) if step_path else None
+
+    def of_this_import(obj):
+        value = obj.get("STEP_file")
+        return (want is not None and bool(value)
+                and os.path.normcase(os.path.abspath(str(value))) == want)
+
     while True:
         doomed = []
         for obj in list(bpy.data.objects):
@@ -373,6 +385,8 @@ def _cleanup_leftover_empties(stages: dict):
                 if obj.type != "EMPTY" or obj.instance_type == "COLLECTION":
                     continue
                 if obj.get("STEP_uuid") is None and obj.get("STEP_name") is None:
+                    continue
+                if not of_this_import(obj):
                     continue
                 if obj.get("RIG_group_empty") or obj.get("RIG_helper"):
                     continue
@@ -990,7 +1004,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             released.finish()
 
         if want("cleanup", False):
-            _cleanup_leftover_empties(stages)
+            _cleanup_leftover_empties(stages, step_path)
 
         # Where the CAD application is looking from, when the user asked
         # for it. It comes last, so the view frames what the whole job

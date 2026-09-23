@@ -166,7 +166,14 @@ def _driven(manifest: Manifest, joint_id: str) -> bool:
     """A joint whose channel a coupling writes cannot be an input: a driver
     is one-way, and pushing a cam's follower never turns the cam (live
     cam-follower, 2026-09-15: the lifter's slide was offered beside the
-    cam's hinge and did nothing)."""
+    cam's hinge and did nothing).
+
+    The table couplings of a universal joint are not such a relation.
+    hooke.py puts them on the loop's current input each time the rig is
+    planned, and either yoke can be that input. Counted here, they hid
+    the other yoke from the dropdown after the first build."""
+    if joint_id in getattr(manifest, "_hooke_joints", ()):
+        return False
     j = manifest.joint_by_id().get(joint_id)
     return j is not None and j.coupling is not None and bool(j.coupling.driver_joint)
 

@@ -1157,9 +1157,10 @@ def _ask_cad_link(context, objs):
     if not ids:
         return 0, None
     try:
+        # In meters, as Rebuild from CAD asks: the Custom distance is held
+        # in scene units.
         reply = cad_link.retessellate(
-            ids, quality_mod.cad_request(
-                quality_mod.spec_of(context.scene.stepper)),
+            ids, native_import.cad_quality(context.scene),
             persistent_ids=persistent,
             paths=native_import.cad_paths(objs),
             defeature=defeature_mod.orders(objs, context.scene))

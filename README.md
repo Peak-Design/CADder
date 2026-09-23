@@ -65,6 +65,8 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
 
 - **Lock Materials**: keep the materials of a part through the material
   database, Refresh Model and Regenerate.
+- **Lock Geometry**: keep the mesh of a part, and your changes to it,
+  through Rebuild from CAD, Refresh Model, a send and Regenerate.
 - **A better Material Database**: hide the entries the scene does not
   use, select the parts of an entry, remove an entry, and keep the
   database's materials in the file to use again.
@@ -86,6 +88,8 @@ The full list is in the [release notes](docs/RELEASE_1.1.0.md) and the
 
 **Mesh and UVs**
 - Triangles to quads, without crossing a material, seam or sharp edge.
+- Lock the geometry of a part, and a rebuild or a refresh keeps your
+  changes to its mesh.
 - UVs from the CAD surfaces: a plane, a cylinder and a cone are exact, at
   real world scale, and sheet metal unfolds to its flat pattern.
 - Island packing and UDIM tiles.

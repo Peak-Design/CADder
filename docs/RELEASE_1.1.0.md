@@ -1,14 +1,18 @@
 # CADder 1.1.0
 
-Lock Materials, a Material Database that is easier to work with, and a
-Refresh Model that keeps your rig. Blender 5.1 or later. Install the zip
-for your platform the same way as the first time.
+Lock Materials and Lock Geometry, a Material Database that is easier to
+work with, and a Refresh Model that keeps your rig. Blender 5.1 or later.
+Install the zip for your platform the same way as the first time.
 
 ## New
 
 - **Lock Materials.** Select parts and lock their materials. The material
   database, Refresh Model, Send to Blender, Regenerate and Refresh from
   Disk then leave them as they are.
+- **Lock Geometry.** Select parts and click the lock beside Rebuild from
+  CAD. Rebuild from CAD, Refresh Model, Send to Blender, Regenerate and
+  Refresh from Disk then keep their meshes and your changes to them. The
+  parts still move to new poses.
 - **An easier Material Database list.** The eye hides the entries that no
   part of the scene uses. Each entry has a button that selects its parts,
   and a trash that removes it. Save shows an asterisk while the list has

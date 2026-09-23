@@ -111,6 +111,8 @@ version: what it is, how to install it, and what is new.
   breaks into a curved face. Nothing in the CAD document changes.
 - **Clean Up Meshes** takes out the loose vertices and the zero area faces
   a tessellation can leave.
+- **Lock Geometry** keeps the mesh of a part, with the changes you made to
+  it, through a rebuild, a refresh and a send.
 - Prune and restore the empties a STEP tree carries.
 
 ### In the scene
@@ -396,6 +398,39 @@ and attaches it to the bones while the rig itself is left alone. The
 button for it is not drawn: a send asks what to do with the rig it finds,
 which is the same question. The operator is `cadlink.lock_rig` and it
 still works from the search menu.
+
+### Lock Geometry
+
+Select parts and click the lock beside **Rebuild from CAD** or **Rebuild
+from STEP**. A locked part keeps its mesh, with the changes you made to it
+in Blender. These do not change it:
+
+- **Rebuild from CAD** with **Geometry** or **Geometry and Poses**. The CAD
+  application does not tessellate a locked part again.
+- **Refresh Model**, **Refresh** and a finer mesh from SolidWorks, also
+  when the part changed in SolidWorks.
+- **Send to Blender** and **Full Reimport**, which replace every part. The
+  new part in the same place in the assembly is locked again and gets the
+  old mesh back.
+- **Rebuild from STEP**, **Rebuild Selected**, **Apply Defeature**,
+  **Apply UVs** in a mode that reads the CAD data, and **Refresh from
+  Disk** of a STEP file.
+- **Triangles to Quads** and the unwrap of compound surfaces after a send.
+
+A lock keeps the geometry and nothing else. A locked part still moves to
+the pose that SolidWorks gives it, and the material database still applies
+to it. Use **Lock Materials** to keep its materials too. **Clean Up
+Meshes** and **Box Project** work on the mesh as it is, so they still
+change a locked part.
+
+Parts that share a mesh share its geometry, so a lock on one of them keeps
+the mesh of all. The placements of a collection instance share the mesh of
+the prototype in the same way.
+
+The lock shows the state of the parts in scope: it is pressed when every
+part is locked. Click it again to unlock them, and the next rebuild or
+refresh gives them the geometry of the CAD data. The arrow beside it
+selects the parts of the scene that have locked geometry.
 
 ### What a button covers
 
@@ -851,7 +886,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
+| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |
 | 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |

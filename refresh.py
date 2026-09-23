@@ -325,8 +325,9 @@ def _keys(obj):
 def _match(old_objs, fresh_objs):
     """Pairs each freshly imported object with the one it replaces.
 
-    Returns (pairs, added, gone): the matches, the objects that are new in
-    the file, and the ones that have gone from it.
+    Returns (pairs, added, gone, copies): the matches, the objects that are
+    new in the file, the ones that have gone from it, and the copies the
+    user made of a paired part, which are neither.
     """
     buckets = {}
     for obj in old_objs:
@@ -347,7 +348,15 @@ def _match(old_objs, fresh_objs):
             if len(same) == 1:
                 found = same[0]
                 break
-            # Except at the end of the cascade. Several objects left sharing
+            # Except when they share the uuid. CAD never gives two of its
+            # occurrences one uuid, so these are one occurrence and the
+            # copies the user made of it (Shift+D copies the stamps). The
+            # occurrence is found, and a weaker key would only offer the
+            # other occurrences of the part as well.
+            if same and key[0] == "uuid":
+                found = same[0]
+                break
+            # And at the end of the cascade. Several objects left sharing
             # the last key are repeated occurrences of ONE part, which is
             # what an assembly is mostly made of. Their uuids all change
             # together when a component is added earlier in the tree, and
@@ -363,7 +372,16 @@ def _match(old_objs, fresh_objs):
             taken.add(found)
             pairs.append((found, fresh))
     gone = [o for o in old_objs if o not in taken]
-    return pairs, added, gone
+
+    # A copy the user made carries the uuid of the one CAD occurrence it
+    # came from. When that occurrence is still in the file, the copy is the
+    # user's work and not a part gone from the file, so it stays as it is.
+    # An occurrence CAD removed has a uuid of its own and still goes.
+    found_ids = {_keys(old)[0] for old, _ in pairs}
+    copies = [o for o in gone
+              if _keys(o)[0][1] is not None and _keys(o)[0] in found_ids]
+    gone = [o for o in gone if o not in copies]
+    return pairs, added, gone, copies
 
 
 # Roles the import makes one of per part name (FLAT) or per subassembly
@@ -671,14 +689,15 @@ def apply_import(path, old_objs, old_cols):
     `old_objs` and `old_cols` are what the file owned BEFORE load_step ran.
     Everything it owns now that is not in those lists is freshly made.
 
-    Returns (kept, added, gone): how many objects were updated in place, the
-    names that are new in the file, and the names that have gone from it.
+    Returns (kept, added, gone, copies): how many objects were updated in
+    place, the names that are new in the file, the names that have gone from
+    it, and how many copies the user made of a part were left as they are.
     """
     known_objs, known_cols = set(old_objs), set(old_cols)
     fresh_objs = [o for o in file_objects(path) if o not in known_objs]
     fresh_cols = [c for c in file_collections(path) if c not in known_cols]
 
-    pairs, added, gone = _match(old_objs, fresh_objs)
+    pairs, added, gone, copies = _match(old_objs, fresh_objs)
     fresh_to_old = {fresh: old for old, fresh in pairs}
     col_map = _map_collections(old_cols, fresh_cols, fresh_to_old)
 
@@ -753,7 +772,7 @@ def apply_import(path, old_objs, old_cols):
         bpy.data.objects.remove(obj, do_unlink=True)
     _purge(stale)
 
-    return len(pairs), added_names, gone_names
+    return len(pairs), added_names, gone_names, len(copies)
 
 
 def defeatured_parts(path, scene):
@@ -828,7 +847,7 @@ if bpy is not None:
                 self.report({"ERROR"}, "Re-import failed. See the console")
                 return {"CANCELLED"}
 
-            kept, added, gone = apply_import(path, old_objs, old_cols)
+            kept, added, gone, copies = apply_import(path, old_objs, old_cols)
 
             # The parts set to defeature go through Regenerate again, as
             # Apply Defeature sends them. The override gives it those parts
@@ -848,6 +867,8 @@ if bpy is not None:
             msg = "Refreshed %s: %d object(s) updated in place" % (
                 os.path.basename(path), kept)
             level = "INFO"
+            if copies:
+                msg += ", %d copy(ies) made in Blender not changed" % copies
             if lighter and not missed:
                 msg += ", %d part(s) defeatured again" % len(lighter)
             if missed:

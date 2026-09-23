@@ -2417,14 +2417,12 @@ def _split_solids(entries, step_reader):
     Identity is ShapeKey, not an OCCT map: per-entity handle lookups are
     broken in OCP 7.9.3.1, which is why curves.py does the same.
     """
-    from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL
+    from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL, TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
-    from .ocp_utils import ShapeKey
+    from .ocp_utils import ShapeKey, SameKey
 
     def inherit_colour(parent, body):
-        """A body carries its product's color. Its FACES are the same OCC
-        faces the whole shape had, so per-face color resolves unchanged. It
-        is only the shape-level fallback that has to be carried across."""
+        """A body carries its product's color: the shape-level fallback."""
         pkey, bkey = ShapeKey(parent), ShapeKey(body)
         if pkey in step_reader.face_colors:
             step_reader.face_colors.setdefault(
@@ -2432,6 +2430,43 @@ def _split_solids(entries, step_reader):
         prio = getattr(step_reader, "face_color_priority", None)
         if prio is not None and pkey in prio:
             prio.setdefault(bkey, prio[pkey])
+
+    def faces_of(shape):
+        found = []
+        ex = TopExp_Explorer(shape, TopAbs_FACE)
+        while ex.More():
+            found.append(SameKey(ex.Current()))
+            ex.Next()
+        return found
+
+    def carry_labels(parent, parts):
+        """Give each body the color labels that lie inside it.
+
+        The reader keeps the labels of a part (a color on a body, a face)
+        against the part's own shape, and the mesh build looks them up
+        under the shape it builds. A body is a shape of its own, so it
+        found none and came in all in the body color. A label goes to the
+        body that holds every one of its faces. A label on faces of two
+        bodies stays with the part. Run again on a cached reader, this adds
+        nothing twice."""
+        subs = step_reader.sub_shapes.get(ShapeKey(parent)) or []
+        if not subs:
+            return
+        owner = {}
+        for k, body in enumerate(parts):
+            for key in faces_of(body):
+                owner.setdefault(key, k)
+        carried = [[] for _ in parts]
+        for sub in subs:
+            homes = {owner.get(key, -1) for key in faces_of(sub)}
+            if len(homes) == 1 and -1 not in homes:
+                carried[homes.pop()].append(sub)
+        for body, labels in zip(parts, carried):
+            if not labels:
+                continue
+            have = step_reader.sub_shapes.setdefault(ShapeKey(body), [])
+            known = {ShapeKey(s) for s in have}
+            have.extend(s for s in labels if ShapeKey(s) not in known)
 
     def bodies(shape, kind):
         found, seen = [], set()
@@ -2457,6 +2492,7 @@ def _split_solids(entries, step_reader):
             out.append((shp, idx, None))
             continue
         split_shapes += 1
+        carry_labels(shp, parts)
         for k, body in enumerate(parts):
             inherit_colour(shp, body)
             out.append((body, idx, k))

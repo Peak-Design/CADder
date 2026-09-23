@@ -36,6 +36,33 @@ from OCP.STEPCAFControl import STEPCAFControl_Reader  # noqa: F401
 
 print(f"OK: OCP {ocp_version} imports, STEPCAFControl_Reader available")
 
+# 2b. The vendored OCP reads STEP files. An import of the reader class is
+# not enough: a build with a reader that cannot read passes it, and then
+# every STEP import of that release fails. The addon reads the same way
+# (importer.ReadSTEP.transfer_with_units).
+from OCP.IFSelect import IFSelect_RetDone
+from OCP.TCollection import TCollection_ExtendedString
+from OCP.TDF import TDF_LabelSequence
+from OCP.TDocStd import TDocStd_Document
+from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+fixtures = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+steps = sorted(f for f in os.listdir(fixtures)
+               if f.lower().endswith((".step", ".stp")))
+assert steps, f"no STEP fixtures in {fixtures}"
+for name in steps:
+    reader = STEPCAFControl_Reader()
+    reader.SetColorMode(True)
+    reader.SetNameMode(True)
+    status = reader.ReadFile(os.path.join(fixtures, name))
+    assert status == IFSelect_RetDone, f"the vendored OCP cannot read {name} ({status})"
+    doc = TDocStd_Document(TCollection_ExtendedString("STEP"))
+    assert reader.Transfer(doc), f"the vendored OCP cannot transfer {name}"
+    free = TDF_LabelSequence()
+    XCAFDoc_DocumentTool.ShapeTool_s(doc.Main()).GetFreeShapes(free)
+    assert free.Length() > 0, f"{name} gave no shapes"
+print(f"OK: the vendored OCP reads {len(steps)} STEP fixture(s)")
+
 # 3. Native module handoff
 if os.name == "nt":
     os.add_dll_directory(os.path.join(addon_dir, "native_libs"))

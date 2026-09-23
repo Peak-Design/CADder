@@ -911,7 +911,8 @@ if bpy is not None:
                 self.report({"ERROR"}, "Re-import failed: %s" % exc)
                 return {"CANCELLED"}
             if result is False:
-                self.report({"ERROR"}, "Re-import failed. See the console")
+                self.report({"ERROR"}, "Re-import failed. Cannot open %s. %s"
+                            % (os.path.basename(path), _main._open_error))
                 return {"CANCELLED"}
 
             kept, added, gone, copies, locked = apply_import(

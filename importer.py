@@ -1057,7 +1057,7 @@ class ReadSTEP:
         # that we can use for unit detection via ChangeReader().
         status = step_reader.ReadFile(self.filename)
         if status != IFSelect_RetDone:
-            raise AssertionError("Error: can't read file. File possibly damaged.")
+            raise AssertionError("The file is damaged, or it is not a STEP file")
 
         print("STEP read into memory")
 
@@ -1167,14 +1167,14 @@ class ReadSTEP:
                     status = step_reader.ReadFile(self.filename)
                     if status != IFSelect_RetDone:
                         raise AssertionError(
-                            "Error: can't read file in safe mode. "
-                            "File possibly damaged.")
+                            "The file is damaged, or it is not a STEP file "
+                            "(read again in safe mode)")
                     try:
                         transfer_result = step_reader.Transfer(doc)
                     except Exception as e:
                         raise AssertionError(
-                            f"Error: safe mode transfer failed ({e}). "
-                            "File possibly damaged.")
+                            f"The file is damaged: the safe mode transfer "
+                            f"failed ({e})")
                     if not transfer_result:
                         print("DataExchange: Safe mode transfer also FAILED.")
                     else:
@@ -1217,6 +1217,16 @@ class ReadSTEP:
     def init_reader(self, filename):
         if not os.path.isfile(filename):
             raise FileNotFoundError("%s not found." % filename)
+        # OCCT reports a file that it cannot open the same way as a damaged
+        # one. A file that the system does not give up is not damaged: a
+        # cloud file that does not download, a file that another program
+        # locks, or no permission. So say what the system said.
+        try:
+            with open(filename, "rb") as f:
+                f.read(1)
+        except OSError as e:
+            raise AssertionError("The system cannot read the file (%s)"
+                                 % (e.strerror or e))
 
         # self.filename = force_ascii(filename)
         self.filename = filename

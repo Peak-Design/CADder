@@ -2849,6 +2849,12 @@ def _split_solids(entries, step_reader):
     return out
 
 
+# Why the last load_step could not open its file: the reader's own words,
+# for the report. It said "Possibly damaged file" for every failure, also
+# for a file that the system would not give up.
+_open_error = ""
+
+
 def load_step(
     context,
     filepath,
@@ -2965,7 +2971,9 @@ def load_step(
             _record_parse_calibration(step_reader, time.time() - parse_t0)
             _cache_put(filepath, step_reader, signature)
         except AssertionError as e:
-            print(e)
+            global _open_error
+            _open_error = str(e)
+            print("Cannot open %s. %s" % (filepath, e))
             return False
     else:
         step_reader = cached
@@ -4196,7 +4204,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 eng_materials=self.eng_materials,
             )
             if result is False:
-                self.report({"ERROR"}, "STEP file could not be opened. Possibly damaged file.")
+                self.report({"ERROR"}, "Cannot open %s. %s" % (i, _open_error))
                 return {"CANCELLED"}
             failed, recovered = result
             all_failed_parts.extend(failed)

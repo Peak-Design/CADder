@@ -46,7 +46,7 @@ class ReadIGES(ReadSTEP):
 
         status = reader.ReadFile(filename)
         if status != IFSelect_RetDone:
-            raise AssertionError("Error: can't read IGES file. File possibly damaged.")
+            raise AssertionError("The file is damaged, or it is not an IGES file")
 
         print("IGES read into memory, transferring")
         try:
@@ -54,7 +54,7 @@ class ReadIGES(ReadSTEP):
             if not ok:
                 print("IGES transfer reported failure, continuing with partial data")
         except Exception as e:
-            raise AssertionError(f"IGES transfer failed: {e}")
+            raise AssertionError(f"The file is damaged: the IGES transfer failed ({e})")
 
         self.scale = 0.001  # geometry arrives in millimeters
         self.doc = doc
@@ -82,10 +82,9 @@ class ReadBREP(ReadSTEP):
         except Exception as e:
             detail = str(e).strip() or type(e).__name__
             raise AssertionError(
-                f"Error: can't read BREP file. File possibly damaged. "
-                f"({detail})")
+                f"The file is damaged, or it is not a BREP file ({detail})")
         if shape.IsNull():
-            raise AssertionError("Error: BREP file contained no shape.")
+            raise AssertionError("The BREP file holds no shape")
 
         doc = TDocStd_Document(TCollection_ExtendedString("BREP"))
         app = XCAFApp_Application.GetApplication_s()

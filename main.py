@@ -2340,8 +2340,17 @@ def _ensure_matdb_materials(db_path):
     """
     if not db_path:
         return {}
-    _append_matdb_materials(db_path)
-    return _read_matdb_mappings(db_path)
+    # A file Blender cannot read (a copy to a shared folder that stopped
+    # half way) raised out of the import after every part was built, and
+    # left the parts unscaled, on the wrong up axis and unrecorded. Without
+    # the database the import still completes.
+    try:
+        _append_matdb_materials(db_path)
+        return _read_matdb_mappings(db_path)
+    except (OSError, RuntimeError) as exc:
+        print("CADder MatDB: cannot read %s (%s). CADder skips the material "
+              "database" % (db_path, str(exc).strip()))
+        return {}
 
 
 def _apply_matdb_to_objects(objects, mappings):

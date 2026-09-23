@@ -199,6 +199,30 @@ check(got is not None and os.path.isfile(where),
       "the appended image finds its file (%r reads as %r)"
       % (got.filepath if got else None, where))
 
+# ---- a damaged database does not stop the import --------------------------
+# The database was read after every object was built and linked, but before
+# the parts were scaled and turned. A file that Blender could not read (a
+# copy to a shared folder that stopped half way) raised out of the import
+# and left the parts in file units, on the wrong up axis, with no record.
+print("\n== a damaged database file")
+STEP = os.path.join(_HERE, "fixtures", "multisolid.step")
+broken = os.path.join(TMP, "broken")
+os.makedirs(broken)
+with open(os.path.join(broken, "half.blend"), "wb") as fh:
+    fh.write(b"BLENDER-v5")
+PREFS.matdb_dir = broken
+m._cache_drop(STEP)
+try:
+    result = m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z",
+                         material_database="half")
+except Exception as exc:
+    result = exc
+check(isinstance(result, tuple), "the import finishes (%r)" % (result,))
+from CADder import refresh as refresh_mod
+check(refresh_mod.settings_for(bpy.context.scene, STEP) is not None,
+      "and records itself for a refresh")
+PREFS.matdb_dir = ""
+
 if FAILS:
     print("\nmatdb_store_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

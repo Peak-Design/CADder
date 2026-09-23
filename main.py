@@ -3471,6 +3471,11 @@ class PG_Stepper(bpy.types.PropertyGroup):
 
     # Material database UI state
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
+    # The database file the list came from. The list is kept in the scene
+    # and the selected database is a preference, so they can differ: a
+    # user selects another database, or opens a .blend whose list came
+    # from another one. Save then replaced that database with this list.
+    mat_db_source: bpy.props.StringProperty(options={"HIDDEN"})
     mat_db_active_index: bpy.props.IntProperty(default=0)
     mat_db_apply_selection_only: bpy.props.BoolProperty(
         name="Selection Only",
@@ -4204,7 +4209,7 @@ class STEP_OT_MatDBCreate(bpy.types.Operator):
         # Set as active database and load into UI
         prefs = _get_addon_prefs()
         prefs.active_matdb = name
-        _populate_ui_mappings(context.scene.stepper, mappings)
+        _populate_ui_mappings(context.scene.stepper, mappings, filepath)
 
         self.report({'INFO'}, f"Created '{name}' with {len(mappings)} mapping(s)")
         return {'FINISHED'}
@@ -4250,7 +4255,7 @@ class STEP_OT_MatDBDuplicate(bpy.types.Operator):
         prefs.active_matdb = name
         # Reload mappings from the copy
         mappings = _read_matdb_mappings(dst)
-        _populate_ui_mappings(context.scene.stepper, mappings)
+        _populate_ui_mappings(context.scene.stepper, mappings, dst)
 
         self.report({'INFO'}, f"Duplicated to '{name}'")
         return {'FINISHED'}
@@ -4276,7 +4281,7 @@ class STEP_OT_MatDBRefresh(bpy.types.Operator):
             self.report({'WARNING'}, "No mappings found in database")
             return {'CANCELLED'}
 
-        _populate_ui_mappings(context.scene.stepper, mappings)
+        _populate_ui_mappings(context.scene.stepper, mappings, db_path)
         self.report({'INFO'}, f"Loaded {len(mappings)} mapping(s)")
         return {'FINISHED'}
 
@@ -4319,7 +4324,17 @@ class STEP_OT_MatDBSave(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return bool(_get_active_matdb_path()) and len(context.scene.stepper.mat_db_mappings) > 0
+        stepper = context.scene.stepper
+        filepath = _get_active_matdb_path()
+        if not filepath or len(stepper.mat_db_mappings) == 0:
+            return False
+        # Save replaces the whole file, so a list from another database
+        # would destroy this one.
+        if not _same_file(stepper.mat_db_source, filepath):
+            cls.poll_message_set("The list is not from the selected "
+                                 "database. Load the selected database first")
+            return False
+        return True
 
     def execute(self, context):
         stepper = context.scene.stepper
@@ -4359,6 +4374,7 @@ class STEP_OT_MatDBDelete(bpy.types.Operator):
 
         prefs.active_matdb = "NONE"
         context.scene.stepper.mat_db_mappings.clear()
+        context.scene.stepper.mat_db_source = ""
         self.report({'INFO'}, f"Deleted database '{name}'")
         return {'FINISHED'}
 
@@ -4411,13 +4427,23 @@ class STEP_OT_MatDBApply(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _populate_ui_mappings(stepper, mappings):
-    """Fill the UI CollectionProperty from a mappings dict."""
+def _populate_ui_mappings(stepper, mappings, source):
+    """Fill the UI CollectionProperty from a mappings dict, and record the
+    database file it came from. Save writes only to that file."""
     stepper.mat_db_mappings.clear()
     for orig, repl in sorted(mappings.items()):
         item = stepper.mat_db_mappings.add()
         item.original_name = orig
         item.replacement_name = repl
+    stepper.mat_db_source = source
+
+
+def _same_file(a, b):
+    """True when two paths name the same file."""
+    if not a or not b:
+        return False
+    return (os.path.normcase(os.path.abspath(a))
+            == os.path.normcase(os.path.abspath(b)))
 
 
 # ---------------------------------------------------------------------------

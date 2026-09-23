@@ -83,8 +83,11 @@ check(bridge.mismatch_for("1.2.0", "1.2.5", "CADder Pro") is None,
       "CADder Pro 1.2.5 works with CADder Bridge 1.2.0")
 check(bridge.mismatch_for(None, "1.1.1", "CADder") is None,
       "an add-in that does not say its version gives no warning")
-check(bridge._addon_name() == "CADder",
-      "the free build calls itself CADder (%s)" % bridge._addon_name())
+# The Pro build carries routing/ and calls itself CADder Pro.
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+name = "CADder Pro" if os.path.isdir(os.path.join(_REPO, "routing")) else "CADder"
+check(bridge._addon_name() == name,
+      "this build calls itself %s (%s)" % (name, bridge._addon_name()))
 check(bridge._instance_info().get("addon_name") == bridge._addon_name(),
       "the registry file of this Blender says which addon it runs")
 

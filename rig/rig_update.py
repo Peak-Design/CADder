@@ -69,12 +69,30 @@ def snapshot(arm_obj, objects) -> Dict[str, frozenset]:
             continue
         by_group.setdefault(occurrence.group_id, set()).add(
             occurrence.persistent or occurrence.path)
+    # A limited ball and a cone contact hang their parts on a hidden DEF
+    # bone. The bone the user poses and keys is the handle: the bone of
+    # the same joint that has no group. Its name is the one to keep, or
+    # the handle comes back as DEF_<name> and the keys lose it. A rig
+    # built before the handle carried RIG_source is matched on the joint
+    # alone, when only one handle claims that joint.
+    handles = {}
+    for pb in arm_obj.pose.bones:
+        jid = pb.get("RIG_joint")
+        if not jid or pb.get("RIG_group"):
+            continue
+        key = (pb.get("RIG_source") or None, jid)
+        handles[key] = None if key in handles else pb.name
     out = {}
     for pb in arm_obj.pose.bones:
         gid = pb.get("RIG_group")
         parts = by_group.get(gid)
         if gid and parts:
-            out[pb.name] = frozenset(parts)
+            jid = pb.get("RIG_joint")
+            name = None
+            if jid:
+                name = (handles.get((pb.get("RIG_source") or None, jid))
+                        or handles.get((None, jid)))
+            out[name or pb.name] = frozenset(parts)
     return out
 
 

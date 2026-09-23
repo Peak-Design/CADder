@@ -1609,7 +1609,11 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             if bp.ball_def_name:
                 pb["RIG_joint"] = bp.joint.id
                 ctrl_pb = pose.bones[result.ball_ctrl_names[bp.group.id]]
+                # The handle has no group: the parts ride DEF. The joint and
+                # the source name it, so an update keeps its name
+                # (rig_update.snapshot).
                 ctrl_pb["RIG_joint"] = bp.joint.id
+                ctrl_pb["RIG_source"] = source
                 constraints.apply_ball_cone(
                     arm_obj, pb, ctrl_pb,
                     pose.bones[result.ball_goal_names[bp.group.id]],
@@ -1620,6 +1624,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 pb["RIG_joint"] = bp.collapsed.spin_joint.id
                 ctrl_pb = pose.bones[result.ball_ctrl_names[bp.group.id]]
                 ctrl_pb["RIG_joint"] = bp.collapsed.spin_joint.id
+                ctrl_pb["RIG_source"] = source
                 constraints.apply_cone_spin(
                     arm_obj, pb, ctrl_pb,
                     pose.bones[result.ball_goal_names[bp.group.id]],

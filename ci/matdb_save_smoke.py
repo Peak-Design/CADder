@@ -13,7 +13,8 @@ with the metals list. A .blend whose list came from another database did
 the same.
 
 Save must now refuse a list that did not come from the selected database,
-and must still work for a list that did (Load, New and Duplicate).
+and must still work for a list that did (Load, New and Duplicate). Delete
+asks first, and names the file that it removes.
 """
 import os
 import shutil
@@ -100,10 +101,30 @@ try:
           "Duplicate selected the copy")
     check(save(), "Save works on the list that Duplicate loaded")
 
-    # 5. Delete clears the list, so nothing is left to save anywhere.
+    # 5. A click on Delete only asks, and names the file. The file stays
+    # until the user confirms.
     prefs.active_matdb = "metals"
     bpy.ops.stepper.mat_db_refresh()
+    asked = {}
+
+    class Asker:
+        def invoke_confirm(self, operator, event, **options):
+            asked.update(options, called=True)
+            return {"RUNNING_MODAL"}
+
+    class Clicked:
+        window_manager = Asker()
+
+    m.STEP_OT_MatDBDelete.invoke(None, Clicked(), None)
+    check(asked.get("called"), "a click on Delete asks first")
+    check("metals.blend" in asked.get("message", ""),
+          "the question names metals.blend (%r)" % asked.get("message"))
+    check(os.path.isfile(metals), "metals.blend is still there while "
+          "Delete asks")
+
+    # 6. Delete clears the list, so nothing is left to save anywhere.
     bpy.ops.stepper.mat_db_delete()
+    check(not os.path.isfile(metals), "Delete removed metals.blend")
     prefs.active_matdb = "plastics"
     check(not save(), "nothing to save after Delete")
 finally:

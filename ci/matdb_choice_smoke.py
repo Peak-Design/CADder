@@ -17,9 +17,16 @@ Each database now has a number made from its name. The test adds and
 removes files around a selection and checks that the name stays. It also
 checks that a position stored by an older version is read once, as that
 version read it, and is then kept by name.
+
+The dropdown menu keeps the number of each item as a float, and a pick
+writes that float back. A number above 2**24 came back rounded, picked no
+database, and the dropdown went blank. The test checks that every number
+survives the float, and that a choice stored by a development build with
+the wider numbers still reads as its database.
 """
 import os
 import shutil
+import struct
 import sys
 import tempfile
 
@@ -45,6 +52,11 @@ def check(cond, msg):
 
 def touch(folder, name):
     open(os.path.join(folder, name + ".blend"), "wb").close()
+
+
+def as_float(value):
+    """The value as the dropdown menu keeps it: a 32-bit float."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
 def value_of(name):
@@ -100,6 +112,44 @@ try:
     check(prefs.active_matdb == "metals",
           "metals stays selected after aluminium is added (reads %r)"
           % prefs.active_matdb)
+
+    # 4. A pick from the dropdown. The menu keeps each number as a float
+    # and writes that float back, so a number a float cannot hold picked
+    # no database at all.
+    touch(tmp, "metals_copy")
+    for name in ("metals", "metals_copy", "plastics"):
+        value = value_of(name)
+        check(as_float(value) == value,
+              "the number of %s (%d) survives the dropdown" % (name, value))
+        stored["active_matdb"] = int(as_float(value))
+        check(prefs.active_matdb == name,
+              "a pick of %s reads as %s (reads %r)"
+              % (name, name, prefs.active_matdb))
+    wide = [n for n in ("db%d" % i for i in range(2000))
+            if as_float(m._matdb_value(n, set())) != m._matdb_value(n, set())]
+    check(not wide, "every number survives the dropdown (%d do not)"
+          % len(wide))
+
+    # 5. A development build numbered from the whole 31-bit range. The
+    # choice must survive, stored exactly or as the float a pick wrote.
+    import zlib
+    span = 0x7FFFFFFF - m._MATDB_VALUE_BASE
+    old = m._MATDB_VALUE_BASE + zlib.crc32(b"plastics") % span
+    for raw, how in ((old, "exactly"), (int(as_float(old)), "rounded")):
+        prefs.active_matdb = "metals"
+        stored["active_matdb"] = raw
+        if migrate is not None:
+            migrate()
+        check(prefs.active_matdb == "plastics",
+              "a development build choice stored %s reads as plastics "
+              "(reads %r)" % (how, prefs.active_matdb))
+    prefs.active_matdb = "metals"
+    stored["active_matdb"] = (1 << 30) + 7
+    if migrate is not None:
+        migrate()
+    check(prefs.active_matdb == "NONE",
+          "a development build number of no database reads as None "
+          "(reads %r)" % prefs.active_matdb)
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

@@ -2178,13 +2178,18 @@ def _list_matdb_files():
 # database gets a number made from its name. The numbers start above any
 # position that an older version stored, see _migrate_active_matdb.
 _MATDB_VALUE_BASE = 1 << 16
+# The dropdown menu keeps the number of each item as a float, and a pick
+# writes that float back. A float holds each whole number up to 2**24, and
+# rounds a larger one: the pick then stored a number that no database has,
+# and the dropdown went blank.
+_MATDB_VALUE_LIMIT = 1 << 24
 
 
 def _matdb_value(name, taken):
     """The enum number of one database: the same in every session, whatever
     else is in the folder."""
     import zlib
-    span = 0x7FFFFFFF - _MATDB_VALUE_BASE
+    span = _MATDB_VALUE_LIMIT - _MATDB_VALUE_BASE
     value = zlib.crc32(name.encode("utf-8")) % span
     # Two names with one number are very rare, but must never read as
     # each other. The listing is sorted, so the step is the same each time.
@@ -2218,18 +2223,42 @@ def _migrate_active_matdb():
     Up to 1.0.1 the preference stored a position in the folder listing,
     which is below _MATDB_VALUE_BASE and matches no item now. It is read
     once against the listing, as the older version read it, and stored
-    again by name. Called from register()."""
+    again by name. A number at or above _MATDB_VALUE_LIMIT is from a
+    development build, see _matdb_from_wide_value. Called from register()."""
     try:
         prefs = _get_addon_prefs()
         stored = prefs.bl_system_properties_get()
         raw = stored.get("active_matdb") if stored is not None else None
-        if not isinstance(raw, int) or not 0 < raw < _MATDB_VALUE_BASE:
+        if not isinstance(raw, int) or _MATDB_VALUE_BASE <= raw < _MATDB_VALUE_LIMIT:
             return
         names = [name for name, _path in _list_matdb_files()]
-        prefs.active_matdb = names[raw - 1] if raw <= len(names) else "NONE"
+        if 0 < raw < _MATDB_VALUE_BASE:
+            prefs.active_matdb = names[raw - 1] if raw <= len(names) else "NONE"
+        elif raw >= _MATDB_VALUE_LIMIT:
+            prefs.active_matdb = _matdb_from_wide_value(raw, names)
     except Exception as exc:
         # A lost choice must never stop the addon from loading.
         print("CADder: could not read the older database choice:", exc)
+
+
+def _matdb_from_wide_value(raw, names):
+    """The database that a development build stored as raw, or "NONE".
+
+    Those builds made the number from the whole 31-bit range. A choice set
+    from Python kept that number, and a pick from the dropdown kept it
+    rounded to a float. Both read as the same database here."""
+    import struct
+    import zlib
+
+    def as_float(value):
+        return struct.unpack("<f", struct.pack("<f", value))[0]
+
+    span = 0x7FFFFFFF - _MATDB_VALUE_BASE
+    for name in names:
+        wide = _MATDB_VALUE_BASE + zlib.crc32(name.encode("utf-8")) % span
+        if as_float(wide) == as_float(raw):
+            return name
+    return "NONE"
 
 
 def _get_active_matdb_path(db_name=None):
@@ -4698,7 +4727,15 @@ class STEP_OT_MatDBDelete(bpy.types.Operator):
         return bool(_get_active_matdb_path())
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_confirm(self, event)
+        # One misclick on the trash would delete the whole library, and
+        # undo cannot bring a file back. So the click only asks, and names
+        # the file.
+        name = _get_addon_prefs().active_matdb
+        return context.window_manager.invoke_confirm(
+            self, event, title="Delete Material Database",
+            message="Undo cannot restore a deleted database. Delete "
+                    "%s.blend from the database folder?" % name,
+            confirm_text="Delete", icon='WARNING')
 
     def execute(self, context):
         prefs = _get_addon_prefs()

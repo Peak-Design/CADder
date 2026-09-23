@@ -5,6 +5,7 @@
 # The addon is installed from a zip rather than from extensions.blender.org
 # (it ships precompiled binaries), so Blender's own extension updater never
 # sees it and this is the only way a user learns a new version is out.
+# It sends nothing while Blender's Allow Online Access is off.
 #
 # The request runs on a daemon thread and touches no bpy data. The result
 # is picked up by a bpy.app timer on the main thread, which is also the
@@ -130,8 +131,17 @@ def _prefs():
         return None
 
 
+def _online_allowed():
+    """Blender's Allow Online Access switch, or --offline-mode. An add-on
+    must make no network request while it is off, and the manifest's
+    network permission does not change that."""
+    return bpy is not None and getattr(bpy.app, "online_access", True)
+
+
 def _should_check(prefs):
     if prefs is None or not getattr(prefs, "check_for_updates", False):
+        return False
+    if not _online_allowed():
         return False
     last = getattr(prefs, "update_last_check", "")
     if not last:

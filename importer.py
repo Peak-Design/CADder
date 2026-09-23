@@ -1133,8 +1133,9 @@ class ReadSTEP:
         print("DataExchange: Transferring")
 
         # Try transfer with default surface curve mode first (preserves more
-        # geometry).  Only fall back to mode 0 (skip surface curves) when the
-        # transfer crashes. This can happen on files with unresolved refs.
+        # geometry).  Only fall back to the 3D curves alone (skip surface
+        # curves) when the transfer fails. This can happen on files with
+        # unresolved refs.
         # See: https://dev.opencascade.org/content/loading-step-file-crashes-edgeloop
         transfer_ok = False
         if has_data_failures:
@@ -1149,22 +1150,38 @@ class ReadSTEP:
                 print(f"DataExchange: Transfer failed ({e}), retrying in safe mode...")
 
             if not transfer_ok:
-                # Retry with mode 0: discard surface curves from file
-                Interface_Static.SetIVal_s("read.surfacecurve.mode", 0)
-                doc = TDocStd_Document(TCollection_ExtendedString("STEP"))
-                step_reader = STEPCAFControl_Reader()
-                step_reader.SetColorMode(True)
-                step_reader.SetNameMode(True)
-                step_reader.SetMatMode(True)
-                step_reader.SetLayerMode(True)
-                step_reader.ReadFile(self.filename)
-                transfer_result = step_reader.Transfer(doc)
-                if not transfer_result:
-                    print("DataExchange: Safe mode transfer also FAILED.")
-                else:
-                    print("DataExchange: Transfer done (safe mode)")
-                # Reset to default for any subsequent imports
-                Interface_Static.SetIVal_s("read.surfacecurve.mode", 1)
+                # Retry with the 3D curves alone: discard surface curves
+                # from the file. That is -3 (3DUse_Forced). 0 is the
+                # default, so a retry with 0 repeated the failed transfer.
+                # The setting is global, so it goes back to what it was
+                # for every later import.
+                saved_mode = Interface_Static.IVal_s("read.surfacecurve.mode")
+                Interface_Static.SetIVal_s("read.surfacecurve.mode", -3)
+                try:
+                    doc = TDocStd_Document(TCollection_ExtendedString("STEP"))
+                    step_reader = STEPCAFControl_Reader()
+                    step_reader.SetColorMode(True)
+                    step_reader.SetNameMode(True)
+                    step_reader.SetMatMode(True)
+                    step_reader.SetLayerMode(True)
+                    status = step_reader.ReadFile(self.filename)
+                    if status != IFSelect_RetDone:
+                        raise AssertionError(
+                            "Error: can't read file in safe mode. "
+                            "File possibly damaged.")
+                    try:
+                        transfer_result = step_reader.Transfer(doc)
+                    except Exception as e:
+                        raise AssertionError(
+                            f"Error: safe mode transfer failed ({e}). "
+                            "File possibly damaged.")
+                    if not transfer_result:
+                        print("DataExchange: Safe mode transfer also FAILED.")
+                    else:
+                        print("DataExchange: Transfer done (safe mode)")
+                finally:
+                    Interface_Static.SetIVal_s("read.surfacecurve.mode",
+                                               saved_mode)
         else:
             transfer_result = step_reader.Transfer(doc)
             if not transfer_result:

@@ -366,19 +366,79 @@ def _match(old_objs, fresh_objs):
     return pairs, added, gone
 
 
+# Roles the import makes one of per part name (FLAT) or per subassembly
+# (TREE). There are usually several of each, so the role alone does not say
+# which one a fresh collection repeats.
+_MANY_ROLES = ("group", "node")
+
+
+def _by_contents(col, role, fresh_to_old, holders, above, taken):
+    """The old collection of this role that holds the old counterparts of
+    what the fresh one holds, or None.
+
+    A part some levels down in the fresh collection has its counterpart the
+    same number of levels down in the old one, so each paired part votes
+    for the collection that many levels above its own. The most votes win.
+    A collection already matched is not matched twice, so a subassembly
+    placed twice keeps its two collections.
+    """
+    votes = {}
+    stack, seen = [(col, 0)], set()
+    while stack:
+        here, depth = stack.pop()
+        if here.name in seen:
+            continue
+        seen.add(here.name)
+        for obj in here.objects:
+            old = fresh_to_old.get(obj)
+            if old is None:
+                continue
+            for at in holders.get(old, ()):
+                for _ in range(depth):
+                    at = above.get(at)
+                    if at is None:
+                        break
+                if at is None or at in taken:
+                    continue
+                if (at.get(ROLE_PROP) or "") == role:
+                    votes[at] = votes.get(at, 0) + 1
+        for child in here.children:
+            stack.append((child, depth + 1))
+    if not votes:
+        return None
+    return max(votes, key=lambda at: votes[at])
+
+
 def _map_collections(old_cols, fresh_cols, fresh_to_old):
     """Which collection already in the scene each freshly made one repeats.
 
     Roles the import makes one of (the wrapper, the curves collection, the
     components collection) match on the role alone. A per-part collection is
     identified by the prototype inside it, which the object matching has
-    already paired up.
+    already paired up. A collection per part name or per subassembly is
+    identified by the parts inside it the same way. A subassembly that holds
+    no paired part yet falls back to its CAD name.
+
+    A collection that matches nothing is new in the file and is kept. So a
+    collection that SHOULD match and does not is left behind as an empty
+    copy on every refresh.
     """
     by_role = {}
     for col in old_cols:
         by_role.setdefault(col.get(ROLE_PROP) or col.name, []).append(col)
 
-    out = {}
+    # Which old collections hold each old object, and which collection each
+    # old one sits in. Read once from the import's own collections: asking
+    # every object for users_collection walks all the collections of the
+    # file each time.
+    holders, above = {}, {}
+    for col in old_cols:
+        for obj in col.objects:
+            holders.setdefault(obj, []).append(col)
+        for child in col.children:
+            above.setdefault(child, col)
+
+    out, taken = {}, set()
     for col in fresh_cols:
         role = col.get(ROLE_PROP) or col.name
         if role == "part":
@@ -391,6 +451,18 @@ def _map_collections(old_cols, fresh_cols, fresh_to_old):
                         out[col] = home
                         break
                 break
+        elif role in _MANY_ROLES:
+            found = _by_contents(col, role, fresh_to_old, holders, above,
+                                 taken)
+            if found is None and col.get("STEP_name"):
+                named = [c for c in by_role.get(role) or []
+                         if c.get("STEP_name") == col.get("STEP_name")
+                         and c not in taken]
+                if len(named) == 1:
+                    found = named[0]
+            if found is not None:
+                out[col] = found
+                taken.add(found)
         else:
             same = by_role.get(role) or []
             if len(same) == 1:

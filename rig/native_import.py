@@ -37,6 +37,7 @@ from . import appearance, matdb, matching, progress, swmesh
 from . import diff as diff_mod
 from . import weld as weld_mod
 from .. import empties as empties_mod
+from .. import material_lock
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -1084,6 +1085,11 @@ def build(context, path, manifest=None, collection_name=None,
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
 
+    # A send replaces every object. A locked part is found again by its
+    # place in the assembly: the new object is locked and gets the
+    # materials back.
+    locks = material_lock.take(
+        [o for o in context.scene.objects if o.get(_TAG_FILE) is not None])
     remove_previous(None, context.scene.collection, context.scene)
     destination = context.scene.collection
     # One collection, named after the assembly. The shape of what is
@@ -1122,6 +1128,7 @@ def build(context, path, manifest=None, collection_name=None,
                                 confidence="exact",
                                 object_path=obj.get(_TAG_PATH)))
 
+    material_lock.restore(locks, among=objects)
     # Every instance was placed through the frame, so every one anchors
     # it. The Build Rig operator trusts a frame only when something agreed
     # with it (an unanchored match frame is identity by default, and the
@@ -1234,6 +1241,9 @@ def update(context, path, manifest=None, unit_scale=None,
 
     new = diff_mod.from_scene_file(scene, manifest)
     changes = diff_mod.compare(old, new)
+    # New geometry brings the CAD appearances with it. A locked part gets
+    # its own materials back before the database runs.
+    locks = material_lock.take()
 
     said.stage("bringing the parts up to date", 20, 85,
                len(changes.pairs) + len(changes.added) + len(changes.removed))
@@ -1304,6 +1314,7 @@ def update(context, path, manifest=None, unit_scale=None,
     _prune_tree(placer, new)
     _prune_prototypes(placer)
 
+    material_lock.restore(locks)
     matdb.apply(objects + prototypes_objects(placer.prototypes), "update")
     report.frame_agree = len(report.matched)
     context.view_layer.update()
@@ -1525,6 +1536,7 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
         unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
+    locks = material_lock.take()
 
     by_component = {}
     by_path = {}
@@ -1597,6 +1609,7 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
               "in this scene and were left out: %s"
               % (len(mismatched), ", ".join(mismatched[:5])))
 
+    material_lock.restore(locks)
     matdb.apply(replaced, "refine")
 
     # Only now: a datablock may still have been in use while the loop ran.

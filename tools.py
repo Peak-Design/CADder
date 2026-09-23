@@ -10,6 +10,7 @@ import bmesh
 import bpy
 import numpy as np
 
+from . import material_lock
 from . import quality as quality_mod
 from . import uv as uv_mod
 
@@ -275,6 +276,10 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         for me, obj in targets.items():
             by_file[obj["STEP_file"]].append(obj)
 
+        # A new mesh gets the materials of the file. A locked part gets its
+        # own back before the database runs.
+        locks = material_lock.take()
+
         wm = context.window_manager
         wm.progress_begin(0, len(targets))
         done = 0
@@ -469,6 +474,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
 
         wm.progress_end()
 
+        material_lock.restore(locks)
         # Re-apply active material database
         db_path = m._get_active_matdb_path()
         if db_path:

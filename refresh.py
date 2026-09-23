@@ -42,6 +42,8 @@ import inspect
 import json
 import os
 
+from . import material_lock
+
 try:
     import bpy
     from mathutils import Matrix
@@ -636,6 +638,9 @@ def _adopt(old, fresh, col_map):
     """
     was = old.data
     mine = _user_materials(old)
+    # A locked part keeps what it has, also where that is still the
+    # import's own material and the fresh import put the database's on.
+    locks = material_lock.take([old])
     groups = _vertex_groups(old)
     keep_color = _object_color_is_users(old)
     if old.type == fresh.type:
@@ -660,6 +665,7 @@ def _adopt(old, fresh, col_map):
         old.instance_collection = col_map.get(target, target)
 
     _restamp(old, fresh)
+    material_lock.restore(locks)
 
     # The object color comes from the file, so a part recolored in CAD
     # shows the new color. One the user picked themselves stays theirs.

@@ -496,15 +496,30 @@ only its geometry.
 |--------|-------------|
 | **New** | Create a new database from the current scene. Scans all STEP objects and records current material assignments. If the same original material was replaced with different materials on different parts, the most common replacement wins. |
 | **Duplicate** | Copy the active database under a new name. Useful for minor variations between projects. |
-| **Load** | Reload mappings from the active database file and append its materials into the current file. |
+| **Load** | Show the mappings of the active database, and add its materials to the current file. The materials stay in the file when you save it, so you can pick them for the entry of another material without a search through your libraries. If the list has changes that are not saved, Load asks first. |
 | **Delete** (trash icon) | Delete the active database file. |
 | **Update** | Scan the scene for any new original STEP material names not already in the database and add them. **Does not modify existing mappings.** Use this to expand and grow your material database. Does not auto-save. |
-| **Save** | Write the current mappings and materials to the database file. |
+| **Save** | Write the current mappings and materials to the database file. The button reads **Save \*** when the list has changes that are not in the file yet. |
 | **Apply** | Apply the active database mappings to objects in the scene. Works with the **Selection only** checkbox to limit to selected objects. |
 
 ### Material mappings table
 
 Each row shows an original STEP material name and a dropdown to pick the replacement Blender material. You can change any mapping and click **Save** to update the database.
+
+- The line above the list says how many entries the parts of this scene use. Click the eye to hide the entries that no part of the scene has, and click it again to show all entries.
+- The arrow on a row selects the parts that have that material, also a collection instance whose prototype has it. Shift-click adds them to the selection. The arrow is grey when no part of the scene has the material.
+- The trash on a row removes the entry from the list. **Save** removes it from the database, with its material if no other entry uses that material.
+
+### Lock Materials
+
+Select parts and click **Lock Materials** at the bottom of the panel. A locked part keeps the materials it has. These do not change them:
+
+- **Apply** of the material database, and the database that an import or a send applies.
+- **Refresh Model** and a finer mesh from SolidWorks, also when the appearance of the part changed in SolidWorks.
+- **Send to Blender**, which replaces every part. The new part in the same place in the assembly is locked again and gets the materials back.
+- **Regenerate**, **Rebuild Selected** and **Refresh from disk** of a STEP file.
+
+A part that shares its mesh with other parts shares its materials with them, so a lock on one keeps the materials of all. A lock keeps the materials the part has when the change starts, so a material you pick after the lock stays too. When every selected part is locked, the button reads **Unlock Materials**. The arrow beside it selects the locked parts of the scene.
 
 ### Notes
 

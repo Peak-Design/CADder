@@ -44,6 +44,7 @@ from . import curves as curves_mod
 from . import analyzer as analyzer_mod
 from . import refresh as refresh_mod
 from . import empties as empties_mod
+from . import material_lock
 from . import quality as quality_mod
 from . import background as background_mod
 from . import updater as updater_mod
@@ -2325,25 +2326,56 @@ def _read_matdb_mappings(filepath):
     return mappings
 
 
-def _append_matdb_materials(filepath):
+def _append_matdb_materials(filepath, keep=False):
     """Append all materials from a database .blend into the current file.
 
     Materials that already exist locally (by name) are skipped to avoid
     duplicates.  Returns the number of materials appended.
+
+    keep: give every material of the database a fake user, so it stays in
+    the file when nothing uses it yet. Load does this: it puts the
+    database's materials in the file to pick for other entries, and
+    Blender does not save a material with no users.
     """
     abs_path = bpy.path.abspath(filepath)
     if not abs_path or not os.path.isfile(abs_path):
         return 0
 
     with bpy.data.libraries.load(abs_path, link=False) as (data_from, data_to):
-        to_append = [m for m in data_from.materials
-                     if m not in bpy.data.materials]
+        names = list(data_from.materials)
+        to_append = [m for m in names if m not in bpy.data.materials]
         data_to.materials = to_append
+
+    if keep:
+        for name in names:
+            mat = bpy.data.materials.get(name)
+            if mat is not None and mat.library is None:
+                mat.use_fake_user = True
 
     count = len(to_append)
     if count:
         print(f"CADder MatDB: Appended {count} material(s) from database")
     return count
+
+
+def _original_names(obj):
+    """The name each material slot of an object had when CADder made it,
+    or None for an object that is not a CAD part.
+
+    STEP_materials says it. An import older than that property has only
+    its current materials, which are taken as the originals. The user's
+    own objects (a backdrop, a light, the default cube) have neither."""
+    data = obj.data
+    if data is None or not hasattr(data, "materials"):
+        return None
+    names = material_lock.originals(obj)
+    if names is not None:
+        return names
+    if (obj.get("STEP_file") is not None
+            or obj.get("STEP_tag") is not None
+            or obj.get("SWMESH_file") is not None):
+        return [m.name for m in data.materials if m]
+    return None
 
 
 def _scan_scene_materials():
@@ -2358,25 +2390,10 @@ def _scan_scene_materials():
     original_to_replacements = {}  # {orig: Counter({repl: count})}
 
     for obj in bpy.data.objects:
-        if obj.data is None or not hasattr(obj.data, 'materials'):
-            continue
-
-        step_mats_json = obj.get("STEP_materials")
-        if step_mats_json:
-            try:
-                original_names = json.loads(step_mats_json)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        elif (obj.get("STEP_file") is not None
-              or obj.get("STEP_tag") is not None
-              or obj.get("SWMESH_file") is not None):
-            # Backward compat: an import older than STEP_materials. Its
-            # current materials are taken as an identity mapping.
-            original_names = [m.name for m in obj.data.materials if m]
-        else:
-            # The user's own object (a backdrop, a light, the default
-            # cube). Its materials went into the database, and every later
-            # import appended them.
+        # The user's own objects are left out: their materials went into
+        # the database, and every later import appended them.
+        original_names = _original_names(obj)
+        if original_names is None:
             continue
 
         current_mats = [m.name if m else None for m in obj.data.materials]
@@ -2417,12 +2434,15 @@ def _ensure_matdb_materials(db_path):
         return {}
 
 
-def _apply_matdb_to_objects(objects, mappings):
+def _apply_matdb_to_objects(objects, mappings, locked_out=None):
     """Replace STEP materials on *objects* according to *mappings* dict.
 
     Uses the STEP_materials custom property to determine original material
     names so replacements work even when materials were already swapped by
     a previous database apply.
+
+    A locked part keeps its materials (material_lock.py). locked_out, a
+    list, gets the objects left alone for that.
 
     Returns the number of material slots replaced.
     """
@@ -2433,6 +2453,7 @@ def _apply_matdb_to_objects(objects, mappings):
 
     replaced = 0
     processed_meshes = set()
+    locked = material_lock.locked_meshes()
     for obj in objects:
         if obj.data is None or not hasattr(obj.data, 'materials'):
             continue
@@ -2440,6 +2461,10 @@ def _apply_matdb_to_objects(objects, mappings):
         if mesh in processed_meshes:
             continue
         processed_meshes.add(mesh)
+        if mesh in locked:
+            if locked_out is not None:
+                locked_out.append(obj)
+            continue
 
         # Read original STEP material names from the custom property
         step_mats_json = obj.get("STEP_materials")
@@ -2490,6 +2515,149 @@ def _cleanup_unused_step_materials(known_names=None):
     if removed:
         print(f"CADder MatDB: Removed {removed} unused material(s)")
     return removed
+
+
+# The Material Database list asks on every redraw which entries the parts
+# of the scene use, and a scene can hold ten thousand parts. So the answer
+# is kept, and worked out again only after a change that can alter it.
+_usage = {"scene": 0, "names": frozenset(), "locked": 0, "stale": True,
+          "frame": None}
+
+
+@bpy.app.handlers.persistent
+def _usage_stale(*_args):
+    _usage["stale"] = True
+
+
+@bpy.app.handlers.persistent
+def _usage_on_update(scene, depsgraph):
+    """Mark the kept answer stale after a change that can alter it: an
+    object added, removed or moved to another collection, a selection, or
+    a material put in a slot. A part that only moves changes nothing, and
+    it moves on every frame of a drag or of playback."""
+    frame = scene.frame_current
+    new_frame = frame != _usage["frame"]
+    _usage["frame"] = frame
+    if _usage["stale"] or new_frame:
+        return
+    for update in depsgraph.updates:
+        datablock = update.id
+        if isinstance(datablock, bpy.types.Object):
+            if update.is_updated_shading:
+                _usage["stale"] = True
+                return
+        elif isinstance(datablock, (bpy.types.Mesh, bpy.types.Scene,
+                                    bpy.types.Collection)):
+            _usage["stale"] = True
+            return
+
+
+def _scene_usage(scene):
+    """(the original material names that the parts of this scene carry,
+    the number of locked parts in it)."""
+    pointer = scene.as_pointer()
+    if not _usage["stale"] and _usage["scene"] == pointer:
+        return _usage["names"], _usage["locked"]
+    names, locked = set(), 0
+    parsed = {}
+    seen = set()
+
+    def carry(obj):
+        # Most parts share their STEP_materials text with other parts, so
+        # each text is read once.
+        raw = obj.get("STEP_materials")
+        if raw and isinstance(raw, str):
+            if raw not in parsed:
+                parsed[raw] = material_lock.originals(obj) or ()
+            names.update(n for n in parsed[raw] if n)
+            return
+        found = _original_names(obj)
+        if found:
+            names.update(n for n in found if n)
+
+    def instanced(collection):
+        if collection in seen:
+            return
+        seen.add(collection)
+        for inner in collection.all_objects:
+            carry(inner)
+            if (inner.instance_type == "COLLECTION"
+                    and inner.instance_collection is not None):
+                instanced(inner.instance_collection)
+
+    for obj in scene.objects:
+        if material_lock.is_locked(obj):
+            locked += 1
+        carry(obj)
+        if (obj.instance_type == "COLLECTION"
+                and obj.instance_collection is not None):
+            instanced(obj.instance_collection)
+    _usage.update(scene=pointer, names=frozenset(names), locked=locked,
+                  stale=False)
+    return _usage["names"], locked
+
+
+def _parts_with(view_layer, name):
+    """The parts in the view layer that carry the CAD material `name`,
+    directly or through the collection they instance: (the ones that can
+    be selected, the number of hidden or unselectable ones)."""
+    memo = {}
+
+    def has(obj):
+        found = _original_names(obj)
+        return bool(found) and name in found
+
+    def in_collection(collection):
+        if collection not in memo:
+            memo[collection] = False
+            memo[collection] = any(
+                has(inner) or (inner.instance_type == "COLLECTION"
+                               and inner.instance_collection is not None
+                               and in_collection(inner.instance_collection))
+                for inner in collection.all_objects)
+        return memo[collection]
+
+    shown, hidden = [], 0
+    for obj in view_layer.objects:
+        hit = has(obj) or (obj.instance_type == "COLLECTION"
+                           and obj.instance_collection is not None
+                           and in_collection(obj.instance_collection))
+        if not hit:
+            continue
+        if obj.visible_get(view_layer=view_layer) and not obj.hide_select:
+            shown.append(obj)
+        else:
+            hidden += 1
+    return shown, hidden
+
+
+def _select_only(context, objects, extend):
+    """Select these objects, and only these unless extend is set. The
+    first one becomes active when the active object is not among them."""
+    if not extend:
+        for obj in context.view_layer.objects:
+            if obj.select_get():
+                obj.select_set(False)
+    for obj in objects:
+        obj.select_set(True)
+    if context.view_layer.objects.active not in objects:
+        context.view_layer.objects.active = objects[0]
+
+
+def _mapping_flags(names, matched, has_pattern, invert, show_unused, used,
+                   bit):
+    """The filter flags of the Material Database list.
+
+    matched says which names the name filter keeps. Blender inverts every
+    flag when Invert is set, so a flag is inverted here as well, and the
+    name filter is the only thing that Invert turns around. The eye hides
+    an entry that no part of the scene uses, with Invert set or not."""
+    flags = []
+    for name, match in zip(names, matched):
+        keep = (match != invert) if has_pattern else True
+        keep = keep and (show_unused or name in used)
+        flags.append(bit if keep != invert else 0)
+    return flags
 
 
 def _cache_drop(filepath):
@@ -3433,10 +3601,16 @@ def load_step(
     return step_reader.failed_parts, step_reader.recovered_parts
 
 
+def _mapping_edited(self, context):
+    # A change in the list is not in the database until Save writes it.
+    self.id_data.stepper.mat_db_dirty = True
+
+
 class PG_MaterialMapping(bpy.types.PropertyGroup):
     """A single original-name -> replacement-material mapping entry."""
     original_name: bpy.props.StringProperty(name="Original Name")
-    replacement_name: bpy.props.StringProperty(name="Replacement")
+    replacement_name: bpy.props.StringProperty(name="Replacement",
+                                               update=_mapping_edited)
 
 
 class PG_Stepper(bpy.types.PropertyGroup):
@@ -3541,7 +3715,16 @@ class PG_Stepper(bpy.types.PropertyGroup):
     # user selects another database, or opens a .blend whose list came
     # from another one. Save then replaced that database with this list.
     mat_db_source: bpy.props.StringProperty(options={"HIDDEN"})
+    # The list has changes that Save has not written to the database. The
+    # Save button says so, and Load asks before it drops them.
+    mat_db_dirty: bpy.props.BoolProperty(options={"HIDDEN"})
     mat_db_active_index: bpy.props.IntProperty(default=0)
+    mat_db_show_unused: bpy.props.BoolProperty(
+        name="Show Unused Entries",
+        description="Show the entries for materials that no part in this "
+                    "scene has",
+        default=True,
+    )
     mat_db_apply_selection_only: bpy.props.BoolProperty(
         name="Selection Only",
         description="Apply material mappings only to selected objects",
@@ -4195,7 +4378,9 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                 if obj.data == other_obj.data:
                     other_obj.select_set(True)
 
-        # go through all selected and rebuild the meshes
+        # go through all selected and rebuild the meshes. A new mesh gets
+        # the materials of the file, and a locked part gets its own back.
+        locks = material_lock.take()
         wm = bpy.context.window_manager
         wm.progress_begin(0, len(my_selection))
         for progress_count, obj in enumerate(my_selection):
@@ -4274,6 +4459,7 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         for obj in context.selected_objects:
             obj.display_type = "TEXTURED"
 
+        material_lock.restore(locks)
         # Re-apply active material database if one is set
         db_path = _get_active_matdb_path()
         if db_path:
@@ -4376,7 +4562,7 @@ class STEP_OT_MatDBDuplicate(bpy.types.Operator):
 
 
 class STEP_OT_MatDBRefresh(bpy.types.Operator):
-    """Reload mappings from the active database file and append its materials"""
+    """Show the entries of the selected database, and add its materials to this file to use for other entries"""
     bl_idname = "stepper.mat_db_refresh"
     bl_label = "Load Material Database"
 
@@ -4384,11 +4570,22 @@ class STEP_OT_MatDBRefresh(bpy.types.Operator):
     def poll(cls, context):
         return bool(_get_active_matdb_path())
 
+    def invoke(self, context, event):
+        stepper = context.scene.stepper
+        if stepper.mat_db_dirty and len(stepper.mat_db_mappings) > 0:
+            return context.window_manager.invoke_confirm(
+                self, event, title="Load Material Database",
+                message="The list has changes that are not saved. Load "
+                        "the database and discard them?",
+                confirm_text="Load", icon='WARNING')
+        return self.execute(context)
+
     def execute(self, context):
         db_path = _get_active_matdb_path()
 
-        # Append materials first so they show up in the UI prop_search
-        _append_matdb_materials(db_path)
+        # The materials first, so the list can show them. They stay in the
+        # file, to pick for an entry of another material.
+        added = _append_matdb_materials(db_path, keep=True)
 
         mappings = _read_matdb_mappings(db_path)
         if not mappings:
@@ -4396,7 +4593,10 @@ class STEP_OT_MatDBRefresh(bpy.types.Operator):
             return {'CANCELLED'}
 
         _populate_ui_mappings(context.scene.stepper, mappings, db_path)
-        self.report({'INFO'}, f"Loaded {len(mappings)} mapping(s)")
+        message = f"Loaded {len(mappings)} mapping(s)"
+        if added:
+            message += f" and added {added} material(s) to this file"
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 
@@ -4425,6 +4625,7 @@ class STEP_OT_MatDBUpdate(bpy.types.Operator):
                 added += 1
 
         if added:
+            stepper.mat_db_dirty = True
             self.report({'INFO'}, f"Added {added} new mapping(s). Press Save to write to database.")
         else:
             self.report({'INFO'}, "No new materials to add")
@@ -4459,6 +4660,7 @@ class STEP_OT_MatDBSave(bpy.types.Operator):
             mappings[item.original_name] = item.replacement_name
 
         _write_material_database(filepath, mappings)
+        stepper.mat_db_dirty = False
         self.report({'INFO'}, f"Saved {len(mappings)} mapping(s) to database")
         return {'FINISHED'}
 
@@ -4489,6 +4691,7 @@ class STEP_OT_MatDBDelete(bpy.types.Operator):
         prefs.active_matdb = "NONE"
         context.scene.stepper.mat_db_mappings.clear()
         context.scene.stepper.mat_db_source = ""
+        context.scene.stepper.mat_db_dirty = False
         self.report({'INFO'}, f"Deleted database '{name}'")
         return {'FINISHED'}
 
@@ -4525,7 +4728,10 @@ class STEP_OT_MatDBApply(bpy.types.Operator):
             return {'CANCELLED'}
 
         if stepper.mat_db_apply_selection_only:
-            objects = list(context.selected_objects)
+            # A selected collection instance has its materials on the
+            # prototypes inside the collection it instances.
+            objects = [holder for obj in context.selected_objects
+                       for holder in material_lock.holders(obj)]
         else:
             objects = [obj for obj in bpy.data.objects
                        if obj.get("STEP_file") is not None
@@ -4535,9 +4741,178 @@ class STEP_OT_MatDBApply(bpy.types.Operator):
             self.report({'WARNING'}, "No CAD objects found")
             return {'CANCELLED'}
 
-        replaced = _apply_matdb_to_objects(objects, mappings)
+        locked = []
+        replaced = _apply_matdb_to_objects(objects, mappings,
+                                           locked_out=locked)
         _cleanup_unused_step_materials(known_names=set(mappings))
-        self.report({'INFO'}, f"Replaced {replaced} material(s) across {len(objects)} object(s)")
+        message = (f"Replaced {replaced} material(s) across "
+                   f"{len(objects)} object(s)")
+        if locked:
+            message += (f". {len(locked)} locked part(s) kept their "
+                        "materials")
+        self.report({'INFO'}, message)
+        return {'FINISHED'}
+
+
+class STEP_OT_MatDBSelectEntry(bpy.types.Operator):
+    """Select the parts that have this material"""
+    bl_idname = "stepper.mat_db_select_entry"
+    bl_label = "Select Parts"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    original_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    extend: bpy.props.BoolProperty(
+        name="Extend",
+        description="Add the parts to the selection",
+        default=False,
+        options={'SKIP_SAVE'},
+    )
+
+    @classmethod
+    def description(cls, context, properties):
+        shown, hidden = _parts_with(context.view_layer,
+                                    properties.original_name)
+        text = "Select the %d part(s) that have %s" % (
+            len(shown), properties.original_name)
+        if hidden:
+            text += ". %d hidden part(s) stay as they are" % hidden
+        return text + ". Shift-click to add them to the selection"
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'OBJECT':
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        shown, hidden = _parts_with(context.view_layer, self.original_name)
+        if not shown:
+            self.report({'WARNING'}, "The parts with this material are hidden"
+                        if hidden else "No part in this scene has this material")
+            return {'CANCELLED'}
+        _select_only(context, shown, self.extend)
+        message = f"Selected {len(shown)} part(s)"
+        if hidden:
+            message += f". {hidden} hidden part(s) stay as they are"
+        self.report({'INFO'}, message)
+        return {'FINISHED'}
+
+
+class STEP_OT_MatDBRemoveEntry(bpy.types.Operator):
+    """Remove this entry from the list. Save removes it from the database"""
+    bl_idname = "stepper.mat_db_remove_entry"
+    bl_label = "Remove Entry"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    original_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        stepper = context.scene.stepper
+        items = stepper.mat_db_mappings
+        for index, item in enumerate(items):
+            if item.original_name != self.original_name:
+                continue
+            items.remove(index)
+            stepper.mat_db_active_index = max(
+                0, min(stepper.mat_db_active_index, len(items) - 1))
+            stepper.mat_db_dirty = True
+            self.report({'INFO'}, f"Removed the entry for "
+                        f"{self.original_name}. Save to remove it from the "
+                        "database")
+            return {'FINISHED'}
+        return {'CANCELLED'}
+
+
+class STEP_OT_MaterialLock(bpy.types.Operator):
+    """Keep the materials of the selected parts. The material database, a refresh from the CAD application and Regenerate leave them as they are"""
+    bl_idname = "stepper.material_lock"
+    bl_label = "Lock Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    lock: bpy.props.BoolProperty(
+        name="Lock",
+        description="Lock the materials. Clear to unlock them",
+        default=True,
+    )
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.lock:
+            return cls.__doc__
+        return ("Let the material database, a refresh from the CAD "
+                "application and Regenerate change the materials of the "
+                "selected parts again")
+
+    @classmethod
+    def poll(cls, context):
+        if not any(material_lock.has_materials(o)
+                   for o in context.selected_objects):
+            cls.poll_message_set("Select one or more parts first")
+            return False
+        return True
+
+    def execute(self, context):
+        targets = material_lock.parts(context.selected_objects)
+        for obj in targets:
+            material_lock.set_locked(obj, self.lock)
+        _usage_stale()
+        verb = "Locked" if self.lock else "Unlocked"
+        self.report({'INFO'},
+                    f"{verb} the materials of {len(targets)} part(s)")
+        return {'FINISHED'}
+
+
+class STEP_OT_MaterialLockSelect(bpy.types.Operator):
+    """Select the parts whose materials are locked. Shift-click to add them to the selection"""
+    bl_idname = "stepper.material_lock_select"
+    bl_label = "Select Locked Parts"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    extend: bpy.props.BoolProperty(
+        name="Extend",
+        description="Add the parts to the selection",
+        default=False,
+        options={'SKIP_SAVE'},
+    )
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'OBJECT':
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        if _scene_usage(context.scene)[1] == 0:
+            cls.poll_message_set("No part in this scene is locked")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        view_layer = context.view_layer
+        shown, hidden = [], 0
+        for obj in view_layer.objects:
+            if not material_lock.is_locked(obj):
+                continue
+            if obj.visible_get(view_layer=view_layer) and not obj.hide_select:
+                shown.append(obj)
+            else:
+                hidden += 1
+        if not shown:
+            self.report({'WARNING'}, "The locked parts are hidden"
+                        if hidden else "No part in this scene is locked")
+            return {'CANCELLED'}
+        _select_only(context, shown, self.extend)
+        message = f"Selected {len(shown)} locked part(s)"
+        if hidden:
+            message += f". {hidden} hidden part(s) stay as they are"
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 
@@ -4550,6 +4925,8 @@ def _populate_ui_mappings(stepper, mappings, source):
         item.original_name = orig
         item.replacement_name = repl
     stepper.mat_db_source = source
+    # Filling the list set the flag. The list is the database now.
+    stepper.mat_db_dirty = False
 
 
 def _same_file(a, b):
@@ -4568,12 +4945,47 @@ class STEP_UL_MaterialMappings(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_property, index):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            split = layout.split(factor=0.45, align=True)
-            split.label(text=item.original_name + "  \u2192", icon='MATERIAL')
+            used = _scene_usage(context.scene)[0]
+            row = layout.row(align=True)
+            split = row.split(factor=0.45, align=True)
+            # The preview of the material the entry puts on the parts.
+            mat = bpy.data.materials.get(item.replacement_name)
+            text = item.original_name + "  \u2192"
+            if mat is not None:
+                split.label(text=text, icon_value=layout.icon(mat))
+            else:
+                split.label(text=text, icon='MATERIAL')
             split.prop_search(item, "replacement_name", bpy.data, "materials", text="")
+            sub = row.row(align=True)
+            sub.enabled = item.original_name in used
+            op = sub.operator("stepper.mat_db_select_entry", text="",
+                              icon='RESTRICT_SELECT_OFF', emboss=False)
+            op.original_name = item.original_name
+            op = row.operator("stepper.mat_db_remove_entry", text="",
+                              icon='TRASH', emboss=False)
+            op.original_name = item.original_name
         elif self.layout_type == 'GRID':
             layout.alignment = 'CENTER'
             layout.label(text=item.original_name)
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        names = [item.original_name for item in items]
+        helper = bpy.types.UI_UL_list
+        pattern = self.filter_name
+        matched = [True] * len(names)
+        if pattern:
+            bit = self.bitflag_filter_item
+            matched = [bool(f & bit) for f in helper.filter_items_by_name(
+                pattern, bit, items, "original_name")]
+        flags = _mapping_flags(names, matched, bool(pattern),
+                               self.use_filter_invert, data.mat_db_show_unused,
+                               _scene_usage(context.scene)[0],
+                               self.bitflag_filter_item)
+        order = []
+        if self.use_filter_sort_alpha:
+            order = helper.sort_items_by_name(items, "original_name")
+        return flags, order
 
 
 class STEP_PT_MaterialDB(bpy.types.Panel):
@@ -4603,9 +5015,25 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
         sub.operator("stepper.mat_db_duplicate", text="Duplicate")
         row.operator("stepper.mat_db_refresh", text="Load")
 
-        # The list names itself, so it needs no heading row above it.
-        if len(stepper.mat_db_mappings) > 0:
+        mappings = stepper.mat_db_mappings
+        if len(mappings) > 0:
+            # The list stays in the scene when another database is
+            # selected. Save refuses then, and this says why.
+            source = stepper.mat_db_source
+            if source and not _same_file(source, _get_active_matdb_path()):
+                layout.label(text="The list is from %s" % os.path.splitext(
+                    os.path.basename(source))[0], icon='INFO')
             layout.separator()
+            # How many entries the parts of this scene use, and the eye
+            # that hides the others.
+            used = _scene_usage(context.scene)[0]
+            row = layout.row()
+            row.label(text="In Scene: %d of %d" % (
+                sum(1 for item in mappings if item.original_name in used),
+                len(mappings)))
+            row.prop(stepper, "mat_db_show_unused", text="", emboss=False,
+                     icon='HIDE_OFF' if stepper.mat_db_show_unused
+                     else 'HIDE_ON')
             layout.template_list(
                 "STEP_UL_MaterialMappings", "",
                 stepper, "mat_db_mappings",
@@ -4615,12 +5043,30 @@ class STEP_PT_MaterialDB(bpy.types.Panel):
             row = layout.row(align=True)
             row.operator("stepper.mat_db_update", text="Update",
                          icon='FILE_REFRESH')
-            row.operator("stepper.mat_db_save", text="Save")
+            # An asterisk marks changes Save has not written, as Blender
+            # marks unsaved preferences.
+            row.operator("stepper.mat_db_save",
+                         text="Save *" if stepper.mat_db_dirty else "Save")
 
             row = layout.row(align=True)
             row.operator("stepper.mat_db_apply", text="Apply",
                          icon='CHECKMARK')
             row.prop(stepper, "mat_db_apply_selection_only")
+
+        # The lock is for the live link as much as for the database, so it
+        # is here with or without a list. The button names what it does
+        # to the selection: it unlocks when every selected part is locked.
+        layout.separator()
+        parts = material_lock.parts(context.selected_objects)
+        every = bool(parts) and all(material_lock.is_locked(o) for o in parts)
+        row = layout.row(align=True)
+        op = row.operator("stepper.material_lock",
+                          text="Unlock Materials" if every else "Lock Materials",
+                          icon='LOCKED' if every else 'UNLOCKED',
+                          depress=every)
+        op.lock = not every
+        row.operator("stepper.material_lock_select", text="",
+                     icon='RESTRICT_SELECT_OFF')
 
 
 class STEP_PT_STEPper_Info(bpy.types.Panel):
@@ -5218,6 +5664,10 @@ classes = (
     STEP_OT_MatDBSave,
     STEP_OT_MatDBDelete,
     STEP_OT_MatDBApply,
+    STEP_OT_MatDBSelectEntry,
+    STEP_OT_MatDBRemoveEntry,
+    STEP_OT_MaterialLock,
+    STEP_OT_MaterialLockSelect,
     STEP_UL_MaterialMappings,
     STEP_PT_STEPper_Info,
     CADLINK_PT_quality,
@@ -5236,6 +5686,11 @@ def register():
     for c in classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.stepper = bpy.props.PointerProperty(type=PG_Stepper)
+    material_lock.register()
+    bpy.app.handlers.depsgraph_update_post.append(_usage_on_update)
+    for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post,
+                     bpy.app.handlers.redo_post):
+        handlers.append(_usage_stale)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     # The move comes first: the older choice is read against the listing of
     # the folder the databases end up in.
@@ -5273,4 +5728,12 @@ def unregister():
     for c in classes[::-1]:
         bpy.utils.unregister_class(c)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+    for handlers, handler in (
+            (bpy.app.handlers.depsgraph_update_post, _usage_on_update),
+            (bpy.app.handlers.load_post, _usage_stale),
+            (bpy.app.handlers.undo_post, _usage_stale),
+            (bpy.app.handlers.redo_post, _usage_stale)):
+        if handler in handlers:
+            handlers.remove(handler)
+    material_lock.unregister()
     del bpy.types.Scene.stepper

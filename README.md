@@ -93,6 +93,8 @@ The full list is in the [version history](docs/GUIDE.md#version-history).
 - STEP colours and SolidWorks appearances become Blender materials.
 - A material database swaps CAD material names for your own shaders on
   every import.
+- Lock the materials of a part, and a refresh from the CAD application or
+  the database leaves them as they are.
 
 <p align="center">
   <img src="docs/images/mesh-quality.png" alt="The Mesh Quality panel, and a part before and after Defeature" width="48%">

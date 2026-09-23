@@ -252,6 +252,27 @@ check(not left, "no local copy of LibMat is left behind (%s)" % left)
 check(bpy.data.texts.get(m._MATDB_TEXT_NAME) is None,
       "no mapping text block is left behind")
 
+# ---- a scene scan reads only what an import made -------------------------
+# The scan took the materials of every object without STEP_materials as
+# their own mapping, for imports older than that property. The user's own
+# objects (a backdrop, the lights, the default cube) went into the database
+# with their materials, and every later import appended those materials.
+print("\n== a scene scan leaves the user's own objects out")
+floor_mat = bpy.data.materials.new("Studio Floor")
+floor = bpy.data.objects.new("Backdrop", bpy.data.meshes.new("Backdrop"))
+floor.data.materials.append(floor_mat)
+bpy.context.scene.collection.objects.link(floor)
+gray = bpy.data.materials.new("GRAY")
+older = bpy.data.objects.new("old part", bpy.data.meshes.new("old part"))
+older.data.materials.append(gray)
+older["STEP_file"] = "C:/cad/old.step"
+bpy.context.scene.collection.objects.link(older)
+scanned = m._scan_scene_materials()
+check(scanned.get("GRAY") == "GRAY",
+      "an import older than STEP_materials still counts (%s)" % scanned.get("GRAY"))
+check("Studio Floor" not in scanned,
+      "the user's own backdrop is not in the database (%s)" % sorted(scanned))
+
 if FAILS:
     print("\nmatdb_store_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

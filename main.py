@@ -2321,9 +2321,17 @@ def _scan_scene_materials():
                 original_names = json.loads(step_mats_json)
             except (json.JSONDecodeError, TypeError):
                 continue
-        else:
-            # Backward compat: treat current materials as identity mapping
+        elif (obj.get("STEP_file") is not None
+              or obj.get("STEP_tag") is not None
+              or obj.get("SWMESH_file") is not None):
+            # Backward compat: an import older than STEP_materials. Its
+            # current materials are taken as an identity mapping.
             original_names = [m.name for m in obj.data.materials if m]
+        else:
+            # The user's own object (a backdrop, a light, the default
+            # cube). Its materials went into the database, and every later
+            # import appended them.
+            continue
 
         current_mats = [m.name if m else None for m in obj.data.materials]
 

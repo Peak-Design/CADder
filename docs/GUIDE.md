@@ -179,7 +179,10 @@ Select a database from the dropdown in the STEP import dialog under **Material D
 The addon can receive a model straight from a CAD add-in and build a rig
 from it. Today one add-in speaks to it:
 [CADder Bridge](https://github.com/Peak-Design/CADder-SW-Bridge) for
-SolidWorks. The link is off by default.
+SolidWorks. The link is off by default. SolidWorks runs only on Windows,
+so the link is only in the Windows version. On macOS and Linux the
+preferences have no **SolidWorks Bridge** option, and the sidebar shows
+none of the link.
 
 1. Open **Edit > Preferences > Add-ons > CADder**.
 2. Tick **SolidWorks Bridge**. The addon starts a listener on

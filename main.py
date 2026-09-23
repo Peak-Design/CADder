@@ -5102,7 +5102,7 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
         # not of one panel in it, and because a second CAD application
         # would put a line of its own beside this one.
         prefs = _get_addon_prefs()
-        if bridge_mod is not None and getattr(prefs, "enable_bridge", False):
+        if bridge_mod is not None and bridge_mod.wanted(prefs):
             for text, icon in bridge_mod.status():
                 self.layout.label(text=text, icon=icon)
 
@@ -5179,14 +5179,17 @@ class CADLINK_PT_quality(bpy.types.Panel):
         layout = self.layout
         prg = context.scene.stepper
         live, step = _routes(context)
-        settings = getattr(context.scene, "cad_link", None)
-        if settings is None:
+        # There is no link on macOS and Linux (bridge.SUPPORTED), so the
+        # panel offers only the STEP route there.
+        link =(getattr(context.scene, "cad_link", None) is not None
+                and getattr(bridge_mod, "SUPPORTED", False))
+        if not link:
             live = False
         # With nothing in scope there is still a panel to draw. It shows the
         # live link when there is one, because that is the route that is set
         # up, and the STEP controls otherwise.
         if not live and step is None:
-            live = settings is not None
+            live = link
             step = None if live else "STEP"
 
         col = layout.column(align=True)
@@ -5519,7 +5522,7 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         if bridge_mod is None:
             return
         try:
-            if self.enable_bridge:
+            if bridge_mod.wanted(self):
                 bridge_mod.start()
             else:
                 bridge_mod.stop()
@@ -5610,16 +5613,19 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         sub.active = self.background_import
         sub.prop(self, "background_min_mb")
 
-        layout.separator()
+        # The bridge is for SolidWorks, which runs only on Windows. The
+        # switch and what depends on it are not drawn elsewhere.
+        if bridge_mod is not None and bridge_mod.SUPPORTED:
+            layout.separator()
 
-        col = layout.column()
-        col.prop(self, "enable_bridge")
-        sub = col.column()
-        sub.active = self.enable_bridge
-        sub.prop(self, "cad_link_advanced")
-        if bridge_mod is not None and bridge_mod.is_running():
-            col.label(text="Listening on 127.0.0.1:%d"
-                           % bridge_mod.port(), icon="CHECKMARK")
+            col = layout.column()
+            col.prop(self, "enable_bridge")
+            sub = col.column()
+            sub.active = self.enable_bridge
+            sub.prop(self, "cad_link_advanced")
+            if bridge_mod.is_running():
+                col.label(text="Listening on 127.0.0.1:%d"
+                               % bridge_mod.port(), icon="CHECKMARK")
 
         layout.separator()
 

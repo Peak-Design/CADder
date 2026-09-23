@@ -41,6 +41,18 @@ except ImportError:
 _JOB_TIMEOUT_S = 30 * 60
 _PUMP_INTERVAL_S = 0.2
 
+# SolidWorks, the only CAD application with an add-in for the bridge, runs
+# only on Windows. On macOS and Linux nothing can connect, so the addon
+# offers no switch for the bridge there, shows none of the link, and never
+# starts the listener, whatever the preferences say.
+SUPPORTED = sys.platform == "win32"
+
+
+def wanted(prefs):
+    """True when the listener should run: on Windows, and switched on in
+    the preferences."""
+    return SUPPORTED and bool(getattr(prefs, "enable_bridge", False))
+
 # Importer options a job may forward verbatim to occ_import_step: every
 # property the operator has, less the file and UI ones the bridge fills in
 # itself. Anything else in the payload's import_options is reported back
@@ -1331,7 +1343,7 @@ def stop():
 def register():
     try:
         prefs = bpy.context.preferences.addons[__package__].preferences
-        enabled = getattr(prefs, "enable_bridge", False)
+        enabled = wanted(prefs)
     except (AttributeError, KeyError):
         enabled = False
     if enabled:

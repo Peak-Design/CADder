@@ -426,7 +426,7 @@ def _stepper_available():
 
 def _cad_link_enabled(context):
     """True when the user has switched the SolidWorks Bridge on in the
-    addon preferences.
+    addon preferences, on Windows (bridge.wanted).
 
     Gates the panels of the link: without it they never poll true, so
     nothing about the bridge appears in the sidebar. Fails closed, because
@@ -440,7 +440,11 @@ def _cad_link_enabled(context):
         prefs = context.preferences.addons[addon].preferences
     except (AttributeError, KeyError):
         return False
-    return bool(getattr(prefs, "enable_bridge", False))
+    try:
+        from .. import bridge
+    except Exception:                  # main.py reports a bridge that fails
+        return False
+    return bridge.wanted(prefs)
 
 
 
@@ -1148,6 +1152,15 @@ if bpy is not None:
             default="APPEND")
         @classmethod
         def poll(cls, context):
+            try:
+                from .. import bridge
+            except Exception:
+                cls.poll_message_set("The SolidWorks Bridge did not load. "
+                                     "See the system console")
+                return False
+            if not bridge.SUPPORTED:
+                cls.poll_message_set("SolidWorks runs only on Windows")
+                return False
             return bool(_linked_objects())
 
         def execute(self, context):

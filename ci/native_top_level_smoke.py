@@ -563,4 +563,6 @@ def main():
           "leaves no empty one behind")
 
 
-main()
+# Other smokes import the helpers above.
+if __name__ == "__main__":
+    main()

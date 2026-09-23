@@ -24,9 +24,35 @@ permissions:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════
+  # Version check (first, so a mismatch stops the run in seconds)
+  # ════════════════════════════════════════════════════════════════════
+  # The zip names come from blender_manifest.toml, the update check
+  # compares with bl_info in __init__.py, and the release is named after
+  # the tag. A release where they differ tells every user that an update
+  # is available, also after they install it.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check that the versions agree
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="$INPUT_VERSION"
+          if [ -z "$TAG" ] && [ "$REF_TYPE" = "tag" ]; then
+            TAG="$REF_NAME"
+          fi
+          python3 ci/check_version.py "$TAG"
+
+  # ════════════════════════════════════════════════════════════════════
   # Windows (windows-x64)
   # ════════════════════════════════════════════════════════════════════
   build-windows:
+    needs: version
     runs-on: windows-latest
     defaults:
       run:
@@ -116,6 +142,7 @@ jobs:
   # macOS (macos-arm64 native build + macos-x64 cross-compile)
   # ════════════════════════════════════════════════════════════════════
   build-macos:
+    needs: version
     runs-on: macos-14
     defaults:
       run:
@@ -263,6 +290,7 @@ jobs:
   # Linux (linux-x64)
   # ════════════════════════════════════════════════════════════════════
   build-linux:
+    needs: version
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -416,10 +444,14 @@ jobs:
           EOF
           sed -i "s/@VERSION@/${VERSION}/g" notes.md
 
+      # target_commitish: a release started by hand with a version makes
+      # its tag here, and without it the tag goes on the default branch
+      # and not on the commit the zips were built from.
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           name: CADder ${{ github.event.inputs.version || github.ref_name }}
           body_path: notes.md
           draft: false

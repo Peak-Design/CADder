@@ -264,7 +264,10 @@ class STEPPER_OT_background_import(bpy.types.Operator):
         return True
 
     def modal(self, context, event):
-        if event.type == "ESC":
+        # The press only. This handler gets key releases too. When Esc
+        # cancels a move or closes a menu, that tool uses the press, and
+        # the release then comes here.
+        if event.type == "ESC" and event.value == "PRESS":
             self._kill()
             self._cleanup(context)
             self.report({"WARNING"}, "Background import cancelled")

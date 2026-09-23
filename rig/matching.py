@@ -642,6 +642,62 @@ def collect_candidates(objects=None):
     return out
 
 
+def _is_direct_send(obj) -> bool:
+    """A part the direct link built. It came tagged with its component, so
+    there is nothing to match, and it has no STEP name for the steps below
+    to match it by."""
+    try:
+        return obj.get("SWMESH_file") is not None \
+            and not obj.get("SWMESH_prototype")
+    except (AttributeError, TypeError):
+        return False
+
+
+def _local_rows(obj):
+    """Where a direct-send part sits inside its component (SWMESH_local),
+    or None for a part that is its own component."""
+    raw = obj.get("SWMESH_local")
+    if raw is None:
+        return None
+    try:
+        values = [float(v) for v in raw]
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 16:
+        return None
+    return [values[i * 4:(i + 1) * 4] for i in range(4)]
+
+
+def _claim_direct_send(objects, comps, group_of, unit_scale):
+    """The match of the direct-send parts, from their own tags.
+
+    Returns (entries, anchor pairs). One entry for each part, as the send
+    made them: a rigid subassembly is one component and several parts.
+    Every part anchors the frame at its own place in its component. Match
+    Geometry after a send took the tags off the parts of a rigid
+    subassembly, because none of them has the STEP name of the component,
+    and the next Relink left them off the rig. A part whose component this
+    manifest does not know is left as it is."""
+    entries, pairs = [], []
+    for obj in objects:
+        cid = obj.get("RIG_component_id")
+        comp = comps.get(cid)
+        if comp is None:
+            continue
+        obj["RIG_group"] = group_of[cid]
+        entries.append(MatchEntry(component_id=cid, object_name=obj.name,
+                                  step=0, confidence="exact",
+                                  object_path=obj.get("SWMESH_path")))
+        rows = [list(comp.transform[i]) for i in range(4)]
+        local = _local_rows(obj)
+        if local is not None:
+            rows = apply_frame(rows, local)
+        for i in range(3):
+            rows[i][3] *= unit_scale
+        pairs.append((_matrix_rows(obj), rows))
+    return entries, pairs
+
+
 def _basename(path) -> str:
     if not path:
         return ""
@@ -653,6 +709,12 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     candidates = collect_candidates(objects)
     collections = collect_collections(collections)
     scene_scale = _scene_scale()
+
+    # The parts of a direct send take no part in the search, and no tag of
+    # theirs is cleared.
+    direct = [o for o in candidates if _is_direct_send(o)]
+    if direct:
+        candidates = [o for o in candidates if not _is_direct_send(o)]
 
     # A long-lived test scene accumulates imports of OTHER step files. their
     # objects must never compete for this manifest's components. Objects from
@@ -675,6 +737,8 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             group_of[cid] = g.id
     comps = {c.id: c for c in manifest.components
              if c.id in group_of and not c.suppressed}
+    direct_entries, direct_pairs = _claim_direct_send(
+        direct, comps, group_of, 1.0 / scene_scale)
 
     by_uuid = {}
     for obj in candidates:
@@ -702,6 +766,8 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
             orphaned += 1
 
     todo = dict(comps)
+    for entry in direct_entries:
+        todo.pop(entry.component_id, None)
     pool = list(candidates)
     claimed = {}
 
@@ -882,7 +948,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     unit_scale = 1.0 / scene_scale
     anchor_pairs = [(_matrix_rows(claimed[e.component_id]),
                      _component_rows_units(comps[e.component_id], unit_scale))
-                    for e in report.matched]
+                    for e in report.matched] + direct_pairs
     if anchor_pairs:
         frame, agree = estimate_frame(anchor_pairs, scene_scale)
     else:
@@ -1179,6 +1245,7 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     for note in report.notes:
         print("[CADLink match] %s" % note)
 
+    report.matched.extend(direct_entries)
     report.ambiguous = sorted(
         (cid, names) for cid, names in ambiguous_seen.items() if cid in todo)
     still_ambiguous = {cid for cid, _ in report.ambiguous}

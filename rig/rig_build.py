@@ -887,7 +887,14 @@ def _clear_generated(context, arm_obj, collection):
     """Everything the last build made, out of a rig that is standing: its
     bones, the drivers on them, and the helper objects beside it. A bone
     with no tag of ours was put there by the user and stays, with whatever
-    they hung on it."""
+    they hung on it.
+
+    Returns user bone -> (parent name, use_connect) for each user bone
+    that hung on a generated bone. Blender moves the child of a removed
+    bone up to the removed bone's parent, so without this record a bone
+    the user hung on the arm (a camera target, say) is left on the ground
+    after the update, and no longer moves with the arm."""
+    orphans = {}
     _ensure_object_mode(context)
     generated = set()
     for pb in arm_obj.pose.bones:
@@ -917,6 +924,10 @@ def _clear_generated(context, arm_obj, collection):
         arm_obj.select_set(True)
         bpy.ops.object.mode_set(mode="EDIT")
         try:
+            for eb in arm_obj.data.edit_bones:
+                if (eb.name not in generated and eb.parent is not None
+                        and eb.parent.name in generated):
+                    orphans[eb.name] = (eb.parent.name, eb.use_connect)
             for name in generated:
                 eb = arm_obj.data.edit_bones.get(name)
                 if eb is not None:
@@ -928,6 +939,7 @@ def _clear_generated(context, arm_obj, collection):
     doomed = [o for o in list(collection.objects)
               if o.get("RIG_rig") and o is not arm_obj]
     _remove_rig_objects(doomed)
+    return orphans
 
 
 def _bone_in_path(path):
@@ -1209,6 +1221,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
     _ensure_object_mode(context)
 
     rig_name = _rig_name(manifest)
+    orphans = {}
     if into is not None and getattr(into, "type", None) == "ARMATURE":
         # Into the armature that is already there. The action, the drivers
         # the user wrote, the bones they added and everything keyed against
@@ -1217,7 +1230,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         arm_obj = into
         arm_data = arm_obj.data
         collection = _rig_collection_of(arm_obj)             or _place_rig_collection(context, manifest, rig_name)
-        _clear_generated(context, arm_obj, collection)
+        orphans = _clear_generated(context, arm_obj, collection)
     else:
         collection = _place_rig_collection(context, manifest, rig_name)
         _remove_previous_rig(collection)
@@ -1541,6 +1554,17 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 eb.parent = edit_bones[result.bone_names[aim_parent]]
                 helpers_coll.assign(eb)
                 result.aim_names[(splan.loop.id, tag)] = eb.name
+
+        # A bone of the user's own that hung on a generated bone hangs on
+        # it again, when this build made a bone of that name (the update
+        # keeps the names: see rig_update.keep_names).
+        for name, (parent_name, connect) in orphans.items():
+            eb = edit_bones.get(name)
+            target = edit_bones.get(parent_name)
+            if eb is None or target is None or target is eb:
+                continue
+            eb.parent = target
+            eb.use_connect = connect
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
 

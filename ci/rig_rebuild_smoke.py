@@ -9,6 +9,7 @@ an update with rig_mode APPEND and checks what came back:
 
   * a limited ball keeps the name of the handle the user keys, update
     after update;
+  * a bone the user parented to a rig bone hangs on that bone again;
 """
 
 import json
@@ -18,6 +19,7 @@ import sys
 import tempfile
 
 import bpy
+from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
@@ -155,9 +157,17 @@ def rig_object():
     return None
 
 
+_REGISTERED = []
+
+
 def fresh():
+    """An empty scene for the next case. The rig classes survive a
+    factory reset, so they are registered once."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    rig.register()
+    if not _REGISTERED:
+        rig.register()
+        _REGISTERED.append(True)
+    rig_ui._reset_state()
 
 
 # ── A limited ball keeps its handle's name ──────────────────────────────
@@ -205,8 +215,45 @@ def ball_handle_keeps_its_name():
           sorted(b.name for b in rig_object().data.bones))
 
 
+# ── A bone of the user's own stays on the bone it hung on ───────────────
+
+HINGED = [("c001", "base-1", "pbase", 0.0, "base"),
+          ("c002", "arm-1", "parm", 0.2, "arm")]
+
+
+def user_bone_keeps_its_parent():
+    print("-- a bone of the user's own, parented to a rig bone")
+    fresh()
+    joints = [hinge("j001", "g000", "g001", 0.2)]
+    send("armrig", HINGED, joints)
+    arm = rig_object()
+    if not check(arm is not None, "no rig was built"):
+        return
+    arm_bone = rig_ui._STATE["build"].bone_names["g001"]
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    mine = arm.data.edit_bones.new("cam_target")
+    mine.head = (0.4, 0.0, 0.1)
+    mine.tail = (0.4, 0.0, 0.2)
+    mine.parent = arm.data.edit_bones[arm_bone]
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    send("armrig", HINGED, joints, update=True)
+    now = rig_object()
+    bone = now.data.bones.get("cam_target")
+    if not check(bone is not None, "the user's bone was removed"):
+        return
+    check(bone.parent is not None and bone.parent.name == arm_bone,
+          "the user's bone hangs on %r, not on %r"
+          % (bone.parent.name if bone.parent else None, arm_bone))
+    check((bone.head_local - Vector((0.4, 0.0, 0.1))).length < 1e-6,
+          "the user's bone moved to %s" % (tuple(bone.head_local),))
+    print("   cam_target hangs on", bone.parent.name if bone.parent else None)
+
+
 def main():
     ball_handle_keeps_its_name()
+    user_bone_keeps_its_parent()
 
     print()
     if FAILS:

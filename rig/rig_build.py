@@ -547,16 +547,28 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
             handle.custom_shape = shapes_mod.widget(widgets, key, geometry, cache)
             handle.use_custom_shape_bone_size = True
 
-        # A swing-cone ball wears its limit as the cone it may lean in.
+        # A swing-cone ball wears its limit as the cone it may lean in: the
+        # band the constraints clamp (constraints.apply_ball_cone), which is
+        # an angle from the CONE axis and not from the rest pose. A stud
+        # can rest tilted inside it, so the widget is also turned from the
+        # handle's own +Y (the rest direction) onto the cone axis, which
+        # the pole bone carries as its +Y.
         joint = bp.joint
         if bp.ball_def_name and joint is not None \
                 and joint.rotation_limit is not None:
-            swing = max(abs(joint.rotation_limit.delta_min),
-                        abs(joint.rotation_limit.delta_max))
+            swing = max(abs(joint.rotation_limit.min),
+                        abs(joint.rotation_limit.max))
             lim_key = "SWW_cone_%.4f" % swing
             handle.custom_shape = shapes_mod.widget(
                 widgets, lim_key,
                 shapes_mod.swing_cone(swing, 1.0), cache)
+            pole = pose.bones.get(result.ball_pole_names.get(gid, ""))
+            if pole is not None:
+                cone_axis = pole.bone.matrix_local.col[1].to_3d()
+                local = handle.bone.matrix_local.to_3x3().inverted() @ cone_axis
+                if local.length > 1e-9:
+                    turn = Vector((0.0, 1.0, 0.0)).rotation_difference(local)
+                    handle.custom_shape_rotation_euler = turn.to_euler("XYZ")
 
     # The limit dials and rails.
     for gid, name in result.limit_names.items():

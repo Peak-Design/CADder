@@ -10,11 +10,11 @@ raises, and a test that crashed reads as a test that passed.
 A scope can hold parts from a STEP file and parts from the live link. When
 the CAD application is closed:
 
-- the user sees why, in the message of the operator, not only in the
-  system console;
-- the parts from the STEP file are still rebuilt, because they do not need
-  the CAD application;
-- the UV record of a part changes only when the part got the new UVs, so a
+- The user sees why, in the message of the operator, not only in the
+  system console.
+- The parts from the STEP file are still rebuilt, because they do not need
+  the CAD application.
+- The UV record of a part changes only when the part got the new UVs, so a
   later Regenerate does not make a map that the user never saw.
 
 No SolidWorks here. The link is made to fail as it fails when no CAD

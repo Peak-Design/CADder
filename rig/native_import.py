@@ -1187,8 +1187,8 @@ def update(context, path, manifest=None, unit_scale=None,
         except ReferenceError:
             continue
     if disowned:
-        print("[CADLink native] %d copy(ies) made in Blender are no longer "
-              "tagged as parts of the assembly: %s"
+        print("[CADLink native] %d object(s) are Blender copies of a part. "
+              "They no longer have the tags of the assembly: %s"
               % (len(disowned), ", ".join(disowned[:5])))
 
     if before_changes is not None:

@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from .manifest import Component, Manifest
+from .manifest import Component, Manifest, stale_step
 
 # Importable under plain Python. Every entry point that needs Blender
 # checks for bpy itself.
@@ -715,6 +715,13 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     direct = [o for o in candidates if _is_direct_send(o)]
     if direct:
         candidates = [o for o in candidates if not _is_direct_send(o)]
+
+    # Parts of a STEP import are matched against the STEP file the manifest
+    # names, so that file has to be the one it was written for.
+    if any(get_step_key(o).name is not None for o in candidates):
+        stale = stale_step(manifest)
+        if stale:
+            report.notes.append(stale)
 
     # A long-lived test scene accumulates imports of OTHER step files. their
     # objects must never compete for this manifest's components. Objects from

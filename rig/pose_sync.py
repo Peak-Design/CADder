@@ -251,7 +251,8 @@ def sync(manifest: Manifest, report: MatchReport, objects=None,
         if obj is None:
             if report_missing:
                 out.skipped.append((entry.object_name,
-                                    "not found: no object carries this part now"))
+                                    "not found: no object has the tags of "
+                                    "this part"))
             continue
         crows = _target_rows(comp, obj, unit_scale)
         cur = _matrix_rows(obj)

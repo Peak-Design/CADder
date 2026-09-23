@@ -11,7 +11,9 @@ value_at_rest). Consumers pose in deltas from rest: use Limit.delta_min /
 Limit.delta_max.
 """
 
+import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -586,6 +588,42 @@ def parse(data: dict, source_path: Optional[str] = None) -> Manifest:
         source_path=source_path,
         mechanisms=mechanisms,
     )
+
+
+def step_path(manifest: Manifest) -> Optional[str]:
+    """The STEP file the manifest names, next to the manifest itself. None
+    when either one is not known."""
+    if not manifest.step_file or not manifest.source_path:
+        return None
+    return os.path.join(os.path.dirname(os.path.abspath(manifest.source_path)),
+                        manifest.step_file)
+
+
+def stale_step(manifest: Manifest, path: Optional[str] = None) -> Optional[str]:
+    """A warning when the STEP file is not the one the manifest was written
+    for, else None.
+
+    The manifest carries the SHA-1 of its STEP file for this, and nothing
+    read it: a STEP file written again after the manifest was matched
+    against it without a word. A manifest with no hash (a direct send
+    writes none) and a STEP file that is not there are not checked. The
+    import says so when the file is missing."""
+    want = (manifest.step_sha1 or "").strip().lower()
+    path = path or step_path(manifest)
+    if not want or not path or not os.path.isfile(path):
+        return None
+    digest = hashlib.sha1()
+    try:
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    if digest.hexdigest() == want:
+        return None
+    return ("The SHA-1 of %s is not the SHA-1 in the manifest. The file "
+            "changed after the export, and parts can match incorrectly. "
+            "Export the assembly again" % os.path.basename(path))
 
 
 def load(path: str) -> Manifest:

@@ -989,8 +989,11 @@ if bpy is not None:
                                         object_name=obj.name, step=0,
                                         confidence="exact")
                     for obj, _rows in pairs]
+                # The entries are keyed by object name, not by component
+                # id, so pose sync must not check them against the tags.
                 synced = pose_sync.sync(stand_in, matched,
-                                        objects=[obj for obj, _rows in pairs])
+                                        objects=[obj for obj, _rows in pairs],
+                                        trust_names=True)
                 report.moved.extend(synced.moved)
                 report.already_ok += synced.already_ok
                 report.skipped.extend(synced.skipped)

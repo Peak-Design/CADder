@@ -175,13 +175,16 @@ class _Finder:
     carries them. parenting.relink works from the tags for the same
     reason."""
 
-    def __init__(self, objects):
+    def __init__(self, objects, trust_names=False):
         self.objects = objects
         self.by_name = {o.name: o for o in objects}
+        self.trust_names = trust_names
         self._by_tags = None
 
     def find(self, entry):
         obj = self.by_name.get(entry.object_name)
+        if self.trust_names:
+            return obj
         if obj is not None and _carries(obj, entry, strict=False):
             return obj
         if self._by_tags is None:
@@ -201,7 +204,7 @@ class _Finder:
 
 
 def sync(manifest: Manifest, report: MatchReport, objects=None,
-         report_missing=None) -> PoseSyncReport:
+         report_missing=None, trust_names=False) -> PoseSyncReport:
     """Move every matched object whose world pose disagrees with its
     component's manifest transform (under report.frame_rows) onto that
     transform. Returns what moved, in metres, and what was skipped and why.
@@ -210,7 +213,11 @@ def sync(manifest: Manifest, report: MatchReport, objects=None,
     An entry whose part is not found goes to `skipped` when
     `report_missing` is true. By default it is true when `objects` is None
     (the whole scene), and false for a list of the caller's, which may
-    hold only some of the parts on purpose."""
+    hold only some of the parts on purpose.
+
+    With `trust_names`, an entry means the object of its name, whatever its
+    tags say. For a caller that made the entries from those very objects
+    and keys them by name, not by component id."""
     out = PoseSyncReport()
     frame = report.frame_rows if report.frame_rows is not None else identity_frame()
     scene_scale = _scene_scale()
@@ -220,7 +227,7 @@ def sync(manifest: Manifest, report: MatchReport, objects=None,
         report_missing = objects is None
     if objects is None:
         objects = list(bpy.context.scene.objects) if bpy is not None else []
-    finder = _Finder(objects)
+    finder = _Finder(objects, trust_names)
     comps = {c.id: c for c in manifest.components}
 
     targets: Dict[str, List[List[float]]] = {}

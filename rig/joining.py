@@ -53,6 +53,8 @@ except ImportError:
 
 from . import parenting
 
+# Metres, whatever the scene's unit: every length below is converted from
+# Blender units first (see _metres_per_unit).
 _REST_TOL = 1e-6
 
 
@@ -88,7 +90,20 @@ def joinable(context):
     return active, others
 
 
-def bone_off_rest(arm_obj, bone_name):
+def _metres_per_unit(context):
+    """The length of one Blender unit in metres. The rig is built in
+    metres times the scene's unit scale, and a millimetre scene is one
+    CADder supports: there a figure in Blender units read as metres is a
+    thousand times too large, and a tolerance of a micrometre is below
+    what single precision holds some thousands of units out."""
+    try:
+        scale = float(context.scene.unit_settings.scale_length)
+    except (AttributeError, TypeError):
+        return 1.0
+    return scale if scale > 0.0 else 1.0
+
+
+def bone_off_rest(arm_obj, bone_name, metres_per_unit=1.0):
     """How far a bone sits from its own rest pose, as (metres, radians).
 
     Parenting under it would carry that offset into everything below.
@@ -98,7 +113,8 @@ def bone_off_rest(arm_obj, bone_name):
         return 0.0, 0.0
     rest = arm_obj.data.bones[bone_name].matrix_local
     delta = rest.inverted() @ pb.matrix
-    return ((pb.matrix.translation - rest.translation).length,
+    return ((pb.matrix.translation - rest.translation).length
+            * metres_per_unit,
             abs(delta.to_quaternion().angle))
 
 
@@ -155,6 +171,7 @@ def join(context, host, others, attach_bone=None, relink=True):
     if not others:
         report.warnings.append("nothing selected to join into this rig")
         return report
+    metres = _metres_per_unit(context)
 
     host_sources = parenting.rig_sources(host)
     incoming = {}
@@ -177,7 +194,7 @@ def join(context, host, others, attach_bone=None, relink=True):
             "unparented".format(attach_bone))
         attach_bone = None
     if attach_bone is not None:
-        off_m, off_rad = bone_off_rest(host, attach_bone)
+        off_m, off_rad = bone_off_rest(host, attach_bone, metres)
         if off_m > _REST_TOL or off_rad > _REST_TOL:
             # Stop before the merge. Merged, the rigs cannot be joined
             # again once the pose is cleared: there is one rig left.
@@ -273,7 +290,8 @@ def join(context, host, others, attach_bone=None, relink=True):
         prep = parenting.relink(context, host)
         report.reparented = prep.bone_parented
         for name, drift in prep.violations:
-            report.drift.append((name, drift))
+            if drift * metres > _REST_TOL:
+                report.drift.append((name, drift * metres))
 
     after_bones, after_objects = _snapshot(context)
     # The tags have done their work once the bones are measured.
@@ -283,14 +301,14 @@ def join(context, host, others, attach_bone=None, relink=True):
         if now is None:
             report.warnings.append("bone {} went missing".format(ident[1]))
             continue
-        moved = (now.translation - was.translation).length
+        moved = (now.translation - was.translation).length * metres
         if moved > _REST_TOL:
             report.drift.append(("bone " + str(ident[1]), moved))
     for name, was in before_objects.items():
         obj = bpy.data.objects.get(name)
         if obj is None:
             continue        # the joined armatures themselves are consumed
-        moved = (obj.matrix_world.translation - was.translation).length
+        moved = (obj.matrix_world.translation - was.translation).length             * metres
         if moved > _REST_TOL:
             report.drift.append((name, moved))
     return report

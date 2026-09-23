@@ -128,7 +128,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _reply(self, code, body: dict):
         data = json.dumps(body).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "application/json. charset=utf-8")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         try:

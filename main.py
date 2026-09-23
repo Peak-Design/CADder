@@ -3024,8 +3024,21 @@ def load_step(
                         obj, mesh, colors, mat_names, norms, uvs,
                         build_materials=build_materials)
                 else:
-                    # Fallback for shapes that failed precompute
-                    build_mesh(step_reader, obj, shp, lin_deflection, ang_deflection)
+                    # Phase 1 could not tessellate this shape, so try once
+                    # more, with the same settings. A shape that fails
+                    # again is a part with no geometry. Before, the error
+                    # stopped the import halfway, with every object made so
+                    # far left unplaced at file units.
+                    _shp, part_name, color_override = unique_shapes[shape_name]
+                    try:
+                        build_mesh(step_reader, obj, shp, lin_deflection,
+                                   ang_deflection,
+                                   relative=tessellation_relative,
+                                   part_name=part_name,
+                                   fallback_color=color_override)
+                    except Exception as e:
+                        print(f"\nWarning: could not build {name}: {e}")
+                        obj.data.clear_geometry()
 
                 # Track parts that produced no geometry
                 if obj.data is not None and len(obj.data.vertices) == 0:

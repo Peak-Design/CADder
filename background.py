@@ -116,6 +116,27 @@ def _exclude_collections(layer_col, collections):
             lc.exclude = True
 
 
+def _reuse_materials(loaded, existing):
+    """Use the materials the scene has already, as a direct import does.
+
+    A direct import takes the material of the same name when there is one.
+    The append copies every worker material, and Blender gives each copy
+    that has the name of an existing material a ".001" name. A change to
+    "STEP_7f7f7f" then reached only the first import, and a scene scan for
+    the material database saw the copy as a user replacement. Each such
+    copy is replaced by the existing material and removed.
+
+    loaded: (worker name, loaded material) pairs. existing: {name:
+    material} of the local materials from before the append.
+    """
+    for name, mat in loaded:
+        old = existing.get(name)
+        if mat is None or old is None or mat == old:
+            continue
+        mat.user_remap(old)
+        bpy.data.materials.remove(mat)
+
+
 class STEPPER_OT_background_import(bpy.types.Operator):
     """Import STEP files in a background process. The interface stays responsive
     and Esc cancels the import."""
@@ -345,8 +366,14 @@ class STEPPER_OT_background_import(bpy.types.Operator):
     def _append_result(self, context, blend_path):
         """Append the worker scene's content into the current scene."""
         pre_scenes = set(bpy.data.scenes)
+        pre_materials = {m.name: m for m in bpy.data.materials
+                         if m.library is None}
         with bpy.data.libraries.load(blend_path, link=False) as (df, dt):
             dt.scenes = list(df.scenes)
+            # Named here so that the loaded material of each worker name
+            # is known after the load, whatever Blender renamed it to.
+            mat_names = list(df.materials)
+            dt.materials = list(mat_names)
         new_scenes = [s for s in bpy.data.scenes if s not in pre_scenes]
         target = context.scene.collection
         excluded = []
@@ -375,6 +402,7 @@ class STEPPER_OT_background_import(bpy.types.Operator):
         if excluded:
             _exclude_collections(context.view_layer.layer_collection,
                                  set(excluded))
+        _reuse_materials(zip(mat_names, dt.materials), pre_materials)
         # Appended objects need a depsgraph pass before their matrices are valid
         context.view_layer.update()
 

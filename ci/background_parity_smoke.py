@@ -18,6 +18,10 @@ appends its blend the way the modal operator does.
   2. Collection instances. The import hides the prototype collection in the
      view layer, and a view layer flag does not come across with the
      collection. Every prototype then showed at the origin.
+
+  3. Materials that the scene has already. A direct import uses the
+     material of the same name. The append made a ".001" copy of each one,
+     so a change to the material reached only the first import.
 """
 import json
 import os
@@ -201,6 +205,32 @@ if out is not None:
     check(appended[1] == direct[1],
           "the same mesh objects show as after a direct import (%d vs %d)"
           % (len(appended[1]), len(direct[1])))
+
+# -- 3. materials the scene has already ---------------------------------------
+print("\n== materials the scene has already")
+clean()
+m.load_step(bpy.context, STEP, htypes="TREE", up_as="Z", custom_scale=1.0)
+first = {s.material for o in step_objects() for s in o.material_slots
+         if s.material}
+check(len(first) == 1, "the first import made one material (%s)"
+      % sorted(mat.name for mat in first))
+for mat in first:
+    mat["edited_by_user"] = True
+names_before = sorted(mat.name for mat in bpy.data.materials)
+out = run_worker({"hierarchy_types": "TREE", "up_as": "ZPOS",
+                  "custom_scale": True, "user_scale": 1.0}, "materials")
+check(out is not None, "the worker imports the file a second time")
+if out is not None:
+    append(out)
+    names_after = sorted(mat.name for mat in bpy.data.materials)
+    check(names_after == names_before,
+          "the append adds no copy of a material (%s, was %s)"
+          % (names_after, names_before))
+    used = {s.material for o in step_objects() for s in o.material_slots
+            if s.material}
+    check(len(step_objects()) == 4 and used == first,
+          "both imports use the one material (%s)"
+          % sorted(mat.name for mat in used))
 
 if FAILS:
     print("\nbackground_parity_smoke: FAILED (%d)\n  %s"

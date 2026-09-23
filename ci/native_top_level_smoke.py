@@ -316,6 +316,19 @@ def check_top(where, mode, stem="hinge", rig_name=None, at_root=True,
     for obj in parts_of(stem).values():
         check(rides(obj, arm), where, "%s does not ride the rig" % obj.name)
     check(not numbered(), where, "numbered copies: %s" % numbered())
+    # The widgets of the bones are in the rig collection only, and hidden.
+    # A second send left them at the scene root too, not excluded there.
+    check("SW_widgets" not in root_names(), where,
+          "the widget collection is at the scene root")
+    shown = []
+
+    def walk(layer):
+        if layer.collection.name == "SW_widgets" and not layer.exclude:
+            shown.append(layer)
+        for child in layer.children:
+            walk(child)
+    walk(bpy.context.view_layer.layer_collection)
+    check(not shown, where, "the widget collection shows in the view layer")
     return top
 
 

@@ -433,20 +433,29 @@ def ground_cross(size=1.0):
 WIDGET_COLLECTION = "SW_widgets"
 
 
-def widget_collection(scene_collection):
+def widget_collection(parent):
     """A collection for the widget objects, excluded from the view layer.
 
     They must exist as objects, but they are not scene content: a custom
     shape is drawn by the bone, not by its own object. Excluding keeps them
     out of the viewport, the render and the user's way, while leaving them
     inspectable when something looks wrong.
+
+    It goes in `parent`, the collection of the rig. A rig that is removed
+    leaves it at the scene root, because other rigs can use its widgets.
+    The next build takes it from there. It stayed there as well, so after
+    a second send it was in the scene twice, once at the root, and only
+    one of the two was excluded (2026-09-23).
     """
     col = bpy.data.collections.get(WIDGET_COLLECTION)
     if col is None:
         col = bpy.data.collections.new(WIDGET_COLLECTION)
         col["CADLINK_widgets"] = True
-    if col.name not in [c.name for c in scene_collection.children]:
-        scene_collection.children.link(col)
+    if col.name not in [c.name for c in parent.children]:
+        parent.children.link(col)
+    root = bpy.context.scene.collection
+    if parent != root and col.name in [c.name for c in root.children]:
+        root.children.unlink(col)
     return col
 
 

@@ -67,6 +67,12 @@ class MatchEntry:
     # than to an object of its own: there is then no single object holding
     # the occurrence's pose, which pose_sync has to know.
     collection_name: Optional[str] = None
+    # The object's occurrence path (SWMESH_path) on the direct link. The
+    # name above is the one the object had when the report was made, and
+    # the user can rename it. The component id and this path find it
+    # again, also inside a rigid subassembly, where one component id
+    # names several parts.
+    object_path: Optional[str] = None
 
     def __post_init__(self):
         # Every other producer of this record (native_import, the tests)

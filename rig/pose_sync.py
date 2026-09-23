@@ -144,19 +144,83 @@ def _assign_basis(obj, rows):
         obj.matrix_basis = rows
 
 
-def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncReport:
+def _carries(obj, entry, strict):
+    """True when the object's tags say it is the part this entry means.
+
+    A tag that is missing does not say no, unless `strict`: the named
+    object of a report from a route that does not write the tag is still
+    the one the report means."""
+    component = obj.get("RIG_component_id")
+    if component is None:
+        component = obj.get("RIG_component_of")
+    path = obj.get("SWMESH_path")
+    if strict:
+        return component == entry.component_id and (
+            not entry.object_path or path == entry.object_path)
+    if component is not None and component != entry.component_id:
+        return False
+    if entry.object_path and path is not None and path != entry.object_path:
+        return False
+    return True
+
+
+class _Finder:
+    """Finds the object an entry of the match report means now.
+
+    By the name first, which is what the report holds, but only when the
+    object with that name still carries the entry's tags. The names are
+    the ones the parts had when the send ran: a part renamed since then
+    was not found and was not moved, and an object that took the old name
+    was moved in its place. Otherwise by the tags, when one object alone
+    carries them. parenting.relink works from the tags for the same
+    reason."""
+
+    def __init__(self, objects):
+        self.objects = objects
+        self.by_name = {o.name: o for o in objects}
+        self._by_tags = None
+
+    def find(self, entry):
+        obj = self.by_name.get(entry.object_name)
+        if obj is not None and _carries(obj, entry, strict=False):
+            return obj
+        if self._by_tags is None:
+            self._by_tags = {}
+            for o in self.objects:
+                try:
+                    component = o.get("RIG_component_id")
+                    if component is None:
+                        component = o.get("RIG_component_of")
+                except (AttributeError, ReferenceError):
+                    continue
+                if component is not None:
+                    self._by_tags.setdefault(component, []).append(o)
+        found = [o for o in self._by_tags.get(entry.component_id, [])
+                 if _carries(o, entry, strict=True)]
+        return found[0] if len(found) == 1 else None
+
+
+def sync(manifest: Manifest, report: MatchReport, objects=None,
+         report_missing=None) -> PoseSyncReport:
     """Move every matched object whose world pose disagrees with its
     component's manifest transform (under report.frame_rows) onto that
     transform. Returns what moved, in metres, and what was skipped and why.
-    The caller owns the depsgraph update afterwards."""
+    The caller owns the depsgraph update afterwards.
+
+    An entry whose part is not found goes to `skipped` when
+    `report_missing` is true. By default it is true when `objects` is None
+    (the whole scene), and false for a list of the caller's, which may
+    hold only some of the parts on purpose."""
     out = PoseSyncReport()
     frame = report.frame_rows if report.frame_rows is not None else identity_frame()
     scene_scale = _scene_scale()
     unit_scale = 1.0 / scene_scale
 
+    if report_missing is None:
+        report_missing = objects is None
     if objects is None:
         objects = list(bpy.context.scene.objects) if bpy is not None else []
-    by_name = {o.name: o for o in objects}
+    finder = _Finder(objects)
     comps = {c.id: c for c in manifest.components}
 
     targets: Dict[str, List[List[float]]] = {}
@@ -180,9 +244,14 @@ def sync(manifest: Manifest, report: MatchReport, objects=None) -> PoseSyncRepor
                                     "a subassembly resolved to a collection: "
                                     "no object carries its occurrence pose"))
             continue
-        obj = by_name.get(entry.object_name)
         comp = comps.get(entry.component_id)
-        if obj is None or comp is None:
+        if comp is None:
+            continue
+        obj = finder.find(entry)
+        if obj is None:
+            if report_missing:
+                out.skipped.append((entry.object_name,
+                                    "not found: no object carries this part now"))
             continue
         crows = _target_rows(comp, obj, unit_scale)
         cur = _matrix_rows(obj)

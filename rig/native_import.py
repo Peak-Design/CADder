@@ -1047,7 +1047,8 @@ def build(context, path, manifest=None, collection_name=None,
             matching.MatchEntry(component_id=inst.component_id,
                                 object_name=obj.name,
                                 step=0,          # no search happened
-                                confidence="exact"))
+                                confidence="exact",
+                                object_path=obj.get(_TAG_PATH)))
 
     # Every instance was placed through the frame, so every one anchors
     # it. The Build Rig operator trusts a frame only when something agreed
@@ -1198,7 +1199,7 @@ def update(context, path, manifest=None, unit_scale=None,
         objects.append(obj)
         report.matched.append(matching.MatchEntry(
             component_id=inst.component_id, object_name=obj.name,
-            step=0, confidence="exact"))
+            step=0, confidence="exact", object_path=obj.get(_TAG_PATH)))
 
     for occurrence in changes.added:
         done += 1
@@ -1211,7 +1212,7 @@ def update(context, path, manifest=None, unit_scale=None,
         out.added.append(obj.name)
         report.matched.append(matching.MatchEntry(
             component_id=occurrence.component_id, object_name=obj.name,
-            step=0, confidence="exact"))
+            step=0, confidence="exact", object_path=obj.get(_TAG_PATH)))
 
     doomed = []
     for occurrence in changes.removed:

@@ -2762,16 +2762,8 @@ def load_step(
     else:
         step_reader = cached
         print("Loaded file from cache")
-        # The report of an import lives on the reader, and the cache hands
-        # the same reader to the next import of the file. Without a fresh
-        # start, each import listed every failed part once more. New lists,
-        # not cleared ones, so a list an earlier import returned stays as
-        # it was.
-        step_reader.failed_parts = []
-        step_reader.recovered_parts = []
-        step_reader.skipped_shapes = set()
-        step_reader.import_problems = dict.fromkeys(
-            step_reader.import_problems, 0)
+        # A cached reader still holds the problem lists of the last import.
+        step_reader.begin_import()
 
     tree = step_reader.tree
     scale = step_reader.scale

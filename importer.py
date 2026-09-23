@@ -1238,14 +1238,26 @@ class ReadSTEP:
         self.face_colors = {}
         self.face_color_priority = {}
         self.tag_info = {}
+        self._lock = threading.Lock()  # Protects import_problems, skipped_shapes, recovered_parts
+        self.begin_import()
+        self._pre_tessellated = False
+        self._recovery_compounds = None  # Lazy-built recovery compound
+        self._recovery_keepalive = None  # Keeps entity wrappers (and ids) stable
+
+    def begin_import(self):
+        """Start the problem lists and counts of one import.
+
+        The reader is cached, and the next import of the same unchanged
+        file uses it again. These lists are about one import. Without this,
+        each import added its parts to the lists of the imports before it,
+        so the popup listed a part that failed once again on every import.
+        The lists are new objects, not cleared ones, because an earlier
+        import can still hold the lists it got back.
+        """
         self.skipped_shapes = set([])
         self.import_problems = {"Triangulation": 0, "Undefined normals": 0, "Empty shape": 0}
         self.failed_parts = []  # List of names for parts that produced no geometry
         self.recovered_parts = []  # List of names for parts recovered via per-face transfer
-        self._lock = threading.Lock()  # Protects import_problems, skipped_shapes, recovered_parts
-        self._pre_tessellated = False
-        self._recovery_compounds = None  # Lazy-built recovery compound
-        self._recovery_keepalive = None  # Keeps entity wrappers (and ids) stable
 
     def read_file(self, filename):
         """Returns list of tuples (topods_shape, label, color)

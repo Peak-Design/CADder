@@ -11,6 +11,11 @@ script raises, and a test that crashed reads as a test that passed.
      mode to 0, which is the default, so it repeated the failed transfer.
      It then set the mode to 1 ("?") for the rest of the session, and it
      did not check whether the second read worked.
+
+  2. The reader of a file is cached, and the next import of the same
+     unchanged file uses it again. The list of parts with no geometry was
+     made once, with the reader, so each import added the same part again:
+     the popup said 1 part, then 2, then 3.
 """
 import os
 import re
@@ -134,6 +139,58 @@ for fail_read_of, label in ((None, "the second read works"),
         check(result is False,
               "%s: the file is reported as one that cannot be opened (%r)"
               % (label, result))
+
+# -- 2. a cached reader --------------------------------------------------------
+print("\n== the same file imported three times")
+
+
+def write_step_with_empty_part(path):
+    """A box, and a part that holds only an edge: it gives no mesh."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    for name, shape in (
+            ("solid_part", BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()),
+            ("wire_part", BRepBuilderAPI_MakeEdge(
+                gp_Pnt(0, 0, 0), gp_Pnt(50, 0, 0)).Edge())):
+        label = tool.AddShape(shape, False)
+        TDataStd_Name.Set_s(label, TCollection_ExtendedString(name))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
+EMPTY = os.path.join(tmp, "empty_part.step")
+write_step_with_empty_part(EMPTY)
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.preferences.addon_enable(module="CADder")
+m._cache_drop(EMPTY)
+counts = []
+first = None
+for i in range(3):
+    result = m.load_step(bpy.context, EMPTY, htypes="FLAT", up_as="Z")
+    check(result is not False, "import %d opens the file" % (i + 1))
+    if result is False:
+        break
+    failed, _recovered = result
+    counts.append(len(failed))
+    if first is None:
+        first, first_len = failed, len(failed)
+check(bool(counts) and counts[0] >= 1,
+      "the first import reports the part with no geometry (%s)" % counts)
+check(len(set(counts)) == 1,
+      "every import reports it once, cache or no cache (%s)" % counts)
+check(first is not None and len(first) == first_len,
+      "the list the first import gave back does not change later (%s)"
+      % (first,))
 
 if FAILS:
     print("\nreader_state_smoke: FAILED (%d)\n  %s"

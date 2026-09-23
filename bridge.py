@@ -72,6 +72,11 @@ _state = {
     "queue": None,       # queue.Queue of _Job
     "timer_running": False,
     "last_job": None,    # summary dict for the UI
+    # The CAD documents this file's scenes came from, as the registry file
+    # last said (_scene_documents). Read by the ping thread, so only the
+    # main thread computes it.
+    "documents": [],
+    "registry_said": None,
 }
 
 
@@ -119,6 +124,10 @@ def _instance_info() -> dict:
             info["blend_file"] = bpy.data.filepath or ""
         except AttributeError:
             info["blend_file"] = ""
+    # What Refresh Model in the CAD add-in asks: does this Blender hold a
+    # scene of that document. Always present, so the add-in can tell "none"
+    # from an older bridge that does not say.
+    info["documents"] = list(_state.get("documents") or [])
     return info
 
 
@@ -1123,6 +1132,10 @@ def _pump():
         if job.result is None:
             job.result = {"ok": False, "error": "job produced no result"}
         _disarm_stall_dump(job.result)
+        # Before the reply: the CAD add-in reads the registry for Refresh
+        # Model as soon as the send returns, and a send can change which
+        # document this scene holds.
+        _keep_registry(force=True)
         _state["last_job"] = job.result
         job.done.set()
     print("[CADLink bridge] job finished: %s"
@@ -1152,12 +1165,38 @@ _REGISTRY_CHECK_S = 2.0
 _registry_checked = 0.0
 
 
+def _scene_documents() -> list:
+    """The CAD documents the scenes of this file came from: the document
+    tag a send writes on its scene (_remember_document). A saved file keeps
+    the tag, so a scene opened again in a new Blender still says which
+    document it holds. Main thread only. Empty while bpy.data is not
+    readable, during add-on registration."""
+    from .rig import cad_link
+    found = set()
+    try:
+        for scene in bpy.data.scenes:
+            document = scene.get(cad_link.DOCUMENT_TAG)
+            if document:
+                found.add(str(document))
+    except (AttributeError, RuntimeError, TypeError):
+        return []
+    return sorted(found)
+
+
 def _keep_registry(force=False):
-    """Writes the registry file again when it has gone while the bridge
-    runs. The CAD add-in deletes the file of a Blender whose ping gets no
-    answer, and a Blender inside one long bpy call cannot answer. Without
-    this, no send found this Blender again until it restarted. Runs from
-    the pump, so a Blender that is free again is found again."""
+    """Keeps the registry file true while the bridge runs.
+
+    It is written again when it has gone. The CAD add-in deletes the file
+    of a Blender whose ping gets no answer, and a Blender inside one long
+    bpy call cannot answer. Without this, no send found this Blender again
+    until it restarted.
+
+    It is also written again when the documents the scenes hold, or the
+    blend file, have changed: a send, a file opened or a scene deleted. The
+    CAD add-in enables Refresh Model from this file, without a ping, so the
+    button is grey when no running Blender holds the document.
+
+    Runs from the pump, so a Blender that is free again is found again."""
     global _registry_checked
     now = time.monotonic()
     if not force and now - _registry_checked < _REGISTRY_CHECK_S:
@@ -1165,12 +1204,24 @@ def _keep_registry(force=False):
     _registry_checked = now
     # Set by start(), cleared by stop(): only a running bridge has one.
     path = _state.get("registry_path")
-    if not path or os.path.exists(path):
+    if not path:
         return
     # Never an escape into the pump: that would stop every job.
     try:
+        documents = _scene_documents()
+        try:
+            blend = bpy.data.filepath or ""
+        except AttributeError:
+            blend = ""
+        said = (tuple(documents), blend)
+        gone = not os.path.exists(path)
+        if not gone and said == _state.get("registry_said"):
+            return
+        _state["documents"] = documents
         _write_registry()
-        print("[CADLink bridge] the registry file had gone: written again")
+        _state["registry_said"] = said
+        if gone:
+            print("[CADLink bridge] the registry file had gone: written again")
     except Exception as exc:                   # noqa: BLE001
         print("[CADLink bridge] registry write failed:", exc)
 
@@ -1234,6 +1285,9 @@ def start():
         bpy.app.timers.register(_pump, first_interval=_PUMP_INTERVAL_S,
                                 persistent=True)
         _state["timer_running"] = True
+    # Empty during add-on registration. The pump fills it in at once.
+    _state["documents"] = _scene_documents()
+    _state["registry_said"] = None
     try:
         _write_registry()
     except OSError as exc:

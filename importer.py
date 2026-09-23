@@ -531,6 +531,44 @@ def _uv_scale(norm, world_scale):
     return 1.0 / norm if norm > 1e-12 else 1.0
 
 
+def _has_surface(face):
+    """True when the face lies on a B-rep surface.
+
+    AP242 can carry a part as triangles only (a tessellated shell), and OCCT
+    makes each such face from its triangulation with no surface. The
+    BRepAdaptor_Surface of that face is empty, and the first point query on
+    it reads a null pointer. That is an access violation, which no try can
+    catch, so Blender closes with no message. Ask this before any query on
+    the surface of a face.
+    """
+    try:
+        return BRep_Tool.Surface_s(face, TopLoc_Location()) is not None
+    except Exception:
+        return False
+
+
+def _mesh_normals(verts, tris):
+    """Vertex normals from the triangles, weighted by triangle area.
+
+    For a face with no surface, the triangles are the only geometry there
+    is. The triangles must already be turned to the orientation of the face.
+    A node that no triangle uses gets +Z.
+    """
+    verts = np.asarray(verts, dtype=np.float64).reshape(-1, 3)
+    tris = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+    out = np.zeros_like(verts)
+    if len(tris):
+        a, b, c = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+        n = np.cross(b - a, c - a)
+        for k in range(3):
+            np.add.at(out, tris[:, k], n)
+    length = np.linalg.norm(out, axis=1)
+    ok = length > 1e-30
+    out[ok] /= length[ok, None]
+    out[~ok] = (0.0, 0.0, 1.0)
+    return out.astype(np.float32)
+
+
 def _surface_key(face):
     """What surface this face lies on, as something hashable.
 
@@ -648,9 +686,16 @@ def _build_charts(faces):
     from OCP.gp import gp
 
     n = len(faces)
-    keys = [_surface_key(f) for f in faces]
+    # A face with no surface (triangles only) gets no chart. It has no
+    # parameter space to put in one, and a query on it would crash.
+    bare = [not _has_surface(f) for f in faces]
+    keys = [None if bare[i] else _surface_key(f)
+            for i, f in enumerate(faces)]
     bounds = []
-    for f in faces:
+    for i, f in enumerate(faces):
+        if bare[i]:
+            bounds.append((0.0, 1.0, 0.0, 1.0))
+            continue
         try:
             bounds.append(tuple(BRepTools.UVBounds_s(f)))
         except Exception:
@@ -687,6 +732,9 @@ def _build_charts(faces):
     charts = [None] * n
     res = gp.Resolution_s()
     for root, members in groups.items():
+        if bare[root]:
+            # Its key is None, so it is alone in its group.
+            continue
         u_lo = min(bounds[i][0] for i in members)
         u_hi = max(bounds[i][1] for i in members)
         v_lo = min(bounds[i][2] for i in members)
@@ -1343,6 +1391,22 @@ class ReadSTEP:
         d_nbnodes = facing.NbNodes()
         d_nbtriangles = facing.NbTriangles()
 
+        # Read all triangles
+        tris = [None] * d_nbtriangles
+        for t in range(1, d_nbtriangles + 1):
+            T1, T2, T3 = facing.Triangle(t).Get()
+            if not_forward:
+                T1, T2 = T2, T1
+            tris[t - 1] = (T1 - 1, T2 - 1, T3 - 1)
+
+        if not _has_surface(face):
+            # Triangles only: the normals come from the triangles and the
+            # UVs stay at zero, as on the native path.
+            verts = [b_XYZ(facing.Node(t)) for t in range(1, d_nbnodes + 1)]
+            return self._face_trimesh(
+                verts, list(_mesh_normals(verts, tris)),
+                [(0.0, 0.0)] * d_nbnodes, tris)
+
         # Surface-based normal computation (analytic, seamless across faces)
         surface = BRepAdaptor_Surface(face)
         prop = BRepLProp_SLProps(surface, 2, gp.Resolution_s())
@@ -1420,18 +1484,14 @@ class ReadSTEP:
             uvs = [(((u * du - u0) * s) * k + nudge[0],
                     ((v * dv - v0) * s) * k + nudge[1]) for (u, v) in uvs]
 
-        # Read all triangles
-        tris = [None] * d_nbtriangles
-        for t in range(1, d_nbtriangles + 1):
-            T1, T2, T3 = facing.Triangle(t).Get()
-            if not_forward:
-                T1, T2 = T2, T1
-            tris[t - 1] = (T1 - 1, T2 - 1, T3 - 1)
-
         if undef_normals:
             with self._lock:
                 self.import_problems["Undefined normals"] += 1
 
+        return self._face_trimesh(verts, norms, uvs, tris)
+
+    @staticmethod
+    def _face_trimesh(verts, norms, uvs, tris):
         tri_data = []
         for t in tris:
             # Degenerate triangles (repeated node index: collapsed seams,
@@ -2001,6 +2061,17 @@ class ReadSTEP:
             vs = int(vert_starts[j])
             vc = int(vert_counts[j])
             if vc == 0:
+                return
+            if not _has_surface(face):
+                # Triangles only. The native module has turned them to
+                # the face orientation already, so their own normals are
+                # right as they are. The UVs stay at zero: there is no
+                # surface to unroll.
+                fs = int(face_starts[j])
+                fc = int(face_counts[j])
+                all_norms[vs:vs + vc] = _mesh_normals(
+                    all_verts[vs:vs + vc], all_faces[fs:fs + fc] - vs)
+                all_uvs[vs:vs + vc] = 0.0
                 return
             reversed_face = (face.Orientation() == TopAbs_REVERSED)
 

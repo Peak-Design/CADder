@@ -20,12 +20,16 @@ import bpy
 
 
 # Addon preferences that change import results. Forwarded to the worker so
-# the background path matches the synchronous path exactly.
+# the background path matches the synchronous path exactly. The worker sets
+# them in this order. matdb_dir must come before active_matdb and before the
+# operator call: the database names are read from that folder, and a name
+# that is not in the worker's folder fails the whole import.
 FORWARDED_PREFS = (
     "build_materials",
     "hack_skip_zero_solids",
     "skip_empty_objects",
     "construction_filter_names",
+    "matdb_dir",
     "active_matdb",
 )
 
@@ -34,9 +38,14 @@ def prefs_snapshot(prefs):
     snap = {}
     for name in FORWARDED_PREFS:
         try:
-            snap[name] = getattr(prefs, name)
+            value = getattr(prefs, name)
         except Exception:
-            pass
+            continue
+        if name == "matdb_dir" and value.strip():
+            # A "//" path is relative to the open blend file. The worker
+            # has no blend file, so it gets the folder this session uses.
+            value = bpy.path.abspath(value)
+        snap[name] = value
     return snap
 
 

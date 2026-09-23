@@ -435,17 +435,24 @@ def choose_hierarchy_types(htypes):
     return hierarchy_flat, hierarchy_tree, hierarchy_empties, hierarchy_instances
 
 
-def transform_to_up(up, chosen_objects, scale, to_cursor=True, apply_scale=True):
+def transform_to_up(up, chosen_objects, scale, to_cursor=True, apply_scale=True,
+                    cursor=None):
     """
     Set all chosen_objects transforms <up>["X", "Y", "Z"] as up
-    Optionally move to cursor <to_cursor>
+    Optionally move to cursor <to_cursor>: the location <cursor> when given,
+    else the 3D cursor
     Set scale to scale
     """
 
     # transforms and processing of objects
     # bpy.ops.object.select_all(action="DESELECT")
 
-    cursor_pos = bpy.context.scene.cursor.location
+    if not to_cursor:
+        cursor_pos = Vector((0.0, 0.0, 0.0))
+    elif cursor is not None:
+        cursor_pos = Vector(cursor)
+    else:
+        cursor_pos = bpy.context.scene.cursor.location
 
     # up
     # up_as = self.up_as
@@ -2609,6 +2616,7 @@ def load_step(
     eng_materials=False,
     group_in_collection=False,
     separate_solids=False,
+    cursor=None,
     # Older records and scripts. Both now live in uv_mode, and a refresh
     # passes a record back in unchanged.
     uv_merge_tangent=None,
@@ -2735,6 +2743,14 @@ def load_step(
     # Together they let a refresh reproduce the SIZE. A background import
     # needs that: it runs in a factory scene at 1.0, which is not
     # necessarily the scene the objects end up in.
+    #
+    # "cursor" is where the parts went. A new import puts them at the 3D
+    # cursor. A refresh passes the recorded place back, because the cursor
+    # has often moved since, and a refresh reads a part it put somewhere
+    # else as a part moved in CAD.
+    if cursor is None:
+        cursor = tuple(bpy.context.scene.cursor.location)
+    cursor = [float(c) for c in cursor]
     import_record = {
         "up_as": up_as if isinstance(up_as, str) else up_as[0],
         "htypes": htypes,
@@ -2763,6 +2779,7 @@ def load_step(
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
         "separate_solids": separate_solids,
+        "cursor": cursor,
     }
     import_record_json = json.dumps(import_record)
 
@@ -3243,7 +3260,8 @@ def load_step(
     set_object_colors(instance_prototypes.values())
 
     print(f"\n--- Phase 3/3: Applying transforms ---")
-    transform_to_up(up_as[0], created_objs, scale, apply_scale=apply_scale)
+    transform_to_up(up_as[0], created_objs, scale, apply_scale=apply_scale,
+                    cursor=cursor)
 
     if hierarchy_instances and apply_scale and scale != 1.0:
         # transform_to_up reset every object's scale to 1 (prototypes are

@@ -320,25 +320,41 @@ def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False)
     copy next to it: leftover objects carry stale RIG_* tags that hijack
     matching and the frame vote (found live 2026-08-23: six re-sends of one
     hinge left the rig built against a previous send's rotated leaf).
-    Removes every object imported from this STEP file, the import
-    collections it left behind, and the importer's cache entry for it.
+    Removes every object imported from this STEP file or from an earlier
+    send of the same assembly, the import collections it left behind, and
+    the importer's cache entry for it. An import of another file that only
+    has the same name stays.
 
     by_stem: match on the file name without its extension, for the direct
     link, whose .swmesh replaces a STEP import of the same assembly. Both
     standing at once left every part in the scene twice, both copies
     parented to one rig (live 2026-09-14)."""
     want_full = os.path.normcase(os.path.abspath(step_path))
+    want_dir = os.path.dirname(want_full)
     want_base = os.path.basename(step_path).casefold()
     want_stem = os.path.splitext(want_base)[0]
 
     def is_same_file(value):
         if not value:
             return False
-        s = str(value)
-        base = os.path.basename(s).casefold()
-        return (os.path.normcase(os.path.abspath(s)) == want_full
-                or base == want_base
-                or (by_stem and os.path.splitext(base)[0] == want_stem))
+        full = os.path.normcase(os.path.abspath(str(value)))
+        if full == want_full:
+            return True
+        base = os.path.basename(full).casefold()
+        stem = os.path.splitext(base)[0]
+        if base != want_base and not (by_stem and stem == want_stem):
+            return False
+        # The same name alone does not make the same assembly: a vendor's
+        # C:/Downloads/gearbox.step is not a send of gearbox.SLDASM. The
+        # add-in writes each send into a folder named after its document
+        # (ExportPaths.For), so the last send is in this send's folder, in
+        # a folder of that name under another export root, or, from an
+        # add-in older than those folders, in the folder above this one.
+        folder = os.path.dirname(full)
+        return (folder == want_dir
+                or os.path.basename(folder).rstrip(". ").casefold()
+                == stem.rstrip(". ")
+                or folder == os.path.dirname(want_dir))
 
     removed = 0
     for obj in list(bpy.data.objects):

@@ -181,6 +181,23 @@ def mesh_parts(objects):
     return found
 
 
+def _write_record(obj, values):
+    """Put these keys into the import record of a part.
+
+    An older record is put in the terms of this version first. Its old UV
+    keys would otherwise overrule the ones written here.
+    """
+    try:
+        rec = json.loads(obj.get("STEP_import_settings", "{}"))
+    except Exception:
+        rec = {}
+    if not isinstance(rec, dict):
+        rec = {}
+    uv_mod.migrate_settings(rec)
+    rec.update(values)
+    obj["STEP_import_settings"] = json.dumps(rec)
+
+
 def _scale_mesh_verts(me, factor):
     vert_count = len(me.vertices)
     if vert_count == 0 or factor in (0.0, 1.0):
@@ -251,6 +268,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         defeatured = 0
         features = [0, 0]
         failed = []
+        # The quality each mesh was cut to here, by mesh.
+        rebuilt = {}
         quad_objs = []
         unwrap_objs = {}
         # Smart runs once for each set of settings, because the tile it
@@ -374,6 +393,12 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 quads = (context.scene.stepper.tris_to_quads
                          if self.use_scene_settings
                          else stored.get("tris_to_quads"))
+                rebuilt[obj.data] = {
+                    "lin_deflection": lin_def,
+                    "ang_deflection": ang_def,
+                    "tessellation_relative": bool(relative),
+                    "tris_to_quads": bool(quads),
+                }
                 if quads and uv_mode != "BOX":
                     quad_objs.append(obj)
                 if uv_mode in uv_mod.UNWRAP_MODES:
@@ -390,6 +415,18 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                         []).append(obj)
                 done += 1
                 wm.progress_update(done)
+
+        # The record says what the mesh of a part is now. Apply UVs and
+        # Apply Defeature rebuild a part from its record, and while the
+        # record kept the quality of the import, they took a part that was
+        # regenerated at Ultra back to the density of the import. Every
+        # part that shares a rebuilt mesh has that mesh now, so every one
+        # gets the record.
+        users = {o for o in context.scene.objects if o.data in rebuilt}
+        users.update(o for o in targets.values() if o.data in rebuilt)
+        for obj in users:
+            if from_step(obj):
+                _write_record(obj, rebuilt[obj.data])
 
         if quad_objs:
             m._tris_to_quads_objects(quad_objs)

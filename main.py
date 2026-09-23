@@ -2675,6 +2675,11 @@ def load_step(
     # passes a record back in unchanged.
     uv_merge_tangent=None,
     uv_unwrap_method=None,
+    # The scale a refresh passes to keep the size when the scene unit
+    # length changed. It is used like custom_scale but is not recorded as
+    # one: the user did not set it. When it was recorded, the next refresh
+    # took it as the user's own and divided it by the new unit length.
+    scale_override=None,
 ):
     from . import importer
 
@@ -2784,6 +2789,8 @@ def load_step(
 
     if custom_scale is not None:
         scale = custom_scale
+    if scale_override is not None:
+        scale = scale_override
 
     # divide by Blender unit length
     scale /= context.scene.unit_settings.scale_length

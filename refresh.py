@@ -234,7 +234,7 @@ def import_settings(scene, path):
             "ang": record.get("ang_deflection", 0.5)}
     override = _scale_override(record, scene)
     if override is not None:
-        kwargs["custom_scale"] = override
+        kwargs["scale_override"] = override
     return kwargs, record, source
 
 

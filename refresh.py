@@ -684,6 +684,29 @@ def apply_import(path, old_objs, old_cols):
     return len(pairs), added_names, gone_names
 
 
+def defeatured_parts(path, scene):
+    """The parts of this file whose defeature switch is on, their own or
+    that of a collection above them.
+
+    The importer reads the full shape and knows nothing about the switch.
+    Defeature for a STEP part happens in Regenerate only, so a refresh has
+    to send these parts through it again. Without that the small features
+    come back while the switch and the panel still say they are out. The
+    live link does not need this: it sends the switch with every request.
+    """
+    try:
+        from .rig import defeature as defeature_mod
+    except Exception:                               # noqa: BLE001
+        return []           # the rig subpackage did not load: no switch
+    # Worked out once for the whole file. Per part it is a walk of every
+    # collection, which is seconds on a large assembly.
+    parents = defeature_mod._parents(scene)
+    holders = defeature_mod._holders(scene)
+    return [o for o in file_objects(path)
+            if o.type == "MESH" and "STEP_tag" in o
+            and defeature_mod.settings_for(o, scene, parents, holders)[0]]
+
+
 # -- operators and panel -----------------------------------------------------
 
 if bpy is not None:
@@ -735,9 +758,30 @@ if bpy is not None:
 
             kept, added, gone = apply_import(path, old_objs, old_cols)
 
+            # The parts set to defeature go through Regenerate again, as
+            # Apply Defeature sends them. The override gives it those parts
+            # and leaves the user's selection as it is.
+            lighter = defeatured_parts(path, context.scene)
+            missed = 0
+            if lighter:
+                try:
+                    with context.temp_override(selected_objects=lighter,
+                                               active_object=lighter[0]):
+                        bpy.ops.stepper.regenerate(use_scene_settings=False)
+                except RuntimeError as exc:
+                    print("[CADder refresh] defeature not applied again:",
+                          exc)
+                    missed = len(lighter)
+
             msg = "Refreshed %s: %d object(s) updated in place" % (
                 os.path.basename(path), kept)
             level = "INFO"
+            if lighter and not missed:
+                msg += ", %d part(s) defeatured again" % len(lighter)
+            if missed:
+                level = "WARNING"
+                msg += (". Defeature did not run again on %d part(s). "
+                        "Click Apply Defeature" % missed)
             if added or gone:
                 level = "WARNING"
                 msg += (". The assembly changed: %d component(s) gone, %d new"

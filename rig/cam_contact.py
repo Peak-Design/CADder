@@ -306,7 +306,10 @@ def make_surfaces(collection, arm_obj, manifest, plan, result, frame, unit_scale
         obj.parent_type = "BONE"
         obj.parent_bone = cam_bone
         bone = arm_obj.data.bones[cam_bone]
-        p = arm_obj.matrix_world @ bone.matrix_local @ Matrix.Translation((0.0, bone.length, 0.0))
+        # Armature space, as the bones are: the surface stands at the
+        # armature's transform, so a rig the user moved keeps its cam on
+        # the cam bone when an update builds inside it.
+        p = bone.matrix_local @ Matrix.Translation((0.0, bone.length, 0.0))
         obj.matrix_parent_inverse = p.inverted()
         obj.matrix_basis = Matrix.Identity(4)
         out[j.id] = obj

@@ -10,9 +10,12 @@ an update with rig_mode APPEND and checks what came back:
   * a limited ball keeps the name of the handle the user keys, update
     after update;
   * a bone the user parented to a rig bone hangs on that bone again;
+  * a rig the user moved keeps its path rails and cam surfaces on its
+    bones;
 """
 
 import json
+import math
 import os
 import struct
 import sys
@@ -25,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from CADder import bridge, rig  # noqa: E402
+from CADder.rig import graph, manifest as man_mod, rig_build  # noqa: E402
 from CADder.rig import swmesh, ui as rig_ui  # noqa: E402
 
 FAILS = []
@@ -251,9 +255,130 @@ def user_bone_keeps_its_parent():
     print("   cam_target hangs on", bone.parent.name if bone.parent else None)
 
 
+# ── A rig the user moved keeps its rails with its bones ─────────────────
+
+PATH_PARTS = [("c001", "base-1", "pbase", 0.0, "base"),
+              ("c002", "arm-1", "parm", 0.2, "arm"),
+              ("c003", "shuttle-1", "pshuttle", 0.35, "shuttle")]
+
+
+def path_joint(jid, parent, child):
+    return {"id": jid, "type": "path", "parent_group": parent,
+            "child_group": child, "origin": [0.35, 0, 0], "axis": [1, 0, 0],
+            "secondary_axis": [0, 0, 1], "limits": None,
+            "path": {"points": [[0.3, 0, 0], [0.35, 0, 0], [0.4, 0.01, 0]],
+                     "closed": False}}
+
+
+def evaluated_head(arm, name):
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    return arm.matrix_world @ arm.evaluated_get(dg).pose.bones[name].head
+
+
+def moved_rig_keeps_its_rails():
+    print("-- a rig moved by the user, then updated")
+    fresh()
+    joints = [hinge("j001", "g000", "g001", 0.2),
+              path_joint("j002", "g000", "g002")]
+    send("railrig", PATH_PARTS, joints)
+    arm = rig_object()
+    if not check(arm is not None, "no rig was built"):
+        return
+    arm.location = (0.5, 0.0, 0.0)
+    bpy.context.view_layer.update()
+
+    send("railrig", PATH_PARTS, joints, update=True)
+    now = rig_object()
+    check(now is arm, "the armature object was replaced")
+    build = rig_ui._STATE["build"]
+    shuttle = build.bone_names["g002"]
+    hinge_bone = build.bone_names["g001"]
+
+    # Bones, parts and rails all stand where the user put the machine.
+    rest = now.matrix_world @ now.data.bones[shuttle].head_local
+    check((rest - Vector((0.85, 0.0, 0.0))).length < 1e-5,
+          "the shuttle's bone rests at %s, not at the moved CAD place"
+          % (tuple(rest),))
+    part = bpy.data.objects.get("arm")
+    if check(part is not None, "the arm part is gone"):
+        pivot = now.matrix_world @ now.data.bones[hinge_bone].head_local
+        check((part.matrix_world.translation - pivot).length < 1e-5,
+              "the arm part is %.4f m from its pivot"
+              % (part.matrix_world.translation - pivot).length)
+    rail = bpy.data.objects.get(build.contact_mesh_names.get("j002", ""))
+    if check(rail is not None, "the path joint has no rail"):
+        bpy.context.view_layer.update()
+        nearest = min((rail.matrix_world @ v.co - rest).length
+                      for v in rail.data.vertices)
+        check(nearest < 1e-4,
+              "the rail is %.4f m from the shuttle's bone" % nearest)
+    drift = (evaluated_head(now, shuttle) - rest).length
+    check(drift < 1e-5,
+          "the rail pulled the resting shuttle %.4f m" % drift)
+
+
+def cam_manifest():
+    """A disc cam on a hinge about Z and a follower sliding along X onto
+    its rim: a circle of radius 0.03 about (0.01, 0, 0)."""
+    ring = [(0.01 + 0.03 * math.cos(math.pi * k / 90),
+             0.03 * math.sin(math.pi * k / 90)) for k in range(180)]
+    pts, tris = [], []
+    for x, y in ring:
+        pts += [[x, y, -0.01], [x, y, 0.01]]
+    for i in range(len(ring)):
+        j = (i + 1) % len(ring)
+        tris += [[2 * i, 2 * j, 2 * j + 1], [2 * i, 2 * j + 1, 2 * i + 1]]
+    parts = [("c001", "frame-1", "pframe", 0.0, "frame"),
+             ("c002", "cam-1", "pcam", 0.0, "cam"),
+             ("c003", "tappet-1", "ptappet", 0.04, "tappet")]
+    data = manifest("camrig", parts, [
+        hinge("j001", "g000", "g001", 0.0),
+        {"id": "j002", "type": "prismatic", "parent_group": "g000",
+         "child_group": "g002", "origin": [0.04, 0, 0], "axis": [1, 0, 0],
+         "secondary_axis": [0, 0, 1], "limits": None,
+         "coupling": {"kind": "cam", "driver_joint": "j001",
+                      "cam": {"axis": [0, 0, 1], "origin": [0, 0, 0],
+                              "surface": {"points": pts, "triangles": tris},
+                              "follower": {"kind": "vertex",
+                                           "point": [0.04, 0, 0],
+                                           "axis": None, "radius": None,
+                                           "normal": None}}}},
+    ])
+    return data
+
+
+def moved_rig_keeps_its_cam():
+    print("-- a cam rig moved by the user, then built again inside")
+    fresh()
+    m = man_mod.parse(cam_manifest(), source_path="camrig.rig.json")
+    first = rig_build.build(bpy.context, m, graph.build(m))
+    arm = first.armature_object
+    arm.location = (0.5, 0.0, 0.0)
+    bpy.context.view_layer.update()
+
+    again = rig_build.build(bpy.context, m, graph.build(m), into=arm)
+    bpy.context.view_layer.update()
+    surface = bpy.data.objects.get(again.cam_surface_names.get("j002", ""))
+    if not check(surface is not None, "the cam has no surface"):
+        return
+    xs = [(surface.matrix_world @ v.co).x for v in surface.data.vertices]
+    centre = (min(xs) + max(xs)) / 2.0
+    check(abs(centre - 0.51) < 1e-4,
+          "the cam surface is centered at x %.4f, not at the moved cam 0.51"
+          % centre)
+    follower = again.bone_names["g002"]
+    head = evaluated_head(arm, follower)
+    check(abs(head.x - 0.54) < 1e-4,
+          "the resting follower stands at x %.4f, not on the cam at 0.54"
+          % head.x)
+
+
 def main():
     ball_handle_keeps_its_name()
     user_bone_keeps_its_parent()
+    moved_rig_keeps_its_rails()
+    moved_rig_keeps_its_cam()
 
     print()
     if FAILS:

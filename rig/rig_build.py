@@ -1590,6 +1590,11 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         elif bp.joint.type == "surface" and bp.joint.surface_triangles:
             obj = _make_surface_patch(collection, bp.joint, frame, unit_scale)
         if obj is not None:
+            # The points are in the same frame as the bones, which is the
+            # armature's own. An update rebuilds inside an armature the
+            # user may have moved, and a rail left in world space pulled
+            # its bone back to where the machine was before the move.
+            obj.matrix_world = arm_obj.matrix_world.copy()
             contact_meshes[bp.joint.id] = obj
             result.contact_mesh_names[bp.joint.id] = obj.name
     cam_surfaces = cam_contact.make_surfaces(

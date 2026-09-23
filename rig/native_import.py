@@ -80,9 +80,7 @@ def _material(spec, name_prefix, unit_scale=1.0):
     if parsed is None:
         parsed = {"blender": {"roughness": spec.roughness, "metallic": spec.metallic},
                   "texture": spec.texture}
-    identity = appearance.digest(spec.appearance_json or "%r|%r|%r|%r" % (
-        tuple(round(c, 4) for c in spec.rgba), round(spec.roughness, 4),
-        round(spec.metallic, 4), spec.texture))
+    identity = _material_identity(spec)
     mat = None
     for cand in bpy.data.materials:
         if (cand.name == base or cand.name.startswith(base + ".")) \
@@ -98,6 +96,15 @@ def _material(spec, name_prefix, unit_scale=1.0):
     if spec.appearance_json:
         mat["SWMESH_appearance"] = spec.appearance_json
     return mat
+
+
+def _material_identity(spec):
+    """What makes one material of the export the same as another: its
+    appearance, or its colour and finish when it has none. Its number in
+    the export's table does not: that is the order the walk found it."""
+    return appearance.digest(spec.appearance_json or "%r|%r|%r|%r" % (
+        tuple(round(c, 4) for c in spec.rgba), round(spec.roughness, 4),
+        round(spec.metallic, 4), spec.texture))
 
 
 def _build_mesh(definition, materials, unit_scale):
@@ -602,6 +609,7 @@ class _Placer:
         self.by_id, self.by_path = _paths(manifest)
         self.branches = _branches(scene, self.by_path, unit_scale)
         self.definitions = {d.id: d for d in scene.definitions}
+        self.material_ids = [_material_identity(m) for m in scene.materials]
 
         self._materials = None
         self._meshes = {}
@@ -664,7 +672,7 @@ class _Placer:
         proto[_TAG_FILE] = self.stem
         proto[_TAG_DEFINITION] = definition.id
         proto[_TAG_TOLERANCE] = self.scene.tolerance
-        proto[_TAG_GEOMETRY] = _definition_hash(definition)
+        proto[_TAG_GEOMETRY] = self.definition_hash(definition)
         proto["SWMESH_prototype"] = True
         _material_names(proto)
         part_col.objects.link(proto)
@@ -770,8 +778,9 @@ class _Placer:
                     and col is not None and col.get("SWMESH_role") == "part":
                 by_geometry.setdefault(obj[_TAG_GEOMETRY], col)
         for definition in self.scene.definitions:
-            signature = _definition_hash(definition)
-            col = by_geometry.get(signature)
+            signature = self.definition_hash(definition)
+            col = by_geometry.get(signature) \
+                or by_geometry.get(_legacy_definition_hash(definition))
             if col is None:
                 continue
             self.prototypes[definition.id] = col
@@ -847,9 +856,24 @@ class _Placer:
         if signature is not None:
             obj[_TAG_GEOMETRY] = signature
 
+    def definition_hash(self, definition):
+        return _definition_hash(definition, self.material_ids)
+
     def geometry_hash(self, inst):
         definition = self.definitions.get(inst.definition_id)
-        return None if definition is None else _definition_hash(definition)
+        return None if definition is None else self.definition_hash(definition)
+
+    def same_geometry(self, signature, inst):
+        """True when the geometry tag of an object says this placement's
+        geometry is what it has. A tag of an older send is read the way
+        that send wrote it, so its first update does not read every part
+        as re-tessellated and replace the meshes."""
+        definition = self.definitions.get(inst.definition_id)
+        if definition is None or not signature:
+            return False
+        if str(signature).startswith(_HASH_VERSION):
+            return signature == self.definition_hash(definition)
+        return signature == _legacy_definition_hash(definition)
 
     def pose(self, obj, inst):
         obj.matrix_world = self.frame @ _matrix(inst.transform, self.unit_scale)
@@ -898,10 +922,52 @@ class _Placer:
             obj.matrix_world = world
 
 
-def _definition_hash(definition):
+# The hash of a part's geometry says which version of it it is. The first
+# took the material numbers of the export, which shift when a colour is
+# added or removed anywhere in the assembly.
+_HASH_VERSION = "v2:"
+
+
+def _definition_hash(definition, material_ids):
     """A short, exact signature of one part's geometry, so an update can
     tell a part that was re-tessellated from one that was not and leave the
-    mesh (and the work done on it in Blender) alone."""
+    mesh (and the work done on it in Blender) alone.
+
+    `material_ids` gives the identity of each material of the export by
+    its number (_material_identity). The export numbers its materials in
+    the order the walk finds them, so a part that did not change came back
+    with other numbers when a colour was added in front of its own. The
+    hash takes the material of each triangle by what it is, in the order
+    the triangles first use them."""
+    digest = hashlib.blake2b(digest_size=8)
+    digest.update(struct.pack("<II", definition.vertex_count,
+                              definition.triangle_count))
+    for block in (definition.positions, definition.triangles):
+        if block is not None:
+            digest.update(memoryview(block).cast("B"))
+    if definition.triangle_materials is not None \
+            and len(definition.triangle_materials):
+        numbers = np.frombuffer(definition.triangle_materials, dtype=np.int32)
+        if material_ids:
+            numbers = np.clip(numbers, 0, len(material_ids) - 1)
+        used, first, per_triangle = np.unique(
+            numbers, return_index=True, return_inverse=True)
+        order = np.argsort(first)
+        label = np.empty(len(order), dtype=np.int32)
+        label[order] = np.arange(len(order), dtype=np.int32)
+        digest.update(label[per_triangle.ravel()].astype("<i4").tobytes())
+        for number in used[order]:
+            number = int(number)
+            identity = (material_ids[number]
+                        if 0 <= number < len(material_ids) else "#%d" % number)
+            digest.update(identity.encode("utf-8") + b"\0")
+    return _HASH_VERSION + digest.hexdigest()
+
+
+def _legacy_definition_hash(definition):
+    """The hash of an older send, which took the material numbers as they
+    were. Only to recognize the parts of such a send on their first
+    update."""
     digest = hashlib.blake2b(digest_size=8)
     digest.update(struct.pack("<II", definition.vertex_count,
                               definition.triangle_count))
@@ -1110,7 +1176,7 @@ def update(context, path, manifest=None, unit_scale=None,
             # hash is of the triangles themselves, so a part that came back
             # identical keeps the mesh it has, with whatever was done to it
             # in Blender.
-            reshaped = obj.get(_TAG_GEOMETRY) != placer.geometry_hash(inst)
+            reshaped = not placer.same_geometry(obj.get(_TAG_GEOMETRY), inst)
         except ReferenceError:
             continue
         placer.retag(obj, inst)

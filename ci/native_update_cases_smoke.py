@@ -14,6 +14,7 @@ import os
 import struct
 import sys
 import tempfile
+import traceback
 
 import bpy
 from mathutils import Matrix
@@ -447,7 +448,103 @@ def case_one_instance_takes_new_geometry():
     check(not _orphans(), "meshes with no users: %s" % _orphans())
 
 
+_GREY = ("grey", (0.8, 0.8, 0.8, 1.0))
+_RED = ("red", (0.8, 0.1, 0.1, 1.0))
+_GREEN = ("green", (0.1, 0.8, 0.1, 1.0))
+_BLUE = ("blue", (0.1, 0.1, 0.8, 1.0))
+
+
+def _slot_names(obj):
+    return [m.get("SWMESH_appearance_name") or m.name for m in obj.data.materials]
+
+
+def case_material_numbers_shift():
+    """The export numbers its materials in the order the walk finds them.
+    A new part with a new colour, walked first, shifts the numbers of every
+    other colour. The update read that as new geometry on the parts that
+    did not change, and replaced their meshes."""
+    fresh()
+    first = write_mesh(
+        "paint", [(1, "a", 0.05, [1]), (2, "b", 0.06, [2])],
+        [(1, "c001", "a", "a-1", 0.0, None),
+         (2, "c002", "b", "b-1", 0.2, None)],
+        materials=[_GREY, _RED, _BLUE])
+    native_import.build(bpy.context, first, hierarchy="FLAT")
+    meshes = {p: by_path(p).data.name for p in ("a-1", "b-1")}
+
+    second = write_mesh(
+        "paint", [(0, "c", 0.07, [1]), (1, "a", 0.05, [2]),
+                  (2, "b", 0.06, [3])],
+        [(0, "c003", "c", "c-1", 0.4, None),
+         (1, "c001", "a", "a-1", 0.0, None),
+         (2, "c002", "b", "b-1", 0.2, None)],
+        materials=[_GREY, _GREEN, _RED, _BLUE])
+    _objects, _report, out = native_import.update(
+        bpy.context, second, hierarchy="FLAT")
+    check(not out.reshaped, "re-tessellated: %s" % out.reshaped)
+    for path, name in meshes.items():
+        check(by_path(path).data.name == name,
+              "%s was given a new mesh" % path)
+
+
+def case_a_colour_takes_the_old_number():
+    """The other way round: a part changes colour, and the new colour takes
+    the number the old one had. The update saw the same numbers, reported
+    the part as unchanged, and left the old colour on it."""
+    fresh()
+    first = write_mesh(
+        "paint", [(1, "a", 0.05, [1]), (2, "b", 0.06, [2])],
+        [(1, "c001", "a", "a-1", 0.0, None),
+         (2, "c002", "b", "b-1", 0.2, None)],
+        materials=[_GREY, _RED, _BLUE])
+    native_import.build(bpy.context, first, hierarchy="FLAT")
+    b_mesh = by_path("b-1").data.name
+    second = write_mesh(
+        "paint", [(1, "a", 0.05, [1]), (2, "b", 0.06, [2])],
+        [(1, "c001", "a", "a-1", 0.0, None),
+         (2, "c002", "b", "b-1", 0.2, None)],
+        materials=[_GREY, _GREEN, _BLUE])
+    _objects, _report, out = native_import.update(
+        bpy.context, second, hierarchy="FLAT")
+    a = by_path("a-1")
+    check(out.reshaped == [a.name], "re-tessellated: %s" % out.reshaped)
+    check(_slot_names(a) == ["SW green"], "a is %s" % _slot_names(a))
+    check(by_path("b-1").data.name == b_mesh, "b was given a new mesh")
+
+
+def case_a_geometry_tag_of_an_older_send():
+    """A part of an older send carries the geometry hash of the material
+    numbers. The first update after the change must not read every part
+    as re-tessellated."""
+    fresh()
+    first = write_mesh(
+        "paint", [(1, "a", 0.05, [1]), (2, "b", 0.06, [2])],
+        [(1, "c001", "a", "a-1", 0.0, None),
+         (2, "c002", "b", "b-1", 0.2, None)],
+        materials=[_GREY, _RED, _BLUE])
+    native_import.build(bpy.context, first, hierarchy="FLAT")
+    export = swmesh.load(first)
+    for definition, path in ((export.definitions[0], "a-1"),
+                             (export.definitions[1], "b-1")):
+        by_path(path)["SWMESH_geometry"] = \
+            native_import._legacy_definition_hash(definition)
+    meshes = {p: by_path(p).data.name for p in ("a-1", "b-1")}
+    _objects, _report, out = native_import.update(
+        bpy.context, first, hierarchy="FLAT")
+    check(not out.reshaped, "re-tessellated: %s" % out.reshaped)
+    for path, name in meshes.items():
+        check(by_path(path).data.name == name, "%s was given a new mesh" % path)
+        check(str(by_path(path).get("SWMESH_geometry")).startswith("v2:"),
+              "%s kept the older hash" % path)
+
+
 CASES = [
+    ("FLAT: shifted material numbers are not new geometry",
+     case_material_numbers_shift),
+    ("FLAT: a new colour on the old number is seen",
+     case_a_colour_takes_the_old_number),
+    ("FLAT: the geometry hash of an older send still matches",
+     case_a_geometry_tag_of_an_older_send),
     ("COLLECTION_INSTANCES: a shifted definition finds its prototype",
      case_instances_find_their_prototype),
     ("COLLECTION_INSTANCES: a prototype of an older send is found",
@@ -485,6 +582,10 @@ def main():
         except Fail as exc:
             failed.append(name)
             print("native_update_cases_smoke: FAIL: %s: %s" % (name, exc))
+        except Exception:                       # noqa: BLE001
+            failed.append(name)
+            traceback.print_exc()
+            print("native_update_cases_smoke: FAIL: %s: it raised" % name)
     if failed:
         raise SystemExit("native_update_cases_smoke: FAIL: %d of %d case(s)"
                          % (len(failed), ran))

@@ -3181,6 +3181,14 @@ def load_step(
 
         created_collections = {}
         for obj in created_objs:
+            global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
+            if obj in curve_objs:
+                # A curve goes to Cad Curves, so a group made for it here
+                # would stay empty.
+                set_obj_matrix_world(obj, global_t)
+                link_created(obj, flat_collection)
+                continue
+
             group_name = obj["STEP_name"]
 
             # max collection name len = 61
@@ -3195,7 +3203,6 @@ def load_step(
             else:
                 group_collection = created_collections[group_name]
 
-            global_t = tree.nodes[obj["STEP_tree_location"]].global_transform
             set_obj_matrix_world(obj, global_t)
             link_created(obj, group_collection)
 

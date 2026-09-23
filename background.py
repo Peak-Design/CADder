@@ -85,6 +85,10 @@ class STEPPER_OT_background_import(bpy.types.Operator):
     and Esc cancels the import."""
     bl_idname = "stepper.background_import"
     bl_label = "Background STEP Import"
+    # The import operator that starts this one finishes before the worker
+    # does, so its undo step holds none of the parts. This one pushes the
+    # step when it has added them.
+    bl_options = {"UNDO"}
 
     # JSON: {"files": ["path", ...], "op_kwargs": {...}}
     job_json: bpy.props.StringProperty(options={"HIDDEN", "SKIP_SAVE"})

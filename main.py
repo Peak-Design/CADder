@@ -3483,7 +3483,11 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
     bl_idname = "import_scene.occ_import_step"
     bl_label = "Import STEP"
     bl_description = "Import a STEP, IGES or BREP CAD file"
-    bl_options = {"PRESET"}
+    # UNDO: Blender pushes an undo step after an operator only when it has
+    # this option. Without it the import joined the next step, and a Ctrl+Z
+    # of a later edit took the whole import away with it. A call from a
+    # script pushes no step, so refresh and the worker are not changed.
+    bl_options = {"PRESET", "UNDO"}
 
     filter_glob: StringProperty(default="*.step;*.stp;*.st;*.iges;*.igs;*.brep;*.brp", options={"HIDDEN"})
     # SKIP_SAVE on every file-selection property: drops and dialogs must

@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""What a join of two rigs reports, and when it does not join at all.
+
+    blender -b --factory-startup --python-exit-code 1 -P ci/rig_join_report_smoke.py
+
+rig_join_smoke checks that a join keeps everything in its place. This one
+checks what the join SAYS about it:
+
+  * a clean join of rigs with limit dials reports no missing bone and no
+    drift, for rigs built now and for rigs built before every bone was
+    tagged with its manifest;
+"""
+
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(_HERE)))
+
+import bpy  # noqa: E402
+from mathutils import Euler, Matrix  # noqa: E402
+
+bpy.ops.preferences.addon_enable(module="CADder")
+from CADder.rig import (graph, joining, manifest as mm,  # noqa: E402
+                        parenting, rig_build)
+
+FAILS = []
+
+
+def check(cond, msg):
+    if not cond:
+        FAILS.append(msg)
+        print("   FAIL:", msg)
+    return cond
+
+
+def ident4():
+    return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+
+
+def manifest(step_file, at):
+    """A ground and two hinges about Z. The first hinge has a limit, so it
+    gets a dial: a bone with no group of its own. Both rigs use the same
+    ids and names, so the join renames the incoming bones."""
+    def comp(cid, name, x):
+        t = ident4()
+        t[0][3] = at + x
+        return {"id": cid, "sw_path": name + "-1", "step_name": name,
+                "step_occurrence_path": None, "transform": t}
+
+    def hinge(jid, child, x, limits=None):
+        return {"id": jid, "type": "revolute", "parent_group": "g000",
+                "child_group": child, "origin": [at + x, 0, 0],
+                "axis": [0, 0, 1], "secondary_axis": [1, 0, 0],
+                "limits": limits}
+
+    return {
+        "manifest_version": "1.0.0",
+        "generator": {"name": "rig_join_report_smoke", "version": "1"},
+        "units": {"length": "meter", "angle": "radian"},
+        "frame": {"handedness": "right", "up_axis": "Z",
+                  "transform_convention": "row_major_4x4_global"},
+        "step_export": {"file": step_file, "ap": "AP214", "sha1": None,
+                        "occurrence_matching": None},
+        "components": [comp("c001", "base", 0.0), comp("c002", "link", 0.1),
+                       comp("c003", "lever", 0.2)],
+        "rigid_groups": [
+            {"id": "g000", "name": "base", "components": ["c001"],
+             "grounded": True, "frame": None, "bbox_diag": 0.2},
+            {"id": "g001", "name": "link", "components": ["c002"],
+             "grounded": False, "frame": None, "bbox_diag": 0.1},
+            {"id": "g002", "name": "lever", "components": ["c003"],
+             "grounded": False, "frame": None, "bbox_diag": 0.1},
+        ],
+        "joints": [
+            hinge("j001", "g001", 0.1,
+                  {"rotation": {"min": -1.0, "max": 1.0,
+                                "value_at_rest": 0.0},
+                   "translation": None}),
+            hinge("j002", "g002", 0.2),
+        ],
+        "loops": [], "warnings": [],
+    }
+
+
+def build(name, at):
+    source = name + ".rig.json"
+    man = mm.parse(manifest(name + ".step", at), source_path=source)
+    result = rig_build.build(bpy.context, man, graph.build(man))
+    arm = result.armature_object
+    arm.name = name + "_Rig"
+    unit = rig_build._unit_scale(bpy.context)
+    for gid, bone_name in result.bone_names.items():
+        mesh = bpy.data.meshes.new("%s_%s" % (name, gid))
+        mesh.from_pydata([(0, 0, 0), (0.02, 0, 0), (0, 0.02, 0)], [],
+                         [(0, 1, 2)])
+        obj = bpy.data.objects.new("%s_%s_part" % (name, gid), mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        obj["RIG_group"] = gid
+        obj["RIG_source"] = source
+        obj.matrix_world = (arm.matrix_world @ arm.pose.bones[bone_name].matrix
+                            @ Matrix.Translation((0.03 * unit, 0.0, 0.0)))
+    parenting.relink(bpy.context, arm)
+    return result
+
+
+def untag_helpers(arm):
+    """What a rig built before every bone carried its source looks like:
+    only the group bones say which manifest they came from."""
+    for pb in arm.pose.bones:
+        if not pb.get("RIG_group") and "RIG_source" in pb.keys():
+            del pb["RIG_source"]
+
+
+def fresh():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="CADder")
+
+
+# ── A clean join says it is clean ───────────────────────────────────────
+
+def clean_join_is_quiet(legacy):
+    print("-- a clean join of rigs with dials%s"
+          % (", built before the tags" if legacy else ""))
+    fresh()
+    machine = build("machine", 0.0)
+    gripper = build("gripper", 1.0)
+    host, sub = machine.armature_object, gripper.armature_object
+    if legacy:
+        untag_helpers(host)
+        untag_helpers(sub)
+    check(any(name.startswith("LIM_") for name in sub.data.bones.keys()),
+          "the gripper has no dial bone to test with")
+    sub.location = (0.35, 0.12, 0.08)
+    sub.rotation_euler = Euler((0.0, 0.0, 0.6), "XYZ")
+    report = joining.join(bpy.context, host, [sub],
+                          attach_bone=machine.bone_names["g001"])
+    check(report.renamed, "the names were supposed to collide")
+    check(not report.warnings, "a clean join warns: %s" % report.warnings)
+    check(not report.drift, "a clean join reports drift: %s" % report.drift)
+
+
+def main():
+    clean_join_is_quiet(legacy=False)
+    clean_join_is_quiet(legacy=True)
+
+    print()
+    if FAILS:
+        print("rig_join_report_smoke: %d FAILURE(S)" % len(FAILS))
+        for f in FAILS:
+            print("   -", f)
+        sys.exit(1)
+    print("rig_join_report_smoke: OK")
+
+
+main()

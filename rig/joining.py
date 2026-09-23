@@ -113,6 +113,24 @@ def _roots_of(arm_obj, source):
     return out
 
 
+def _bone_key(arm_obj, pb):
+    """A bone's identity on both sides of the join: its manifest, and its
+    group or else its name. Only group bones carry a group, and the join
+    can rename any other bone (a limit dial, an IK helper) and consume
+    the armature it came from. So an incoming bone is read by the name
+    and the armature it had before the join, which join() writes on it,
+    or every dial of a clean join was reported missing."""
+    owner = pb.get("RIG_source") or pb.get("RIG_join_from") or arm_obj.name
+    return (owner, pb.get("RIG_group") or pb.get("RIG_join_was") or pb.name)
+
+
+def _drop_join_tags(arm_obj):
+    for pb in arm_obj.pose.bones:
+        for tag in ("RIG_join_was", "RIG_join_from"):
+            if tag in pb.keys():
+                del pb[tag]
+
+
 def _snapshot(context):
     context.view_layer.update()
     bones, objects = {}, {}
@@ -121,9 +139,7 @@ def _snapshot(context):
         if obj.type != "ARMATURE":
             continue
         for pb in obj.pose.bones:
-            ident = (pb.get("RIG_source") or obj.name, pb.get("RIG_group")
-                     or pb.name)
-            bones[ident] = (obj.matrix_world @ pb.matrix).copy()
+            bones[_bone_key(obj, pb)] = (obj.matrix_world @ pb.matrix).copy()
     return bones, objects
 
 
@@ -173,10 +189,14 @@ def join(context, host, others, attach_bone=None, relink=True):
 
     before_bones, before_objects = _snapshot(context)
     names_before = {pb.name for pb in host.pose.bones}
-    # Identity survives the join on a custom property; the NAME may not.
+    # Identity survives the join on a custom property. The NAME may not,
+    # and the armature it came from does not. Tags left by a join that
+    # stopped half way would count the host's own bones as arrivals.
+    _drop_join_tags(host)
     for other in others:
         for pb in other.pose.bones:
             pb["RIG_join_was"] = pb.name
+            pb["RIG_join_from"] = other.name
 
     # Geometry riding a bone that HAS A PARENT BONE does not survive the
     # join in place. Blender re-points such an object at the surviving
@@ -206,7 +226,6 @@ def join(context, host, others, attach_bone=None, relink=True):
         was = pb["RIG_join_was"]
         if was != pb.name:
             report.renamed[was] = pb.name
-        del pb["RIG_join_was"]
     if len(names_before) + report.bones_added != len(host.pose.bones):
         report.warnings.append("bone count does not add up after the join")
 
@@ -254,6 +273,8 @@ def join(context, host, others, attach_bone=None, relink=True):
             report.drift.append((name, drift))
 
     after_bones, after_objects = _snapshot(context)
+    # The tags have done their work once the bones are measured.
+    _drop_join_tags(host)
     for ident, was in before_bones.items():
         now = after_bones.get(ident)
         if now is None:

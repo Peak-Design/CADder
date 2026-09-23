@@ -32,7 +32,8 @@ _STATE = {
     "join_report": None,
     # The import options of the last send (hierarchy, up axis, quality), so
     # an Rebuild from CAD that asks for the whole assembly again lands it the
-    # same way round and in the same shape.
+    # same way round and in the same shape. The file keeps them too
+    # (remember_import_options), because this state ends with the session.
     "import_options": None,
     # Which bone drove which parts, taken before an update moves the parts
     # on: what lets a rebuilt bone come back under the name an animation
@@ -50,6 +51,148 @@ def _reset_state():
     _STATE["build"] = None
     _STATE["parent_report"] = None
     _STATE["error"] = ""
+
+
+# ── The import options of a send ─────────────────────────────────────────
+#
+# Refresh and Full Reimport ask the CAD application for the assembly again,
+# and they must build it as the scene was built: the same up axis and the
+# same tree. The session keeps the options of the last send, but a session
+# ends. After a restart, a Refresh of a scene sent Y-up with parented
+# empties came back Z-up and flat, and every part on the rig turned 90
+# degrees. So each send also writes its options into the file.
+
+_OPTIONS_TAG = "CADLINK_import_options"
+# The add-in's own defaults, for a scene that tells nothing.
+_DEFAULT_OPTIONS = {"up_as": "YPOS", "hierarchy_types": "EMPTIES"}
+_UP_AXES = ("XPOS", "YPOS", "ZPOS")
+
+
+def remember_import_options(scene, options):
+    """Keeps the import options of a send, for this session and in the
+    file."""
+    options = dict(options or {})
+    _STATE["import_options"] = options
+    try:
+        scene[_OPTIONS_TAG] = json.dumps(options)
+    except (TypeError, ValueError, AttributeError) as exc:
+        print("[CADLink] the import options were not saved in the file:", exc)
+
+
+def _import_options(context, stem=None):
+    """The import options to build the assembly `stem` with again.
+
+    What the file says comes first. A file saved before the options were
+    kept says nothing, so the up axis and the tree are then read off the
+    scene itself. The last send of this session comes only after that,
+    because it can be the send of another file opened in the same session.
+    The add-in's defaults come last."""
+    options = {}
+    try:
+        stored = json.loads(context.scene.get(_OPTIONS_TAG) or "{}")
+    except (TypeError, ValueError):
+        stored = {}
+    if isinstance(stored, dict):
+        options.update(stored)
+    keys = ("up_as", "hierarchy_types")
+    if all(options.get(k) for k in keys):
+        return options
+    found = _options_in_scene(stem)
+    session = _STATE.get("import_options") or {}
+    for key in keys:
+        if not options.get(key):
+            options[key] = (found.get(key) or session.get(key)
+                            or _DEFAULT_OPTIONS[key])
+    return options
+
+
+def _options_in_scene(stem=None):
+    """The up axis and the tree of a direct-link import, read off the
+    scene: the frame its rig was built in or its parts were placed in, and
+    the collections and empties it was built with. Returns only what it
+    could read."""
+    roots = [c for c in bpy.data.collections
+             if c.get("SWMESH_file") is not None
+             and c.get("SWMESH_role") in ("flat", "hierarchy")]
+    if any(c.get("SWMESH_file") == stem for c in roots):
+        roots = [c for c in roots if c.get("SWMESH_file") == stem]
+    if not roots:
+        return {}
+    root = roots[0]
+    stem = root.get("SWMESH_file")
+    found = {"hierarchy_types": _hierarchy_of(root, stem)}
+    up = _up_of_rig(stem) or _up_of_parts(stem)
+    if up:
+        found["up_as"] = up
+    return found
+
+
+def _hierarchy_of(root, stem):
+    """The hierarchy option an import was built with, from what it left."""
+    if root.get("SWMESH_role") == "flat":
+        return "FLAT"
+    roles = {c.get("SWMESH_role") for c in bpy.data.collections
+             if c.get("SWMESH_file") == stem}
+    if "components" in roles:
+        return "COLLECTION_INSTANCES"
+    if "node" in roles:
+        return "TREE"
+    # Parented empties, or a tree too shallow to hold a branch, where the
+    # two options build the same scene.
+    return "EMPTIES"
+
+
+def _up_axis_of(rotation):
+    """The up axis whose turn is this 3x3 rotation, or None."""
+    from . import native_import
+    for axis in _UP_AXES:
+        want = native_import.up_frame(axis)
+        if all(abs(rotation[i][j] - want[i][j]) < 1e-4
+               for i in range(3) for j in range(3)):
+            return axis
+    return None
+
+
+def _up_of_rig(stem):
+    """The up axis of the frame the rig of this import was built in. The
+    rig is built in the frame the parts were placed in."""
+    counts = {}
+    for obj in bpy.data.objects:
+        if obj.get("SWMESH_file") != stem:
+            continue
+        holder = obj.parent
+        while holder is not None and holder.type != "ARMATURE":
+            holder = holder.parent
+        if holder is not None and holder.get("RIG_rig"):
+            counts[holder] = counts.get(holder, 0) + 1
+    for arm in sorted(counts, key=counts.get, reverse=True):
+        values = list(arm.get("RIG_frame") or [])
+        if len(values) == 16:
+            return _up_axis_of([values[i * 4:i * 4 + 3] for i in range(3)])
+    return None
+
+
+def _up_of_parts(stem):
+    """The up axis most parts were placed with: the turn between where a
+    part stands and the CAD pose it was placed at. A part that was moved
+    since matches no axis and has no vote."""
+    from mathutils import Matrix
+    votes = {}
+    for obj in bpy.data.objects:
+        values = obj.get("SWMESH_transform")
+        if obj.get("SWMESH_file") != stem or values is None \
+                or len(values) != 16 or obj.get("SWMESH_prototype"):
+            continue
+        cad = Matrix([tuple(values[i * 4:i * 4 + 4]) for i in range(4)])
+        try:
+            turn = (obj.matrix_world.to_3x3().normalized()
+                    @ cad.to_3x3().normalized().inverted())
+        except ValueError:
+            continue
+        axis = _up_axis_of([list(row) for row in turn])
+        if axis is not None:
+            votes[axis] = votes.get(axis, 0) + 1
+    return max(votes, key=votes.get) if votes else None
 
 
 # ── The driver choice (inputs.py) ───────────────────────────────────────
@@ -632,7 +775,8 @@ if bpy is not None:
         Blender on those objects goes with the old ones.
 
         The import options of the last send are reused, so the assembly
-        lands the same way round and in the same shape. So are the parts and
+        lands the same way round and in the same shape (_import_options
+        finds them in a file from an earlier session too). So are the parts and
         collections the scene holds defeatured: the CAD application is told
         which they are, and after a replace the settings are put back on
         what arrives, because a replace takes every object and collection
@@ -660,7 +804,8 @@ if bpy is not None:
                 _STATE["manifest"] = man_mod.load(manifest_path)
             except (OSError, ManifestError) as exc:
                 return {"error": "the new manifest could not be read: %s" % exc}
-        options = _STATE.get("import_options") or {"hierarchy_types": "FLAT", "up_as": "ZPOS"}
+        options = _import_options(
+            context, os.path.splitext(os.path.basename(mesh))[0])
         payload = {
             "step": None, "mesh": mesh, "manifest": manifest_path,
             "steps": {"import": False, "replace": not update,

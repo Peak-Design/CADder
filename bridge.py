@@ -719,7 +719,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         "stages": stages}
             from .rig import native_import, rig_update
             opts = payload.get("import_options") or {}
-            rig_ui._STATE["import_options"] = dict(opts)
+            rig_ui.remember_import_options(scene, opts)
             # The CAD application asks for quads or does not, and the scene
             # then holds that answer: a later rebuild or regenerate here
             # gives the same mesh as the send did.

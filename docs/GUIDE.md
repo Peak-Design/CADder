@@ -81,7 +81,9 @@ version: what it is, how to install it, and what is new.
 - Engineering material data (name, description, density) as custom
   properties, and as named materials when you want them.
 - A material database maps CAD material names to shaders of your own, and
-  applies them on every import.
+  applies them on every import and every send.
+- **Lock Materials** keeps the materials you picked for a part through the
+  database, a refresh and a rebuild.
 
 ### UV maps
 
@@ -158,21 +160,117 @@ leaves it alone.
 
 ## Material Database
 
-The material database lets you define mappings from the material names a CAD import gives (the STEP colour names such as "GRAY", an engineering material such as `AISI 304 Steel`, or a SolidWorks appearance such as `SW polished gold` over the live link) to authored Blender materials. Once configured, materials are replaced every time you import a STEP file or receive a direct send.
+A material database maps the material names a CAD import gives to
+materials you made in Blender. A name can be a STEP color such as "GRAY",
+an engineering material such as `AISI 304 Steel`, or a SolidWorks
+appearance such as `SW polished gold`. Every STEP import and every send
+from SolidWorks then puts your materials on the parts.
 
-![Material Mappings Panel](material_mappings.png)
+![The Material Database panel](material_mappings.png)
 
-### Setup
+### Make a database
 
-1. Import a STEP file normally. Objects load with generic STEP materials.
-2. Assign the Blender materials you want to each part (e.g., replace "GRAY" with "Stainless Steel" etc.).
-3. In the **CADder: Material DB** sidebar panel, click **New** to create a database. The addon scans the scene and records what each original STEP material was replaced with.
-4. Manually assign/tweak material mappings in the mapping table if required.
-5. CADder saves the database as a `.blend` file in the material database folder.
+1. Import a STEP file, or send an assembly from SolidWorks. The parts
+   arrive with their CAD materials.
+2. Put the Blender materials you want on the parts. For example, replace
+   "GRAY" with your "Stainless Steel".
+3. In the **CADder** tab of the sidebar, open **Material Database** and
+   click **New**. Give the database a name.
+4. CADder scans the scene and records the material that replaced each CAD
+   material. When one CAD material has different materials on different
+   parts, the most common one wins.
+5. Change an entry in the list if you want, then click **Save**.
 
-### Importing with a database
+CADder keeps each database as a `.blend` file in the material database
+folder. The file holds the entries and the materials they use.
 
-Select a database from the dropdown in the STEP import dialog under **Material DB**. The selected database persists between sessions. When importing, all matching STEP materials are automatically replaced.
+### Use a database
+
+- **On import**: select the database in **Material DB** in the STEP import
+  dialog.
+- **On a send from SolidWorks**: CADder applies the database selected in
+  the panel to every send, Refresh Model and finer mesh.
+- **On parts already in the scene**: click **Apply**. Tick **Selection
+  Only** to change only the selected parts. A selected collection instance
+  includes the parts inside it.
+
+The selected database is a preference, so it stays selected in every
+file and every session.
+
+### The list
+
+Each row maps one CAD material name, on the left, to a Blender material,
+on the right. Pick another material in the dropdown to change the entry.
+The icon at the start of a row shows the material that the entry puts on
+the parts.
+
+- **In Scene** above the list counts the entries that the parts of this
+  scene use. Click the eye beside it to hide the other entries, and click
+  it again to show all entries.
+- The arrow on a row selects the parts that have that CAD material, also
+  a collection instance whose prototype has it. Shift-click adds them to
+  the selection. The arrow is gray when no part of the scene has the
+  material, and a hidden part is not selected.
+- The trash on a row removes the entry.
+
+A change to the list is not in the database until you click **Save**.
+While the list has changes to save, the button reads **Save \***, and
+**Load** asks before it discards them.
+
+If you select another database, the list stays as it is until you click
+**Load**, and a line above the list names the database it came from.
+**Save** is off until then, so a list is never written into the wrong
+database.
+
+### Panel buttons
+
+| Button | What it does |
+|--------|--------------|
+| **Database list** | Selects the database to use. |
+| **Delete** (trash beside the list) | Deletes the file of the selected database, after it asks. |
+| **New** | Makes a database from the materials in the scene. |
+| **Duplicate** | Copies the selected database under a new name, for a variation of it. |
+| **Load** | Shows the entries of the selected database, and adds its materials to this file. The materials stay in the file when you save it, so you can pick them for the entry of another material without a search through your libraries. |
+| **Update** | Adds the CAD materials of the scene that the list does not have yet. The entries you have do not change. Click **Save** to keep them. |
+| **Save** | Writes the list and its materials to the database file. A material that no entry uses any more goes out of the file. |
+| **Apply** | Puts the materials of the database on the parts in the scene, or on the selected parts with **Selection Only**. |
+| **Lock Materials** | Locks the materials of the selected parts. See below. |
+
+### Lock Materials
+
+Select parts and click **Lock Materials** at the bottom of the panel. A
+locked part keeps the materials it has. These do not change them:
+
+- **Apply**, and the database that an import or a send applies.
+- **Refresh Model** and a finer mesh from SolidWorks, also when the
+  appearance of the part changed in SolidWorks.
+- **Send to Blender**, which replaces every part. The new part in the
+  same place in the assembly is locked again and gets the materials back.
+- **Regenerate**, **Rebuild Selected** and **Refresh from Disk** of a
+  STEP file.
+
+A lock keeps the materials the part has when the change starts, so a
+material you pick after the lock stays too. Parts that share a mesh share
+its materials, so a lock on one of them keeps the materials of all.
+
+When every selected part is locked, the button reads **Unlock
+Materials**. The arrow beside it selects the locked parts of the scene.
+
+### Where the databases are
+
+- By default the databases are in
+  `extensions/.user/<repository>/cadder/MaterialDB/` in the Blender user
+  folder. An upgrade does not delete this folder. When CADder starts, it
+  moves the databases that an older version kept inside the addon folder
+  to this folder.
+- To share databases between computers or with a team, set **Material
+  Database Folder** in the addon preferences, for example to a network
+  folder.
+- Each part records the original name of each material slot in its
+  `STEP_materials` custom property. So a database applies correctly also
+  after another database changed the materials.
+- A linked material, for example from the Asset Browser, goes into the
+  database as a local copy, so any `.blend` file can load it.
 
 ## The live link
 
@@ -489,47 +587,6 @@ only its geometry.
 - **Separate solids**: one object per body of a multibody part, for files
   that hold several solids, shells or surfaces with no assembly structure to
   tell them apart. Off by default.
-- The **material database folder** can be set in preferences. Left empty it
-  uses the folder Blender keeps for the extension's own files. An upgrade
-  keeps that folder, but you cannot share it between machines.
-
-### Panel buttons
-
-| Button | Description |
-|--------|-------------|
-| **New** | Create a new database from the current scene. Scans all STEP objects and records current material assignments. If the same original material was replaced with different materials on different parts, the most common replacement wins. |
-| **Duplicate** | Copy the active database under a new name. Useful for minor variations between projects. |
-| **Load** | Show the mappings of the active database, and add its materials to the current file. The materials stay in the file when you save it, so you can pick them for the entry of another material without a search through your libraries. If the list has changes that are not saved, Load asks first. |
-| **Delete** (trash icon) | Delete the active database file. |
-| **Update** | Scan the scene for any new original STEP material names not already in the database and add them. **Does not modify existing mappings.** Use this to expand and grow your material database. Does not auto-save. |
-| **Save** | Write the current mappings and materials to the database file. The button reads **Save \*** when the list has changes that are not in the file yet. |
-| **Apply** | Apply the active database mappings to objects in the scene. Works with the **Selection only** checkbox to limit to selected objects. |
-
-### Material mappings table
-
-Each row shows an original STEP material name and a dropdown to pick the replacement Blender material. You can change any mapping and click **Save** to update the database.
-
-- The line above the list says how many entries the parts of this scene use. Click the eye to hide the entries that no part of the scene has, and click it again to show all entries.
-- The arrow on a row selects the parts that have that material, also a collection instance whose prototype has it. Shift-click adds them to the selection. The arrow is grey when no part of the scene has the material.
-- The trash on a row removes the entry from the list. **Save** removes it from the database, with its material if no other entry uses that material.
-
-### Lock Materials
-
-Select parts and click **Lock Materials** at the bottom of the panel. A locked part keeps the materials it has. These do not change them:
-
-- **Apply** of the material database, and the database that an import or a send applies.
-- **Refresh Model** and a finer mesh from SolidWorks, also when the appearance of the part changed in SolidWorks.
-- **Send to Blender**, which replaces every part. The new part in the same place in the assembly is locked again and gets the materials back.
-- **Regenerate**, **Rebuild Selected** and **Refresh from disk** of a STEP file.
-
-A part that shares its mesh with other parts shares its materials with them, so a lock on one keeps the materials of all. A lock keeps the materials the part has when the change starts, so a material you pick after the lock stays too. When every selected part is locked, the button reads **Unlock Materials**. The arrow beside it selects the locked parts of the scene.
-
-### Notes
-
-- By default the databases are in `extensions/.user/<repository>/cadder/MaterialDB/` in the Blender user folder. An upgrade does not delete this folder. When CADder starts, it moves the databases that an older version kept inside the addon folder to this folder.
-- The active database selection is stored in addon preferences and persists across sessions and files.
-- Original STEP material names are stored on each imported object as a `STEP_materials` custom property, so re-applying a different database always works correctly.
-- Linked materials (e.g., from the Blender asset browser) are fully supported. A local copy is saved into the database file so it can be loaded in any `.blend` file.
 
 ## Engineering Materials (AP242 / AP214)
 
@@ -794,6 +851,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |
 | 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |

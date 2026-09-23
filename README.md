@@ -53,7 +53,7 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
 - **A working rig.** The mates become an armature: joints, limits drawn to
   the real values, and gears, screws and cams that drive each other.
 - **Stays in step with the design.** Refresh Model updates the scene part
-  by part and keeps your materials, modifiers and animation.
+  by part and keeps your rig, materials, modifiers and animation.
 - **Looks like SolidWorks.** Appearances, textures and decals arrive as
   Blender materials.
 
@@ -61,20 +61,21 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
   <img src="docs/images/rig.png" alt="A generated rig, with the limit arcs drawn" width="80%">
 </p>
 
-## New in 1.0.0
+## New in 1.1.0
 
-- **The SolidWorks Bridge**: send, refresh and rebuild from SolidWorks.
-- **Rig generation** from the assembly's mates.
-- **Mesh Quality**: one panel for every part, whether it came from the
-  bridge or from a file, with Rebuild from CAD.
-- **Defeature**: leave small holes and cutouts out of the mesh, taken out
-  of the solid before it is tessellated.
-- **Compound surfaces unwrapped**: faces that cannot lie flat at one
-  scale go to Blender's own unwrap, so no more long thin UV ribbons.
-- **Match the Blender view** to the angle of the SolidWorks view after a
-  send.
+- **Lock Materials**: keep the materials of a part through the material
+  database, Refresh Model and Regenerate.
+- **A better Material Database**: hide the entries the scene does not
+  use, select the parts of an entry, remove an entry, and keep the
+  database's materials in the file to use again.
+- **Refresh Model keeps your rig**: your handles, mechanism inputs,
+  drivers and bones stay. SolidWorks offers the button only when a
+  running Blender holds the document.
+- **Automatic rig engine**: more mechanisms move as they do in SolidWorks.
+- **The SolidWorks Bridge** is in the Windows version only.
 
-The full list is in the [version history](docs/GUIDE.md#version-history).
+The full list is in the [release notes](docs/RELEASE_1.1.0.md) and the
+[version history](docs/GUIDE.md#version-history).
 
 ## Features
 

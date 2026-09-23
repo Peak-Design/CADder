@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "cadder"
-version = "1.0.1"
+version = "1.1.0"
 name = "CADder"
 tagline = "Import CAD files, link SolidWorks, and rig assemblies"
 maintainer = "Peak-Design"

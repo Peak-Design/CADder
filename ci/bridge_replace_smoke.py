@@ -81,12 +81,18 @@ def run_same_name():
         "older add-in": os.path.join(base, "exports", "gearbox.step"),
     }
     vendor = os.path.join(base, "Downloads", "gearbox.step")
+    # Exported by hand and rigged: the same assembly, from any folder, and
+    # all of it goes, also a part the rig did not match.
+    by_hand = os.path.join(base, "Desktop", "gearbox.step")
     for new_file, by_stem in (("gearbox.swmesh", True), ("gearbox.step", False)):
         bpy.ops.wm.read_factory_settings(use_empty=True)
         root = bpy.context.scene.collection
         for label, path in sends.items():
             empty(label, path, collection(label + " import", root, path))
         empty("vendor gear", vendor, collection("vendor import", root, vendor))
+        hand = collection("rigged import", root, by_hand)
+        empty("rigged gear", by_hand, hand)["RIG_group"] = "g001"
+        empty("rigged bolt", by_hand, hand)
         stages = {}
         bridge._remove_previous_import(
             os.path.join(base, "exports", "gearbox", new_file), stages,
@@ -98,7 +104,10 @@ def run_same_name():
             fail("%s: an import of another gearbox.step was removed" % new_file)
         if bpy.data.collections.get("vendor import") is None:
             fail("%s: the other import's collection was removed" % new_file)
-        if stages["replace"]["removed_objects"] != len(sends):
+        for label in ("rigged gear", "rigged bolt"):
+            if bpy.data.objects.get(label) is not None:
+                fail("%s: %r of the rigged import was not replaced" % (new_file, label))
+        if stages["replace"]["removed_objects"] != len(sends) + 2:
             fail("%s: removed %s" % (new_file, stages))
 
 

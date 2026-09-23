@@ -225,24 +225,31 @@ def main():
         assert sorted(rig_cols) == sorted({"keep_Rig", "native-other_Rig"}), \
             "round %d: rig collections %s" % (round_no, rig_cols)
 
-    # The direct link sent for an assembly that already stands as a STEP
-    # import replaces that import: the bridge matches on the file stem, so
-    # native-other.swmesh takes native-other.step's objects away and leaves
-    # another file's alone.
+    # The direct link sent for an assembly that already stands as a rigged
+    # STEP import replaces that import: the bridge matches on the file stem,
+    # so native-other.swmesh takes native-other.step's objects away and
+    # leaves another file's alone. A file of the same name from elsewhere
+    # that no rig was matched to is not this assembly's, and stays.
     from CADder import bridge
     step_col = bpy.data.collections.new("native-other.hierarchy")
     bpy.context.scene.collection.children.link(step_col)
-    for name, file in (("step_lever", "native-other.step"),
-                       ("step_frame", "NATIVE-OTHER.STEP"),
-                       ("step_stranger", "elsewhere.step")):
+    for name, folder, file, rigged in (
+            ("step_lever", "somewhere", "native-other.step", True),
+            ("step_frame", "somewhere", "NATIVE-OTHER.STEP", False),
+            ("step_stranger", "somewhere", "elsewhere.step", True),
+            ("step_vendor", "vendor", "native-other.step", False)):
         o = bpy.data.objects.new(name, None)
-        o["STEP_file"] = r"C:\somewhere\\" + file
+        o["STEP_file"] = os.path.join("C:" + os.sep, folder, file)
+        if rigged:
+            o["RIG_group"] = "g001"
         step_col.objects.link(o)
     stages = {}
     bridge._remove_previous_import(
         os.path.join(tempfile.gettempdir(), "native-other.swmesh"), stages, by_stem=True)
     assert stages["replace"]["removed_objects"] == 2, stages
     assert bpy.data.objects.get("step_stranger") is not None
+    assert bpy.data.objects.get("step_vendor") is not None
+    assert bpy.data.objects.get("step_frame") is None
     assert bpy.data.objects.get("step_lever") is None
 
     print("native_rig_smoke: OK: %d parts bone-parented with no drift, "

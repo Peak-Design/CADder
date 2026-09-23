@@ -334,27 +334,47 @@ def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False)
     want_base = os.path.basename(step_path).casefold()
     want_stem = os.path.splitext(want_base)[0]
 
+    def normalized(value):
+        return os.path.normcase(os.path.abspath(str(value))) if value else None
+
+    def same_name(full):
+        base = os.path.basename(full).casefold()
+        return base == want_base or (
+            by_stem and os.path.splitext(base)[0] == want_stem)
+
+    # The same name alone does not make the same assembly: a vendor's
+    # C:/Downloads/gearbox.step is not a send of gearbox.SLDASM. So an
+    # import of that name is this assembly's when the add-in wrote it (each
+    # send goes into a folder named after its document, ExportPaths.For:
+    # this send's folder, a folder of that name under another export root,
+    # or, from an add-in older than those folders, the folder above this
+    # one), or when a rig was matched to it (RIG_group), which also covers
+    # a STEP file the user exported and imported by hand. Decided per file,
+    # so an import is removed whole or not at all.
+    rigged = set()
+    for obj in bpy.data.objects:
+        try:
+            full = normalized(obj.get("STEP_file"))
+            if full and ("RIG_group" in obj.keys() or "RIG_source" in obj.keys()):
+                rigged.add(full)
+        except ReferenceError:
+            continue
+
     def is_same_file(value):
-        if not value:
+        full = normalized(value)
+        if not full:
             return False
-        full = os.path.normcase(os.path.abspath(str(value)))
         if full == want_full:
             return True
-        base = os.path.basename(full).casefold()
-        stem = os.path.splitext(base)[0]
-        if base != want_base and not (by_stem and stem == want_stem):
+        if not same_name(full):
             return False
-        # The same name alone does not make the same assembly: a vendor's
-        # C:/Downloads/gearbox.step is not a send of gearbox.SLDASM. The
-        # add-in writes each send into a folder named after its document
-        # (ExportPaths.For), so the last send is in this send's folder, in
-        # a folder of that name under another export root, or, from an
-        # add-in older than those folders, in the folder above this one.
         folder = os.path.dirname(full)
+        stem = os.path.splitext(os.path.basename(full).casefold())[0]
         return (folder == want_dir
                 or os.path.basename(folder).rstrip(". ").casefold()
                 == stem.rstrip(". ")
-                or folder == os.path.dirname(want_dir))
+                or folder == os.path.dirname(want_dir)
+                or full in rigged)
 
     removed = 0
     for obj in list(bpy.data.objects):

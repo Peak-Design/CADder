@@ -1377,6 +1377,9 @@ class ReadSTEP:
         self._pre_tessellated = True
 
     def triangulate_face(self, face, tform, chart=None):
+        # tform (the location of the meshed shape) is not used. The nodes
+        # and the surface normals both take the full location of the face,
+        # as on the native path, so they need no other transform.
         location = TopLoc_Location()
         facing = BRep_Tool.Triangulation_s(face, location)
         if facing is None:
@@ -1386,10 +1389,18 @@ class ReadSTEP:
 
         reversed_face = (face.Orientation() == TopAbs_REVERSED)
         not_forward = (face.Orientation() != TopAbs_FORWARD)
-        itform = tform.Inverted()
 
         d_nbnodes = facing.NbNodes()
         d_nbtriangles = facing.NbTriangles()
+
+        # The nodes are in the frame of the triangulation. The location
+        # puts them where the face is. Without it a moved body of a
+        # multibody part was drawn on top of the first body.
+        trsf = None if location.IsIdentity() else location.Transformation()
+
+        def node(t):
+            pt = facing.Node(t)
+            return pt if trsf is None else pt.Transformed(trsf)
 
         # Read all triangles
         tris = [None] * d_nbtriangles
@@ -1402,7 +1413,7 @@ class ReadSTEP:
         if not _has_surface(face):
             # Triangles only: the normals come from the triangles and the
             # UVs stay at zero, as on the native path.
-            verts = [b_XYZ(facing.Node(t)) for t in range(1, d_nbnodes + 1)]
+            verts = [b_XYZ(node(t)) for t in range(1, d_nbnodes + 1)]
             return self._face_trimesh(
                 verts, list(_mesh_normals(verts, tris)),
                 [(0.0, 0.0)] * d_nbnodes, tris)
@@ -1435,8 +1446,7 @@ class ReadSTEP:
         undef_normals = False
 
         for t in range(1, d_nbnodes + 1):
-            pt = facing.Node(t)
-            verts[t - 1] = b_XYZ(pt)
+            verts[t - 1] = b_XYZ(node(t))
 
             if has_uvs:
                 uv = facing.UVNode(t)
@@ -1450,8 +1460,7 @@ class ReadSTEP:
             prop.SetParameters((u - Ucenter) * 0.999 + Ucenter,
                                (v - Vcenter) * 0.999 + Vcenter)
             if prop.IsNormalDefined():
-                normal = prop.Normal().Transformed(itform)
-                nn = np.array(b_XYZ(normal), dtype=np.float32)
+                nn = np.array(b_XYZ(prop.Normal()), dtype=np.float32)
                 if reversed_face:
                     nn = -nn
             else:
@@ -2075,14 +2084,10 @@ class ReadSTEP:
                 return
             reversed_face = (face.Orientation() == TopAbs_REVERSED)
 
-            # Extract 3x3 rotation from inverse transform once per face
-            itform = trf.Inverted()
-            rot = np.array([
-                [itform.Value(1, 1), itform.Value(1, 2), itform.Value(1, 3)],
-                [itform.Value(2, 1), itform.Value(2, 2), itform.Value(2, 3)],
-                [itform.Value(3, 1), itform.Value(3, 2), itform.Value(3, 3)],
-            ], dtype=np.float32)
-
+            # The native module puts the nodes in the located frame of the
+            # face, and the adaptor gives the normals in that same frame.
+            # So the normals take no transform. Turning them back by the
+            # shape location broke the shading of a turned shape.
             surface = BRepAdaptor_Surface(face)
             prop = BRepLProp_SLProps(surface, 2, _gp_res)
 
@@ -2118,8 +2123,8 @@ class ReadSTEP:
                     else:
                         norms_local[i] = (0.0, 0.0, 1.0)
 
-            # Bulk transform + flip with numpy (replaces per-vertex SWIG calls)
-            norms_out = norms_local @ rot.T
+            # Flip with numpy (replaces per-vertex SWIG calls)
+            norms_out = norms_local
             if reversed_face:
                 norms_out = -norms_out
             all_norms[vs:vs + vc] = norms_out

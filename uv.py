@@ -70,8 +70,12 @@ def add_box_uv(me, scale=1.0, name="UVMap"):
     li = np.arange(n_loops)
     u = loop_pos[li, u_axis] * inv
     v = loop_pos[li, v_axis] * inv
-    # Flip U on negative-facing sides for projection continuity
-    u = u * sign
+    # Flip U on the negative sides, so the map turns the same way as the
+    # face and nothing is mirrored. On the Y sides U runs along X and V
+    # along Z, and X cross Z is -Y, so there U is flipped once more. Without
+    # that both Y sides were mirrored.
+    flip = np.where(dominant == 1, -sign, sign)
+    u = u * flip
 
     uvs = np.stack([u, v], axis=1).astype(np.float32)
     return write_uv_layer(me, name, uvs)

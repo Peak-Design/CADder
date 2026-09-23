@@ -800,11 +800,17 @@ if bpy is not None:
 
             for w in report.warnings:
                 print("[CADLink join]", w)
+            if not report.joined:
+                # The join stopped before the merge (a posed attach bone),
+                # so there is nothing to undo.
+                self.report({"ERROR"}, report.warnings[0] if report.warnings
+                            else "Nothing was joined")
+                return {"CANCELLED"}
             if report.drift:
                 worst = max(d for _, d in report.drift)
                 self.report({"WARNING"},
                             "Joined {} bone(s), but {} thing(s) moved (worst "
-                            "{:.3f} mm) - see the console".format(
+                            "{:.3f} mm). See the console".format(
                                 report.bones_added, len(report.drift),
                                 worst * 1000.0))
                 for name, d in report.drift[:10]:

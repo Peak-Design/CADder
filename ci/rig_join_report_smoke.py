@@ -178,6 +178,19 @@ def posed_attach_joins_nothing():
     check([o.name for o in others] == ["gripper_Rig"],
           "the rigs cannot be joined again: %s" % [o.name for o in others])
 
+    # Join Rigs says so as an error and cancels, so no undo step claims a
+    # join. It used to finish with a warning. bpy.ops raises on an error
+    # report.
+    try:
+        result = bpy.ops.cadlink.join_rigs(attach_bone=attach)
+    except RuntimeError as exc:
+        result = str(exc)
+    check(isinstance(result, str) and "rest pose" in result,
+          "Join Rigs onto a posed bone gave %s, not an error" % (result,))
+    check("gripper_Rig" in bpy.data.objects
+          and len(host.data.bones) == count,
+          "Join Rigs merged the rigs although nothing was attached")
+
     # As the message says: clear the pose and join again.
     posed.rotation_euler[1] = 0.0
     bpy.context.view_layer.update()

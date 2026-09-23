@@ -89,3 +89,25 @@ def test_the_registry_file_is_written(tmp_path, monkeypatch):
             assert stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode) == 0o700
     finally:
         bridge._remove_registry()
+
+
+def test_a_deleted_registry_file_comes_back(tmp_path, monkeypatch):
+    """The add-in deletes the file of a Blender whose ping gets no answer,
+    and a Blender inside a long job does not answer. Nothing wrote the file
+    again, so no send found this Blender until it restarted."""
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setitem(bridge._state, "token", "s3cret")
+    monkeypatch.setitem(bridge._state, "registry_path", None)
+    bridge._write_registry()
+    path = bridge._state["registry_path"]
+    try:
+        os.remove(path)
+        bridge._keep_registry(force=True)
+        with open(path, encoding="utf-8") as fh:
+            assert json.load(fh)["token"] == "s3cret"
+    finally:
+        bridge._remove_registry()
+    # After stop() there is no file to keep.
+    bridge._keep_registry(force=True)
+    assert not os.path.exists(path)

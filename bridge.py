@@ -1055,6 +1055,7 @@ def _pump():
         _state["timer_running"] = False
         return None
     _heartbeat()
+    _keep_registry()
     try:
         job = q.get_nowait()
     except queue.Empty:
@@ -1095,6 +1096,33 @@ def _write_registry():
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(info, f, indent=1)
     _state["registry_path"] = path
+
+
+_REGISTRY_CHECK_S = 2.0
+_registry_checked = 0.0
+
+
+def _keep_registry(force=False):
+    """Writes the registry file again when it has gone while the bridge
+    runs. The CAD add-in deletes the file of a Blender whose ping gets no
+    answer, and a Blender inside one long bpy call cannot answer. Without
+    this, no send found this Blender again until it restarted. Runs from
+    the pump, so a Blender that is free again is found again."""
+    global _registry_checked
+    now = time.monotonic()
+    if not force and now - _registry_checked < _REGISTRY_CHECK_S:
+        return
+    _registry_checked = now
+    # Set by start(), cleared by stop(): only a running bridge has one.
+    path = _state.get("registry_path")
+    if not path or os.path.exists(path):
+        return
+    # Never an escape into the pump: that would stop every job.
+    try:
+        _write_registry()
+        print("[CADLink bridge] the registry file had gone: written again")
+    except Exception as exc:                   # noqa: BLE001
+        print("[CADLink bridge] registry write failed:", exc)
 
 
 def _remove_registry():

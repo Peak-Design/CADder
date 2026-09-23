@@ -238,18 +238,31 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        failed = self.rebuild(context, scope_objects(context, from_step),
+                              self.use_scene_settings, self.report)
+        return {"CANCELLED"} if failed is None else {"FINISHED"}
+
+    @staticmethod
+    def rebuild(context, objects, use_scene_settings, report):
+        """Tessellate these parts again from their files. Returns the names
+        of the parts that failed, or None when no part came from a file.
+
+        Apply UVs and Apply Defeature call this directly, not through the
+        operator. The operator reads its parts from the selection, and they
+        must know which parts failed.
+        """
         from . import main as m
         from . import formats
 
         # Unique mesh datablocks (multi-user meshes regenerate once and all
         # users update automatically since geometry is replaced in place).
         targets = {}
-        for obj in scope_objects(context, from_step):
-            targets.setdefault(obj.data, obj)
+        for obj in objects:
+            if from_step(obj):
+                targets.setdefault(obj.data, obj)
         if not targets:
-            self.report({"WARNING"},
-                        "Select parts that came from a file on disk")
-            return {"CANCELLED"}
+            report({"WARNING"}, "Select parts that came from a file on disk")
+            return None
 
         prefs = m._get_addon_prefs()
         hacks = {"skip_solids"} if prefs.hack_skip_zero_solids else set()
@@ -278,8 +291,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
-                self.report({"INFO"},
-                            f"Re-parsing {filepath} (not in cache)")
+                report({"INFO"}, f"Re-parsing {filepath} (not in cache)")
                 try:
                     reader = formats.make_reader(filepath)
                     m._cache_put(filepath, reader)
@@ -332,7 +344,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
 
                 scene_lin, scene_ang, scene_rel = quality_mod.resolve(
                     wanted, reader.scale)
-                if self.use_scene_settings or "lin_deflection" not in stored:
+                if use_scene_settings or "lin_deflection" not in stored:
                     lin_def, ang_def, relative = scene_lin, scene_ang, scene_rel
                 else:
                     # The record holds the linear value as the import used
@@ -391,7 +403,7 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                 # The passes the import runs once the mesh exists, in the
                 # same order: quads, then Smart, then the unwrap.
                 quads = (context.scene.stepper.tris_to_quads
-                         if self.use_scene_settings
+                         if use_scene_settings
                          else stored.get("tris_to_quads"))
                 rebuilt[obj.data] = {
                     "lin_deflection": lin_def,
@@ -457,12 +469,12 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
             note = (", %d defeatured (%d feature(s) out, %d left alone)"
                     % (defeatured, features[0], features[1]))
         if failed:
-            self.report({"WARNING"},
-                        f"Regenerated {done}{note}; "
-                        f"failed: {', '.join(failed[:5])}")
+            report({"WARNING"},
+                   f"Regenerated {done}{note}; "
+                   f"failed: {', '.join(failed[:5])}")
         else:
-            self.report({"INFO"}, f"Regenerated {done} mesh(es){note}")
-        return {"FINISHED"}
+            report({"INFO"}, f"Regenerated {done} mesh(es){note}")
+        return failed
 
 
 class STEPPER_OT_prune_hierarchy(bpy.types.Operator):
@@ -847,19 +859,14 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
 
         # The settings travel with the object, so a Regenerate or a Refresh
         # later keeps the UV map chosen here instead of the one the import
-        # made.
-        for obj in targets:
-            try:
-                rec = json.loads(obj.get("STEP_import_settings", "{}"))
-            except Exception:
-                rec = {}
-            if not isinstance(rec, dict):
-                rec = {}
-            # Put an older record in today's terms first. Its old keys would
-            # otherwise overrule the mode chosen here.
-            uv_mod.migrate_settings(rec)
-            rec.update(want)
-            obj["STEP_import_settings"] = json.dumps(rec)
+        # made. They go only on a part that came from CAD and got its new
+        # UVs here. They were once written on every part before the rebuild
+        # could fail. Then a record could name a UV map that its part did
+        # not have, and a later Regenerate made that map unasked.
+        cad = {o.name for o in mesh_parts(
+            [o for o in covered if from_step(o) or from_cad_link(o)])}
+        made = []
+        problem = None
 
         if want["uv_mode"] == "BOX":
             # Box projection reads the mesh and nothing else, so the CAD
@@ -868,7 +875,9 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             for obj in targets:
                 if uv_mod.add_box_uv(obj.data, scale=want["box_uv_scale"]):
                     n += 1
-            made = "box projected %d mesh(es)" % n
+                    if obj.name in cad:
+                        _write_record(obj, want)
+            made.append("box projected %d mesh(es)" % n)
         else:
             # The CAD data is where these modes start, and a part knows which
             # CAD data is its own: a STEP file on disk, or the CAD
@@ -881,27 +890,43 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
                             "This mode needs the CAD data. Select parts that "
                             "came from a STEP file or over the live link")
                 return {"CANCELLED"}
-            made = []
+            rebuilt = []
             if live:
-                done = _ask_cad_link(context, live)
-                if done is None:
-                    self.report({"ERROR"},
-                                "The CAD application could not be reached")
-                    return {"CANCELLED"}
-                made.append("%d from the CAD application" % done)
+                # A closed CAD application stops only the parts that need
+                # it. The parts from a STEP file are still rebuilt below.
+                done, problem = _ask_cad_link(context, live)
+                if problem is None:
+                    made.append("%d from the CAD application" % done)
             if step:
-                for obj in context.selected_objects:
-                    obj.select_set(obj in step)
-                context.view_layer.objects.active = step[0]
-                bpy.ops.stepper.regenerate(use_scene_settings=False)
-                made.append("%d from the STEP file" % len(step))
+                # Regenerate reads the UV settings from the record, so the
+                # record changes first. A part that could not be rebuilt
+                # gets its old record back.
+                was = {o.name: o.get("STEP_import_settings") for o in step}
+                for obj in step:
+                    _write_record(obj, want)
+                failed = STEPPER_OT_regenerate.rebuild(
+                    context, step, False, self.report) or []
+                lost = {o.data for o in step if o.name in failed}
+                for obj in step:
+                    if obj.data not in lost:
+                        rebuilt.append(obj)
+                    elif was[obj.name] is None:
+                        del obj["STEP_import_settings"]
+                    else:
+                        obj["STEP_import_settings"] = was[obj.name]
+                made.append("%d from the STEP file" % len(rebuilt))
             # A part from the live link arrives with the coordinates
             # SolidWorks gave it and nothing else has been done to it, so the
             # modes that build on the CAD charts run here.
-            if live:
-                _uv_modes_on_live(m, mesh_parts(live), want)
-            targets = step + mesh_parts(live)
-            made = "rebuilt " + " and ".join(made)
+            if live and problem is None:
+                arrived = mesh_parts(live)
+                _uv_modes_on_live(m, arrived, want)
+                for obj in arrived:
+                    _write_record(obj, want)
+                rebuilt += arrived
+            targets = rebuilt
+            if made:
+                made = ["rebuilt " + " and ".join(made)]
 
         # Regenerate has paired the triangles again as the record asks, so
         # packing is the one pass left.
@@ -910,7 +935,13 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
                                want["uv_pack_tiles"], want["uv_pack_margin"],
                                bool(want["uv_normalize"]))
 
-        self.report({"INFO"}, "UV: " + made)
+        if problem is not None:
+            if not made:
+                self.report({"ERROR"}, problem)
+                return {"CANCELLED"}
+            self.report({"ERROR"}, "UV: %s. %s" % (made[0], problem))
+            return {"FINISHED"}
+        self.report({"INFO"}, "UV: " + made[0])
         return {"FINISHED"}
 
 
@@ -968,17 +999,23 @@ class STEPPER_OT_apply_defeature(bpy.types.Operator):
         live = [o for o in covered if from_cad_link(o) and o not in step]
 
         said = []
+        problem = None
         if live:
-            done = _ask_cad_link(context, live)
-            if done is None:
-                return {"CANCELLED"}
-            said.append("%d part(s) from the CAD application" % done)
+            # A closed CAD application stops only the parts that need it.
+            # The parts from a STEP file are still rebuilt below.
+            done, problem = _ask_cad_link(context, live)
+            if problem is None:
+                said.append("%d part(s) from the CAD application" % done)
         if step:
-            for obj in context.selected_objects:
-                obj.select_set(obj in step)
-            context.view_layer.objects.active = step[0]
-            bpy.ops.stepper.regenerate(use_scene_settings=False)
+            STEPPER_OT_regenerate.rebuild(context, step, False, self.report)
             said.append("%d part(s) from the STEP file" % len(step))
+        if problem is not None:
+            # The switches stay on, and the parts from the live link get
+            # their small features taken out at their next rebuild. FINISHED
+            # keeps an undo step for the change.
+            self.report({"ERROR"}, "Defeature: %s. %s"
+                        % (", ".join([turned] + said), problem))
+            return {"FINISHED"}
         if not said:
             self.report({"WARNING"}, "Nothing here can be asked for again")
             return {"CANCELLED"}
@@ -1080,8 +1117,12 @@ def weld(me, distance=1e-6):
 
 def _ask_cad_link(context, objs):
     """Asks the CAD application for these parts again, with whatever the
-    scene now holds them defeatured to. Returns how many came back, or None
-    when the CAD application could not be reached."""
+    scene now holds them defeatured to. Returns (how many came back, None),
+    or (0, the problem) when the CAD application could not be reached.
+
+    The problem goes back to the operator, which shows it to the user. It
+    was once only printed to the system console, so Apply Defeature failed
+    with no message at all."""
     from .rig import cad_link, native_import, defeature as defeature_mod
 
     ids, persistent = [], []
@@ -1093,7 +1134,7 @@ def _ask_cad_link(context, objs):
         if found and found not in persistent:
             persistent.append(found)
     if not ids:
-        return 0
+        return 0, None
     try:
         reply = cad_link.retessellate(
             ids, quality_mod.cad_request(
@@ -1101,17 +1142,21 @@ def _ask_cad_link(context, objs):
             persistent_ids=persistent,
             paths=native_import.cad_paths(objs),
             defeature=defeature_mod.orders(objs, context.scene))
-        return len(native_import.refine(context, reply["mesh"]))
+        return len(native_import.refine(context, reply["mesh"])), None
     except cad_link.CadLinkError as exc:
-        _report(context, str(exc))
-        return None
+        return 0, _report(context, str(exc))
     except (OSError, ValueError) as exc:
-        _report(context, "Could not read what the CAD application sent: %s" % exc)
-        return None
+        return 0, _report(
+            context, "Could not read what the CAD application sent: %s" % exc)
 
 
 def _report(context, message):
+    """Prints a problem of the live link to the console, and returns it as
+    a sentence for the message of the operator."""
+    message = message.strip() or "The CAD application could not be reached"
+    message = message[:1].upper() + message[1:]
     print("[CADder] " + message)
+    return message
 
 
 classes = (

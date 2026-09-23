@@ -631,9 +631,9 @@ class _Placer:
         emp.empty_display_type = "PLAIN_AXES"
         emp[_TAG_FILE] = self.stem
         emp[_TAG_PATH] = sw_path
-        comp = self.by_path.get(sw_path)
-        if comp is not None:
-            emp[_TAG_COMPONENT] = comp.id
+        # A branch, not a part. It gets no component id, even for a rigid
+        # subassembly: its parts carry that. See diff.is_part.
+        emp[diff_mod.TAG_ROLE] = "node"
         branch = self.branches.get(sw_path)
         if branch is not None and branch.transform is not None:
             emp.matrix_world = self.frame @ branch.transform
@@ -667,11 +667,18 @@ class _Placer:
         for obj in bpy.data.objects:
             if obj.get(_TAG_FILE) != self.stem or obj.type != "EMPTY":
                 continue
-            if obj.get("SWMESH_prototype") or obj.get(_TAG_GROUP) is not None:
+            if diff_mod.is_part(obj) or obj.get("SWMESH_prototype") \
+                    or obj.get(_TAG_GROUP) is not None:
                 continue
             path = obj.get(_TAG_PATH)
-            if path and obj.instance_collection is None:
-                self.empties[path] = obj
+            if not path:
+                continue
+            self.empties[path] = obj
+            # An empty of an older build: say what it is, and take off the
+            # component id that made it look like a part.
+            obj[diff_mod.TAG_ROLE] = "node"
+            if _TAG_COMPONENT in obj.keys():
+                del obj[_TAG_COMPONENT]
 
     # ── the parts themselves ────────────────────────────────────────────
 

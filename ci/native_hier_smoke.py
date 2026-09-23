@@ -154,7 +154,10 @@ def main():
     emp = bpy.data.objects.get("sub-1")
     _check(emp is not None and emp.type == "EMPTY", "no sub-1 empty")
     _check(round(emp.matrix_world.translation.x, 3) == 0.5, "the empty is not at the subassembly's pose")
-    _check(emp.get("RIG_component_id") == "c002", "the empty does not carry its component id")
+    # A branch, not a part: its parts carry the component id, and an
+    # update that read the empty as a part deleted it.
+    _check(emp.get("RIG_component_id") is None and emp.get("SWMESH_role") == "node",
+           "the empty is tagged as a part")
     for name in ("pin-1", "pin-2"):
         o = bpy.data.objects[name]
         _check(o.parent is emp, "%s is not parented under sub-1" % name)

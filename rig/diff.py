@@ -43,6 +43,9 @@ TAG_DEFINITION = "SWMESH_definition"
 # own matrix is not that: a part the user moved in Blender would read as
 # moved in the CAD application.
 TAG_TRANSFORM = "SWMESH_transform"
+# What an object of the import is for. "node" is the empty of a
+# subassembly, which carries the file and a path but is not a part.
+TAG_ROLE = "SWMESH_role"
 
 # How far a part may move and still count as standing still: a tenth of a
 # micrometre, which is below anything a CAD system means by a move and well
@@ -115,6 +118,26 @@ class Diff:
                    len(self.reshaped)))
 
 
+def is_part(obj) -> bool:
+    """True when this object of an import is a part occurrence.
+
+    The import tags more than its parts. The empty of a subassembly carries
+    the file and the subassembly's path, and an older build also gave it
+    the component id of a rigid subassembly. Read as a part, it was an
+    occurrence that no export has, so every update deleted it (and took
+    the parts and the user's objects off it). A prototype of the instancing
+    mode is geometry for the parts, not a placement.
+
+    A part is a mesh, or an empty that instances a collection. An empty
+    that instances nothing is a branch, whatever tags it carries."""
+    if obj.get(TAG_ROLE) == "node" or obj.get("SWMESH_prototype"):
+        return False
+    if getattr(obj, "type", None) == "EMPTY" \
+            and getattr(obj, "instance_type", "NONE") != "COLLECTION":
+        return False
+    return True
+
+
 def from_objects(objects, stem=None) -> List[Occurrence]:
     """The occurrences a scene holds, read off the objects a direct send
     made. `stem` narrows it to one file's import."""
@@ -124,6 +147,8 @@ def from_objects(objects, stem=None) -> List[Occurrence]:
             if obj.get(TAG_FILE) is None:
                 continue
             if stem is not None and obj.get(TAG_FILE) != stem:
+                continue
+            if not is_part(obj):
                 continue
             path = obj.get(TAG_PATH) or ""
             component = obj.get(TAG_COMPONENT) or ""

@@ -223,6 +223,35 @@ check(refresh_mod.settings_for(bpy.context.scene, STEP) is not None,
       "and records itself for a refresh")
 PREFS.matdb_dir = ""
 
+# ---- a failed write leaves the open file as it was -----------------------
+# A linked material is written through a local copy that takes the linked
+# material's name. The copy and the text block were removed only after a
+# write that worked, so a database folder that was read-only or gone left
+# them in the user's file.
+print("\n== a write that fails cleans up")
+lib_path = os.path.join(TMP, "lib", "lib.blend")
+os.makedirs(os.path.dirname(lib_path))
+lib_mat = bpy.data.materials.new("LibMat")
+bpy.data.libraries.write(lib_path, {lib_mat}, fake_user=True)
+bpy.data.materials.remove(lib_mat)
+with bpy.data.libraries.load(lib_path, link=True) as (src, dst):
+    dst.materials = ["LibMat"]
+linked = [mt for mt in bpy.data.materials if mt.name == "LibMat"]
+check(len(linked) == 1 and linked[0].library is not None,
+      "LibMat is linked from the library")
+nowhere = os.path.join(TMP, "gone", "deeper", "db.blend")
+try:
+    m._write_material_database(nowhere, {"STEP_part": "LibMat"})
+    raised = False
+except Exception:
+    raised = True
+check(raised, "the write fails")
+left = [mt.name for mt in bpy.data.materials
+        if mt.name == "LibMat" and mt.library is None]
+check(not left, "no local copy of LibMat is left behind (%s)" % left)
+check(bpy.data.texts.get(m._MATDB_TEXT_NAME) is None,
+      "no mapping text block is left behind")
+
 if FAILS:
     print("\nmatdb_store_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

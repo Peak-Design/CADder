@@ -2224,13 +2224,16 @@ def _write_material_database(filepath, mappings_dict):
     # new image) is relative to THIS file. Blender reads the paths in the
     # database from the database's own folder, so written as they are they
     # pointed at nothing. RELATIVE rebases them to the database file.
-    bpy.data.libraries.write(filepath, datablocks, path_remap="RELATIVE",
-                             fake_user=True)
-
-    # Clean up temporary text datablock and any temporary material copies
-    bpy.data.texts.remove(text)
-    for tmp in temp_copies:
-        bpy.data.materials.remove(tmp)
+    try:
+        bpy.data.libraries.write(filepath, datablocks, path_remap="RELATIVE",
+                                 fake_user=True)
+    finally:
+        # Also when the write fails (a read-only or lost folder). A copy
+        # left behind has the linked material's name, and a later lookup
+        # by that name can find the copy instead of the linked material.
+        bpy.data.texts.remove(text)
+        for tmp in temp_copies:
+            bpy.data.materials.remove(tmp)
 
 
 def _read_matdb_mappings(filepath):

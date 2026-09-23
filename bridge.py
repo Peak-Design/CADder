@@ -28,7 +28,6 @@ import os
 import queue
 import secrets
 import sys
-import tempfile
 import threading
 import time
 import traceback
@@ -77,8 +76,23 @@ _state = {
 
 
 def registry_dir() -> str:
-    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        # Off Windows. Not the temp folder: on Linux that is /tmp, where
+        # every local user can read the token, and a different user can
+        # make the folder first. A folder of this user's own.
+        base = (os.environ.get("XDG_RUNTIME_DIR")
+                or os.path.join(os.path.expanduser("~"), ".local", "state"))
     return os.path.join(base, "PeakDesign", "CADder", "bridge")
+
+
+def _private_dir(folder: str):
+    """Makes `folder` if needed, open to this user only. Off Windows a
+    folder that a different user owns fails here, and the bridge then
+    writes no registry file (start() reports it)."""
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(folder, 0o700)
 
 
 def _addon_version() -> str:
@@ -137,8 +151,14 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _authorized(self) -> bool:
+        token = _state["token"]
+        if not token:
+            return False
         sent = self.headers.get("X-CADLink-Token", "")
-        return sent == _state["token"]
+        # In constant time, and as bytes: compare_digest refuses a str
+        # that is not ASCII, and a header can hold anything.
+        return secrets.compare_digest(sent.encode("utf-8", "replace"),
+                                      token.encode("utf-8"))
 
     def do_GET(self):
         if self.path != _PING_PATH:
@@ -185,7 +205,7 @@ def stall_log_path() -> str:
 def _open_stall_log():
     global _stall_log
     if _stall_log is None:
-        os.makedirs(registry_dir(), exist_ok=True)
+        _private_dir(registry_dir())
         # Kept open for the session: faulthandler writes through the file
         # descriptor, from outside the interpreter.
         _stall_log = open(stall_log_path(), "w", encoding="utf-8")
@@ -1062,11 +1082,17 @@ def _pump():
 # ── Lifecycle ───────────────────────────────────────────────────────────
 
 def _write_registry():
-    path = os.path.join(registry_dir(), "%d.json" % os.getpid())
-    os.makedirs(registry_dir(), exist_ok=True)
+    folder = registry_dir()
+    _private_dir(folder)
+    path = os.path.join(folder, "%d.json" % os.getpid())
     info = _instance_info()
     info["token"] = _state["token"]
-    with open(path, "w", encoding="utf-8") as f:
+    # Readable by this user only: the token in it lets a caller send jobs
+    # into this Blender.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if os.name != "nt":
+        os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(info, f, indent=1)
     _state["registry_path"] = path
 

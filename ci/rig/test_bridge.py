@@ -7,8 +7,11 @@ the server's own thread, and only a job goes to Blender's main thread.
 
 import json
 import os
+import stat
 import sys
+import tempfile
 import threading
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -42,3 +45,47 @@ def test_the_reply_says_json_in_utf8(server):
         assert resp.headers.get_content_type() == "application/json"
         assert resp.headers.get_content_charset() == "utf-8"
         assert json.loads(resp.read().decode("utf-8"))["ok"]
+
+
+@pytest.mark.parametrize("token", ["", "s3cre", "s3cret2", "s3crét"])
+def test_a_wrong_token_is_refused(server, token):
+    with pytest.raises(urllib.error.HTTPError) as err:
+        _ping(server, token)
+    assert err.value.code == 403
+
+
+def test_no_token_is_refused_before_the_bridge_starts(server, monkeypatch):
+    monkeypatch.setitem(bridge._state, "token", None)
+    with pytest.raises(urllib.error.HTTPError) as err:
+        _ping(server, "")
+    assert err.value.code == 403
+
+
+def test_off_windows_the_registry_is_not_in_the_shared_temp_folder(
+        tmp_path, monkeypatch):
+    """Without LOCALAPPDATA the registry went to the temp folder, which
+    is /tmp on Linux: every local user could read the token there."""
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert bridge.registry_dir().startswith(str(tmp_path))
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
+    folder = bridge.registry_dir()
+    assert not folder.startswith(tempfile.gettempdir())
+    assert folder.startswith(os.path.expanduser("~"))
+
+
+def test_the_registry_file_is_written(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setitem(bridge._state, "token", "s3cret")
+    monkeypatch.setitem(bridge._state, "registry_path", None)
+    bridge._write_registry()
+    path = bridge._state["registry_path"]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            assert json.load(fh)["token"] == "s3cret"
+        if os.name != "nt":
+            assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+            assert stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode) == 0o700
+    finally:
+        bridge._remove_registry()

@@ -206,6 +206,11 @@ def _up_of_parts(stem):
 # after an edit. The id is only for a side that has no persistent id.
 
 
+class PosesNotApplied(Exception):
+    """The poses of a reply could not be put on this scene. The message
+    says why and what to do."""
+
+
 def _pose_rows(entries):
     """(component id, persistent ids, 4x4 rows) for each row of a poses
     reply that carries a whole transform. A row can hold two persistent
@@ -797,35 +802,165 @@ if bpy is not None:
         return tools_mod.scope_objects(
             context, lambda o: bool(o.get("RIG_component_id")))
 
-    def _apply_poses(context, reply):
-        """Puts the CAD poses the reply carries into the manifest, then onto
-        the scene: the rig is rebuilt first, which releases the geometry
-        from its bones, the objects are moved onto the new poses, and the
-        geometry goes back on the bones. Without a rig the objects simply
-        move. Returns how many moved.
+    def _rig_holding(obj):
+        """The CAD rig this object rides, directly or through the tree
+        empties above it, or None."""
+        holder = obj
+        while holder is not None:
+            parent = holder.parent
+            if parent is not None and holder.parent_type == "BONE" \
+                    and parent.type == "ARMATURE" and parent.get("RIG_rig"):
+                return parent
+            holder = parent
+        return None
 
-        A LOCKED rig is not rebuilt, so its parts stay on their bones and
-        follow them instead of the CAD poses. That is the trade the lock
-        makes: the rest pose the rig was built on is kept, and a part that
-        moved in the CAD application moves only when the rig is unlocked
-        and built again."""
-        manifest = _STATE.get("manifest")
+    def _frame_rows_of_rig(arm):
+        """The CAD frame the rig was built in, as rows, or None."""
+        values = list(arm.get("RIG_frame") or [])
+        if len(values) != 16:
+            return None
+        return [[float(v) for v in values[i * 4:i * 4 + 4]] for i in range(4)]
+
+    def _scene_frame_rows(context, obj):
+        """The CAD frame the parts of the scene were placed in, as rows, or
+        None when nothing says. The last match knows it in this session.
+        Otherwise the up axis of the send does, for a part of the direct
+        link: kept in the file, or read off the scene."""
+        from . import native_import
+        report = _STATE.get("match_report")
+        if report is not None and report.frame_agree > 0 and report.frame_rows:
+            return [list(r) for r in report.frame_rows]
+        stem = obj.get("SWMESH_file")
+        if not stem:
+            return None
+        try:
+            stored = json.loads(context.scene.get(_OPTIONS_TAG) or "{}")
+        except (TypeError, ValueError):
+            stored = {}
+        up = (stored.get("up_as") if isinstance(stored, dict) else None) \
+            or _options_in_scene(stem).get("up_as")
+        return native_import.up_frame(up) if up else None
+
+    def _cad_world(rows, obj, unit_scale, frame):
+        """Where `obj` stands when its component is at `rows` (a CAD pose,
+        metres), in the frame `frame` (a 4x4 Matrix), with its own scale
+        kept. None for a mirrored object, which no turn can put there."""
+        from mathutils import Matrix
+        cad = Matrix([tuple(r) for r in rows])
+        local = obj.get("SWMESH_local")
+        if local is not None and len(local) == 16:
+            # A part inside a rigid subassembly: its place in the component.
+            cad = cad @ Matrix([tuple(local[i * 4:i * 4 + 4]) for i in range(4)])
+        cad.translation = cad.translation * unit_scale
+        if obj.matrix_world.to_3x3().determinant() < 0.0:
+            return None
+        loc, rot, _scale = (frame @ cad).decompose()
+        _loc, _rot, scale = obj.matrix_world.decompose()
+        return Matrix.LocRotScale(loc, rot, scale)
+
+    def _apply_poses(context, reply, strict=False):
+        """Puts the CAD poses the reply carries on the parts of the scene.
+        Returns how many parts moved.
+
+        A part on a rig is moved by posing the rig: the bones go where the
+        parts go, so every joint moves with its part and the rig stays the
+        rig (its rest, its animation, the bones the user added and its
+        place). Building the rig again from the manifest threw all of that
+        away, and put each bone back where its joint was at the export. A
+        rig that is locked is posed as well: posing does not change it.
+        What the rig does not let a part reach is reported. Refresh is what
+        brings a rig whose rest is the new pose.
+
+        A part on no rig is simply moved. The poses also go into the
+        manifest, so it says where the CAD has the parts.
+
+        With `strict`, a reply that moves nothing because it names no part
+        of the scene raises PosesNotApplied. Without it, that is 0."""
+        from mathutils import Matrix
         entries = (reply or {}).get("components") or []
-        if manifest is None or not poses_into_manifest(manifest, entries):
+        manifest = _STATE.get("manifest")
+        poses_into_manifest(manifest, entries)
+
+        comps = manifest.component_by_id() if manifest is not None else {}
+        objects = [o for o in _linked_objects() if not o.get("SWMESH_prototype")]
+
+        def identity(obj):
+            cid = obj.get("RIG_component_id") or None
+            pid = obj.get("SWMESH_persistent_id")
+            if not pid and cid in comps:
+                pid = comps[cid].sw_persistent_id
+            return pid or None, cid
+
+        by_name = {o.name: o for o in objects}
+        found = match_pose_rows(entries, {o.name: identity(o) for o in objects})
+        report = pose_sync.PoseSyncReport()
+        _STATE["pose_report"] = report
+        if not found:
+            if strict:
+                raise PosesNotApplied(
+                    "The CAD application sent no pose for a part in this "
+                    "scene. Use Refresh to get the assembly again"
+                    if entries else "The CAD application sent no poses")
             return 0
 
-        had_rig = any(o.get("RIG_rig") and o.type == "ARMATURE" for o in bpy.data.objects)
-        if had_rig and bpy.ops.cadlink.build_rig.poll():
-            bpy.ops.cadlink.build_rig()
-        moved = 0
-        if bpy.ops.cadlink.sync_poses.poll():
-            bpy.ops.cadlink.sync_poses()
-            report = _STATE.get("pose_report")
-            moved = len(report.moved) if report is not None else 0
-        if had_rig and bpy.ops.cadlink.relink_geometry.poll():
-            bpy.ops.cadlink.relink_geometry()
+        unit_scale = 1.0 / matching._scene_scale()
+        rigs, free = {}, []
+        for name in sorted(found):
+            obj = by_name[name]
+            arm = _rig_holding(obj)
+            rows = _frame_rows_of_rig(arm) if arm is not None else None
+            if rows is None:
+                rows = _scene_frame_rows(context, obj)
+            if rows is None:
+                report.skipped.append(
+                    (name, "the CAD frame of this part is not known. Use Refresh"))
+                continue
+            if arm is None:
+                free.append((obj, found[name], rows))
+                continue
+            target = _cad_world(found[name], obj, unit_scale,
+                                arm.matrix_world @ Matrix([tuple(r) for r in rows]))
+            if target is None:
+                report.skipped.append((name, "mirrored instance: cannot repose "
+                                       "without flipping the geometry"))
+                continue
+            rigs.setdefault(arm, {})[obj] = target
+
+        for arm, targets in rigs.items():
+            posed = parenting.pose_onto(context, arm, targets,
+                                        scene_scale=1.0 / unit_scale)
+            report.moved.extend(posed.moved)
+            report.already_ok += posed.already_ok
+            for name, metres in posed.held:
+                report.skipped.append(
+                    (name, "the rig keeps it %.1f mm from its CAD pose"
+                     % (metres * 1000.0)))
+
+        if free:
+            # Pose sync with a manifest of these poses alone: the frame can
+            # differ from part to part only in a scene that holds more
+            # than one import, so each frame is its own pass.
+            from types import SimpleNamespace
+            by_frame = {}
+            for obj, rows, frame in free:
+                by_frame.setdefault(json.dumps(frame), []).append((obj, rows))
+            for key, pairs in by_frame.items():
+                stand_in = SimpleNamespace(components=[
+                    SimpleNamespace(id=obj.name, transform=rows)
+                    for obj, rows in pairs])
+                matched = matching.MatchReport(frame_rows=json.loads(key))
+                matched.matched = [
+                    matching.MatchEntry(component_id=obj.name,
+                                        object_name=obj.name, step=0,
+                                        confidence="exact")
+                    for obj, _rows in pairs]
+                synced = pose_sync.sync(stand_in, matched,
+                                        objects=[obj for obj, _rows in pairs])
+                report.moved.extend(synced.moved)
+                report.already_ok += synced.already_ok
+                report.skipped.extend(synced.skipped)
         context.view_layer.update()
-        return moved
+        return len(report.moved)
 
     def _resend_everything(context, update=False, rig_mode=None):
         """Asks the CAD application to export the whole assembly again.
@@ -932,10 +1067,11 @@ if bpy is not None:
                  "holds"),
                 ("GEOMETRY_POSES", "Geometry and Poses",
                  "The shape of the parts, and where they now sit in the CAD "
-                 "assembly. The rig is rebuilt so its rest pose follows. "
+                 "assembly. The addon poses the rig to move the parts there. "
                  "Still only the parts the scene already holds"),
                 ("POSES", "Poses",
-                 "Only where the parts now sit in the CAD assembly"),
+                 "Only where the parts now sit in the CAD assembly. The addon "
+                 "poses the rig to move the parts there"),
                 ("REFRESH", "Refresh",
                  "Ask the CAD application for the assembly ITSELF again and "
                  "bring the scene up to date part by part: parts added, "
@@ -1053,18 +1189,32 @@ if bpy is not None:
                 if self.what != "GEOMETRY":
                     said.stage("moving the parts to where the CAD has them", 90, 100)
                     moved = _apply_poses(
-                        context, cad_link.poses(ids, persistent_ids=persistent))
+                        context, cad_link.poses(ids, persistent_ids=persistent),
+                        strict=True)
             except cad_link.CadLinkError as exc:
                 _STATE["error"] = str(exc)
                 self.report({"ERROR"}, str(exc))
                 return {"CANCELLED"}
+            except PosesNotApplied as exc:
+                _STATE["error"] = str(exc)
+                self.report({"ERROR"}, str(exc))
+                # New geometry is a change that stays, so it keeps its step
+                # in the undo history.
+                return {"CANCELLED"} if self.what == "POSES" else {"FINISHED"}
             except (OSError, ValueError) as exc:
                 self.report({"ERROR"}, "Could not read what the CAD application sent: %s" % exc)
                 return {"CANCELLED"}
             finally:
                 said.close()
+            pose_report = _STATE.get("pose_report")
+            held = list(pose_report.skipped) if pose_report is not None else []
             if self.what == "POSES":
-                self.report({"INFO"}, "Moved {} part(s) onto the CAD poses".format(moved))
+                if moved or held:
+                    self.report({"INFO"}, "Moved {} part(s) onto the CAD poses"
+                                .format(moved))
+                else:
+                    self.report({"INFO"}, "All {} part(s) are already at their "
+                                "CAD poses".format(pose_report.already_ok))
             elif self.what == "GEOMETRY":
                 self.report({"INFO"},
                             "Updated {} part(s) to {} triangles ({:.3g} m chord)"
@@ -1074,6 +1224,11 @@ if bpy is not None:
                 self.report({"INFO"},
                             "Updated {} part(s) to {} triangles, moved {} onto the CAD poses"
                             .format(len(changed), reply.get("triangles", 0), moved))
+            if self.what != "GEOMETRY" and held:
+                # Last, so the status bar shows it.
+                self.report({"WARNING"},
+                            "{} part(s) did not move to the CAD pose. {}: {}"
+                            .format(len(held), held[0][0], held[0][1]))
             return {"FINISHED"}
 
     def _advanced(context):

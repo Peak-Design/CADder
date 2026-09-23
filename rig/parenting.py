@@ -29,6 +29,7 @@ all matrices: the per-object update Blender does implicitly otherwise is
 quadratic in scene size.
 """
 
+import math
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -289,6 +290,337 @@ def relink(context, arm_obj) -> ParentReport:
             report.violations.append((obj.name, drift))
 
     report.removed_empties = _remove_bare(doomed)
+    return report
+
+
+@dataclass
+class PoseOntoReport:
+    # (object name, metres it moved) for each object that reached its pose.
+    moved: List[Tuple[str, float]] = field(default_factory=list)
+    already_ok: int = 0
+    # (object name, metres it is still off its pose): the rig does not let
+    # it get there.
+    held: List[Tuple[str, float]] = field(default_factory=list)
+
+
+_POSE_T_TOL = 1e-4    # metres
+_POSE_R_TOL = 1e-3    # radians
+
+
+def bone_of(obj, arm_obj):
+    """The bone of `arm_obj` this object rides, directly or through the
+    tree empties above it, or None."""
+    holder = obj
+    while holder is not None:
+        parent = holder.parent
+        if parent is not None and parent == arm_obj \
+                and holder.parent_type == "BONE":
+            return holder.parent_bone or None
+        holder = parent
+    return None
+
+
+def _same(a, b, tol=1e-6):
+    return all(abs(a[i][j] - b[i][j]) <= tol for i in range(4) for j in range(4))
+
+
+def _handle_of(arm_obj, name):
+    """The bone to pose so that the bone `name` moves: that bone, or the
+    bone it follows. The turn of a screw follows the slide of the body's
+    own bone. The hidden DEF bone of a ball, or of a cone on a plane,
+    follows the handle beside it: same joint, same parent, same rest."""
+    pb = arm_obj.pose.bones.get(name)
+    if pb is None:
+        return None
+    if pb.get("RIG_spin") and pb.parent is not None:
+        return pb.parent
+    joint = pb.get("RIG_joint")
+    if joint and pb.get("RIG_group"):
+        parent = pb.parent.name if pb.parent is not None else None
+        rest = pb.bone.matrix_local
+        for other in arm_obj.pose.bones:
+            if other.name == pb.name or other.get("RIG_joint") != joint \
+                    or other.get("RIG_group"):
+                continue
+            other_parent = other.parent.name if other.parent is not None else None
+            if other_parent == parent and _same(other.bone.matrix_local, rest):
+                return other
+    return pb
+
+
+def _depth(pb):
+    depth = 0
+    parent = pb.parent
+    while parent is not None:
+        depth += 1
+        parent = parent.parent
+    return depth
+
+
+def _pose_unlocked(pb, basis):
+    """Puts `basis` on the channels of the bone that are not locked. A
+    locked channel keeps its value: it is not the user's to pose, and a
+    driver writes it if anything does. This is the pose the user could give
+    the bone by hand."""
+    loc, rot, _scale = basis.decompose()
+    for i in range(3):
+        if not pb.lock_location[i]:
+            pb.location[i] = loc[i]
+    mode = pb.rotation_mode
+    if mode == "QUATERNION":
+        if not all(pb.lock_rotation):
+            pb.rotation_quaternion = rot
+    elif mode == "AXIS_ANGLE":
+        if not all(pb.lock_rotation):
+            axis, angle = rot.to_axis_angle()
+            pb.rotation_axis_angle = (angle, axis[0], axis[1], axis[2])
+    else:
+        euler = rot.to_euler(mode, pb.rotation_euler)
+        for i in range(3):
+            if not pb.lock_rotation[i]:
+                pb.rotation_euler[i] = euler[i]
+
+
+def _off(now, target, scene_scale):
+    """(metres, radians) between two world matrices."""
+    metres = (now.translation - target.translation).length * scene_scale
+    a = now.to_3x3().normalized().to_quaternion()
+    b = target.to_3x3().normalized().to_quaternion()
+    turn = a.rotation_difference(b).angle
+    return metres, min(turn, 2.0 * math.pi - turn)
+
+
+def _plain(pb):
+    """True for a bone whose pose is its parent's pose, its rest offset
+    and its own channels, with nothing else in between: the bones the
+    chain solve below can compute by itself."""
+    bone = pb.bone
+    return (not bone.use_connect and bone.inherit_scale == "FULL"
+            and bone.use_inherit_rotation and bone.use_local_location
+            and pb.rotation_mode not in ("QUATERNION", "AXIS_ANGLE"))
+
+
+def _channels(pb):
+    """The unlocked channels of a bone, as ("loc" | "rot", axis) pairs."""
+    out = [("loc", i) for i in range(3) if not pb.lock_location[i]]
+    out += [("rot", i) for i in range(3) if not pb.lock_rotation[i]]
+    return out
+
+
+def _carriers_above(pb, wanted, carrying, solved):
+    """The bones above `pb` that must move for it to reach its pose and
+    that nothing else places: no pose of their own, no part on them. The
+    carrier of a contact the exporter split in two is such a bone. The
+    list runs from the top down, and it is empty when `pb` can reach its
+    pose alone."""
+    chain = []
+    parent = pb.parent
+    while (parent is not None and parent.name not in wanted
+           and parent.name not in carrying and parent.name not in solved
+           and _plain(parent) and _channels(parent)):
+        chain.append(parent)
+        parent = parent.parent
+    if not chain or not _plain(pb):
+        return []
+    chain.reverse()
+    return chain
+
+
+def _solve(linear, rhs):
+    """x for linear @ x = rhs, by elimination with pivoting. None when the
+    system is singular."""
+    n = len(rhs)
+    a = [list(linear[i]) + [rhs[i]] for i in range(n)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(a[r][col]))
+        if abs(a[pivot][col]) < 1e-18:
+            return None
+        a[col], a[pivot] = a[pivot], a[col]
+        for r in range(n):
+            if r != col:
+                f = a[r][col] / a[col][col]
+                if f:
+                    for c in range(col, n + 1):
+                        a[r][c] -= f * a[col][c]
+    return [a[i][n] / a[i][i] for i in range(n)]
+
+
+def _solve_chain(chain, target):
+    """Poses the bones of `chain` (top down, the last one the bone with
+    the pose `target`, in armature space) so that the last one reaches it.
+    Only their unlocked channels change. A small least-squares solve over
+    those channels, from the pose the bones have now. The constraints of
+    the bones are not part of it: the depsgraph applies them afterwards,
+    and the check that follows reports what they would not allow."""
+    from mathutils import Euler, Vector
+    top = chain[0].parent
+    above = top.matrix.copy() if top is not None else Matrix.Identity(4)
+    links = []
+    for pb in chain:
+        rest = pb.bone.matrix_local
+        if pb.parent is not None:
+            rest = pb.parent.bone.matrix_local.inverted() @ rest
+        links.append(rest)
+    params = []
+    start = []
+    for k, pb in enumerate(chain):
+        for kind, axis in _channels(pb):
+            params.append((k, kind, axis))
+            start.append(pb.location[axis] if kind == "loc"
+                         else pb.rotation_euler[axis])
+    if not params:
+        return
+    length = max(sum(pb.bone.length for pb in chain), 1e-6)
+
+    def forward(values):
+        loc = [list(pb.location) for pb in chain]
+        rot = [list(pb.rotation_euler) for pb in chain]
+        for (k, kind, axis), v in zip(params, values):
+            (loc if kind == "loc" else rot)[k][axis] = v
+        m = above
+        for k, pb in enumerate(chain):
+            basis = Matrix.LocRotScale(
+                Vector(loc[k]), Euler(rot[k], pb.rotation_mode), pb.scale)
+            m = m @ links[k] @ basis
+        return m
+
+    def residual(values):
+        m = forward(values)
+        out = [m[i][j] - target[i][j] for i in range(3) for j in range(3)]
+        out += [(m[i][3] - target[i][3]) / length for i in range(3)]
+        return out
+
+    x = list(start)
+    r = residual(x)
+    err = sum(v * v for v in r)
+    damping = 1e-3
+    for _ in range(100):
+        if err < 1e-20:
+            break
+        jac = []
+        for i in range(len(x)):
+            nudged = list(x)
+            nudged[i] += 1e-7
+            jac.append([(a - b) / 1e-7 for a, b in zip(residual(nudged), r)])
+        n = len(x)
+        normal = [[sum(jac[i][e] * jac[j][e] for e in range(len(r)))
+                   + (damping if i == j else 0.0) for j in range(n)]
+                  for i in range(n)]
+        grad = [-sum(jac[i][e] * r[e] for e in range(len(r))) for i in range(n)]
+        step = _solve(normal, grad)
+        if step is None:
+            break
+        trial = [a + b for a, b in zip(x, step)]
+        tr = residual(trial)
+        terr = sum(v * v for v in tr)
+        if terr < err:
+            x, r, err = trial, tr, terr
+            damping = max(damping * 0.3, 1e-12)
+        else:
+            damping *= 10.0
+            if damping > 1e8:
+                break
+    for (k, kind, axis), v in zip(params, x):
+        if kind == "loc":
+            chain[k].location[axis] = v
+        else:
+            chain[k].rotation_euler[axis] = v
+
+
+def pose_onto(context, arm_obj, targets, scene_scale=1.0) -> PoseOntoReport:
+    """Poses the rig so that each object in `targets` (object -> world
+    matrix) lands on its matrix. The rig itself is not changed: its bones,
+    their rest, its constraints, its animation and its place all stay.
+
+    This is how a CAD pose reaches a part on a rig. Building the rig again
+    from a manifest in which only the transforms had changed put every
+    bone back where its joint was at the export: link 2 of an arm whose
+    link 1 had turned then turned about where its pin used to be. A bone
+    that is posed moves its joints with it, and its limits stay measured
+    from the rest they were written for.
+
+    Each bone takes the move of the first of its objects: an object rides
+    its bone rigidly, so where the object goes is where the bone goes.
+    Parents are posed before their children, one level at a time, because
+    a child's pose is read against where its parent now is. Only the
+    unlocked channels change, and the constraints and drivers of the rig
+    then do what they always do. A bone that no part rides (the carrier of
+    a contact the exporter split in two) is posed with the bone below it.
+    A bone that carries parts the reply did not name stays where it is. An
+    object the rig cannot put on its matrix is in `held`, with how far off
+    it stays."""
+    report = PoseOntoReport()
+    context.view_layer.update()
+    world = arm_obj.matrix_world.copy()
+    to_rig = world.inverted()
+    start = {obj: obj.matrix_world.copy() for obj in targets}
+
+    handles = {}
+
+    def handle_of(bone):
+        if bone not in handles:
+            handles[bone] = _handle_of(arm_obj, bone)
+        return handles[bone]
+
+    carrying = set()
+    for obj in bpy.data.objects:
+        bone = bone_of(obj, arm_obj) if obj.get("RIG_component_id") else None
+        if bone is not None and bone in arm_obj.pose.bones:
+            handle = handle_of(bone)
+            if handle is not None:
+                carrying.add(handle.name)
+
+    wanted = {}
+    for obj in sorted(targets, key=lambda o: o.name):
+        bone = bone_of(obj, arm_obj)
+        if bone is None or bone not in arm_obj.pose.bones:
+            continue
+        handle = handle_of(bone)
+        if handle is None or handle.name in wanted:
+            continue
+        move = targets[obj] @ start[obj].inverted()
+        wanted[handle.name] = (to_rig @ move @ world
+                               @ arm_obj.pose.bones[bone].matrix)
+
+    levels = {}
+    for name in wanted:
+        levels.setdefault(_depth(arm_obj.pose.bones[name]), []).append(name)
+    solved = set()
+    for depth in sorted(levels):
+        stale = False
+        for name in sorted(levels[depth]):
+            pb = arm_obj.pose.bones[name]
+            chain = _carriers_above(pb, wanted, carrying, solved)
+            if stale:
+                # A carrier this level already solved can be above this
+                # bone, and its pose is read below.
+                context.view_layer.update()
+                stale = False
+            if chain:
+                _solve_chain(chain + [pb], wanted[name])
+                solved.update(c.name for c in chain)
+                stale = True
+                continue
+            basis = arm_obj.convert_space(
+                pose_bone=pb, matrix=wanted[name],
+                from_space="POSE", to_space="LOCAL")
+            _pose_unlocked(pb, basis)
+        # The next level reads its parents' new pose.
+        context.view_layer.update()
+
+    for obj, target in targets.items():
+        if bone_of(obj, arm_obj) is None:
+            continue
+        now = obj.matrix_world
+        metres, turn = _off(now, target, scene_scale)
+        if metres > _POSE_T_TOL or turn > _POSE_R_TOL:
+            report.held.append((obj.name, metres))
+            continue
+        went, spun = _off(now, start[obj], scene_scale)
+        if went > 1e-9 or spun > 1e-9:
+            report.moved.append((obj.name, went))
+        else:
+            report.already_ok += 1
     return report
 
 

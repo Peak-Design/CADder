@@ -651,6 +651,10 @@ if bpy is not None:
         manifest_path = reply.get("manifest")
         if not mesh:
             return {"error": "the CAD application sent no mesh"}
+        # Limit mates the CAD application took out to read the assembly and
+        # could not put back. The user is here, not at the CAD application,
+        # so this is where they are told.
+        out["limits"] = list(reply.get("limits_left_suppressed") or [])
         if manifest_path:
             try:
                 _STATE["manifest"] = man_mod.load(manifest_path)
@@ -806,6 +810,12 @@ if bpy is not None:
                                     "Brought the whole assembly over again: {} object(s), {}{}"
                                     .format(stages.get("objects", 0),
                                             stages.get("rig", "no rig"), kept))
+                    # Last, so the status bar shows it.
+                    if stages.get("limits"):
+                        self.report({"WARNING"},
+                                    "These limit mates are still suppressed in "
+                                    "SolidWorks: {}. Unsuppress them before you save"
+                                    .format(", ".join(stages["limits"])))
                     return {"FINISHED"}
                 if self.what != "POSES":
                     said.stage("asking the CAD application for the geometry", 0, 60)

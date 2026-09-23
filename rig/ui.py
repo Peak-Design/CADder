@@ -195,6 +195,81 @@ def _up_of_parts(stem):
     return max(votes, key=votes.get) if votes else None
 
 
+# ── Poses from the CAD application ──────────────────────────────────────
+#
+# The CAD application answers "poses" under the component ids of its
+# CURRENT walk. Those ids are handed out per export, so they shift when a
+# part is added or deleted in front of another, while the scene and its
+# manifest keep the ids of the export they came from. Keyed by the id,
+# a part took the pose of the part that now has its old number. So a row
+# is matched by the persistent id first, which names the same occurrence
+# after an edit. The id is only for a side that has no persistent id.
+
+
+def _pose_rows(entries):
+    """(component id, persistent ids, 4x4 rows) for each row of a poses
+    reply that carries a whole transform. A row can hold two persistent
+    ids: its own, and the one it was asked for by (requested_id)."""
+    out = []
+    for entry in entries or []:
+        values = entry.get("transform") if isinstance(entry, dict) else None
+        if not values or len(values) != 16:
+            continue
+        pids = {p for p in (entry.get("sw_persistent_id"),
+                            entry.get("requested_id")) if p}
+        rows = [[float(v) for v in values[i * 4:i * 4 + 4]] for i in range(4)]
+        out.append((entry.get("id") or "", pids, rows))
+    return out
+
+
+def match_pose_rows(entries, identities):
+    """key -> the 4x4 rows of the reply row that stands for it.
+
+    `identities` maps each key (a manifest component, a scene object) to
+    its (persistent id, component id), either of which can be None. A row
+    whose persistent id is the key's is its row. Otherwise the component
+    id can pair them, but not when both sides have a persistent id (they
+    disagree, so the id names another occurrence now) and not when the
+    row's persistent id belongs to another key."""
+    rows = _pose_rows(entries)
+    by_pid, by_id = {}, {}
+    for cid, pids, matrix in rows:
+        for pid in pids:
+            by_pid.setdefault(pid, matrix)
+        if cid:
+            by_id.setdefault(cid, (pids, matrix))
+    known = {pid for pid, _cid in identities.values() if pid}
+    out = {}
+    for key, (pid, cid) in identities.items():
+        if pid and pid in by_pid:
+            out[key] = by_pid[pid]
+            continue
+        hit = by_id.get(cid) if cid else None
+        if hit is None:
+            continue
+        pids, matrix = hit
+        if pid and pids:
+            continue
+        if pids & known:
+            continue
+        out[key] = matrix
+    return out
+
+
+def poses_into_manifest(manifest, entries):
+    """Writes the poses of a reply into the manifest's components. Returns
+    how many took one."""
+    if manifest is None:
+        return 0
+    found = match_pose_rows(
+        entries, {c.id: (c.sw_persistent_id, c.id) for c in manifest.components})
+    for component in manifest.components:
+        rows = found.get(component.id)
+        if rows is not None:
+            component.transform = rows
+    return len(found)
+
+
 # ── The driver choice (inputs.py) ───────────────────────────────────────
 #
 # One dropdown per mechanism that offers more than one input. Picking one
@@ -736,17 +811,8 @@ if bpy is not None:
         and built again."""
         manifest = _STATE.get("manifest")
         entries = (reply or {}).get("components") or []
-        by_id = {}
-        for entry in entries:
-            rows = entry.get("transform")
-            if entry.get("id") and rows and len(rows) == 16:
-                by_id[entry["id"]] = [list(rows[i * 4:i * 4 + 4]) for i in range(4)]
-        if manifest is None or not by_id:
+        if manifest is None or not poses_into_manifest(manifest, entries):
             return 0
-        for component in manifest.components:
-            rows = by_id.get(component.id)
-            if rows is not None:
-                component.transform = rows
 
         had_rig = any(o.get("RIG_rig") and o.type == "ARMATURE" for o in bpy.data.objects)
         if had_rig and bpy.ops.cadlink.build_rig.poll():

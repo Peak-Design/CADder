@@ -13,7 +13,8 @@ part with face colors exports like this.
 
 The face labels are held against the part, not against a body. A split
 body looked them up under its own key, found nothing, and came in all in
-the body color.
+the body color. And the split took only the solids when a part had any,
+so the surface body next to them was lost with no warning.
 """
 import os
 import sys
@@ -128,12 +129,21 @@ def used(obj):
     return sorted(set(names[i] for i in mi))
 
 
+def box(objs):
+    """Bounding box over the objects' world coordinates."""
+    pts = [o.matrix_world @ v.co for o in objs for v in o.data.vertices]
+    return ([min(p[i] for p in pts) for i in range(3)],
+            [max(p[i] for p in pts) for i in range(3)])
+
+
 print("\n== the whole part")
 whole = load(False)
 check(len(whole) == 1, "one object with the option off (%d)" % len(whole))
 colors_whole = used(whole[0]) if whole else []
 check(colors_whole == sorted([FACE_A, FACE_B, SURFACE]),
       "every face in its face color (%s)" % colors_whole)
+faces_whole = sum(len(o.data.polygons) for o in whole)
+box_whole = box(whole)
 
 print("\n== the part split into bodies")
 bodies = load(True)
@@ -143,6 +153,63 @@ check([FACE_A] in per_body, "the first box keeps its face color")
 check([FACE_B] in per_body, "the second box keeps its face color")
 check(not any(BODY in c for c in per_body),
       "no face falls back to the body color")
+
+# The surface body sat next to two solids, and only the solids were taken.
+check(len(bodies) == 3, "two solids and the surface body (%d)" % len(bodies))
+check([SURFACE] in per_body, "the surface body keeps its face color")
+faces_split = sum(len(o.data.polygons) for o in bodies)
+check(faces_split == faces_whole,
+      "no face lost (%d against %d)" % (faces_split, faces_whole))
+box_split = box(bodies) if bodies else ([0] * 3, [0] * 3)
+check(all(abs(box_split[k][i] - box_whole[k][i]) < 1e-9
+          for k in (0, 1) for i in range(3)),
+      "the bodies fill the box of the whole part\n        whole %s\n"
+      "        split %s" % (box_whole, box_split))
+
+# A face outside any shell is one more body, as the mesh build counts it.
+# STEP wraps such a face in a shell on the way in, so the split is fed the
+# shape directly here.
+print("\n== faces outside any shell")
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+from OCP.BRep import BRep_Builder
+from OCP.TopoDS import TopoDS_Compound
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
+from OCP.gp import gp_Pnt, gp_Pln, gp_Dir
+
+solid = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10, 10, 10).Shape()
+builder = BRep_Builder()
+shape = TopoDS_Compound()
+builder.MakeCompound(shape)
+builder.Add(shape, solid)
+for x in (20, 40):
+    builder.Add(shape, BRepBuilderAPI_MakeFace(
+        gp_Pln(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), x, x + 5, 0, 5).Face())
+
+
+class Reader:
+    face_colors = {}
+    face_color_priority = {}
+    sub_shapes = {}
+
+
+def count(shape, kind):
+    n, ex = 0, TopExp_Explorer(shape, kind)
+    while ex.More():
+        n += 1
+        ex.Next()
+    return n
+
+
+split = sys.modules["CADder.main"]._split_solids
+out = split([(shape, 0, None)], Reader())
+check(len(out) == 2, "the solid and the loose faces (%d entries)" % len(out))
+check([count(s, TopAbs_SOLID) for s, _i, _k in out] == [1, 0]
+      and [count(s, TopAbs_FACE) for s, _i, _k in out] == [6, 2],
+      "the loose faces go together as one body")
+out = split([(solid, 0, None)], Reader())
+check(len(out) == 1 and out[0][2] is None, "one solid alone is left whole")
 
 # A second import takes the reader from the cache, and the labels the
 # first one gave the bodies are still on it.

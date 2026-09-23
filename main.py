@@ -2428,15 +2428,19 @@ def _split_solids(entries, step_reader):
 
     Only a shape holding two or more bodies is touched. A single-body shape
     keeps its sub-index of None and is byte-for-byte the same import as
-    before. Solids are preferred, and free shells are used only where a
-    shape has no solids at all, which is the surface-body case (the option's
-    own description names solids, shells and surfaces).
+    before. A body is what the mesh build calls one (importer._bodies): a
+    solid, a shell outside any solid (a surface body), and the faces outside
+    any shell together as one more. The option's own description names
+    solids, shells and surfaces. Only the solids were taken when a shape had
+    any, and a surface body next to them was lost with no warning.
 
     Identity is ShapeKey, not an OCCT map: per-entity handle lookups are
     broken in OCP 7.9.3.1, which is why curves.py does the same.
     """
     from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL, TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
+    from OCP.BRep import BRep_Builder
+    from OCP.TopoDS import TopoDS_Compound
     from .ocp_utils import ShapeKey, SameKey
 
     def inherit_colour(parent, body):
@@ -2486,9 +2490,10 @@ def _split_solids(entries, step_reader):
             known = {ShapeKey(s) for s in have}
             have.extend(s for s in labels if ShapeKey(s) not in known)
 
-    def bodies(shape, kind):
+    def bodies(shape, kind, avoid=None):
         found, seen = [], set()
-        ex = TopExp_Explorer(shape, kind)
+        ex = (TopExp_Explorer(shape, kind) if avoid is None
+              else TopExp_Explorer(shape, kind, avoid))
         while ex.More():
             cur = ex.Current()
             key = ShapeKey(cur)
@@ -2503,9 +2508,16 @@ def _split_solids(entries, step_reader):
     for shp, idx, _sub in entries:
         parts = []
         if shp is not None:
-            parts = bodies(shp, TopAbs_SOLID)
-            if len(parts) < 2 and not parts:
-                parts = bodies(shp, TopAbs_SHELL)
+            parts = (bodies(shp, TopAbs_SOLID)
+                     + bodies(shp, TopAbs_SHELL, TopAbs_SOLID))
+            loose = bodies(shp, TopAbs_FACE, TopAbs_SHELL)
+            if loose and parts:
+                rest = TopoDS_Compound()
+                builder = BRep_Builder()
+                builder.MakeCompound(rest)
+                for face in loose:
+                    builder.Add(rest, face)
+                parts.append(rest)
         if len(parts) < 2:
             out.append((shp, idx, None))
             continue

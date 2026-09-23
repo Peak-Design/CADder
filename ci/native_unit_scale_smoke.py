@@ -248,6 +248,10 @@ def run(hierarchy, scale_length):
     if not result.get("ok"):
         fail(where, "the refresh failed: %s" % result.get("error"))
     check_scene(where + ", refresh", bu, 0.25)
+    reshaped = (result.get("stages", {}).get("update") or {}).get("reshaped") or []
+    if reshaped:
+        fail(where, "the refresh replaced the meshes of unchanged parts: %s"
+             % reshaped)
 
     # Rebuild from CAD asks for the geometry again and puts it on the
     # parts that are there, the same size.
@@ -255,6 +259,46 @@ def run(hierarchy, scale_length):
     if not changed:
         fail(where, "the rebuild changed nothing")
     check_scene(where + ", rebuild", bu, 0.25)
+
+
+def run_scale_change(hierarchy, first, then):
+    """The Unit Scale changes between the send and a refresh. Blender does
+    not scale anything when it changes, so the meshes stay the size they
+    were built at. The refresh placed the parts at the new scale and kept
+    those meshes: every part stood in the right place, a thousand times
+    too small. A send of an older version, which built every mesh in
+    meters, gave the same on its first refresh in a millimeter scene."""
+    where = "%s from Unit Scale %g to %g" % (hierarchy, first, then)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.preferences.addon_enable(module="CADder")
+    bpy.context.scene.unit_settings.scale_length = first
+    mesh, man = export(0.2)
+    result = send(mesh, man, hierarchy)
+    if not result.get("ok"):
+        fail(where, "the send failed: %s" % result.get("error"))
+    bpy.context.scene.unit_settings.scale_length = then
+    mesh, man = export(0.25)
+    result = send(mesh, man, hierarchy, update=True)
+    if not result.get("ok"):
+        fail(where, "the refresh failed: %s" % result.get("error"))
+    check_scene(where + ", refresh", 1.0 / then, 0.25)
+
+    # A locked rig is the user's: the refresh says so and does not build
+    # it again. Its bones stay at the scale they had.
+    from CADder.rig import rig_build
+    arm_obj = rig_object()
+    arm_obj[rig_build.LOCK_TAG] = True
+    heads = [b.head_local.copy() for b in arm_obj.data.bones]
+    bpy.context.scene.unit_settings.scale_length = first
+    mesh, man = export(0.25)
+    result = send(mesh, man, hierarchy, update=True)
+    if not result.get("ok"):
+        fail(where, "the refresh of a locked rig failed: %s" % result.get("error"))
+    said = json.dumps(result.get("stages", {}).get("rig") or {})
+    if "is locked" not in said:
+        fail(where, "the refresh did not say the locked rig stays: %s" % said)
+    if [b.head_local for b in arm_obj.data.bones] != heads:
+        fail(where, "the refresh built the locked rig again")
 
 
 def check_lengths_to_cad():
@@ -303,6 +347,9 @@ def main():
         for scale_length in (1.0, 0.001):
             run(hierarchy, scale_length)
             done.append("%s/%g" % (hierarchy, scale_length))
+        run_scale_change(hierarchy, 1.0, 0.001)
+        run_scale_change(hierarchy, 0.001, 1.0)
+        done.append("%s/1 to 0.001 and back" % hierarchy)
     check_lengths_to_cad()
     print("native_unit_scale_smoke: OK: a send, a refresh and a rebuild put "
           "the parts and the rig at the same scale (%s), and scene lengths "

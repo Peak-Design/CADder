@@ -82,14 +82,21 @@ def _material(spec, name_prefix, unit_scale=1.0):
                   "texture": spec.texture}
     identity = _material_identity(spec)
     mat = None
+    # A texture is mapped in Blender units, so a material built at another
+    # Unit Scale maps it at the wrong size. One with no scale on it was
+    # built in meters.
+    scale = _scale_tag(unit_scale)
     for cand in bpy.data.materials:
         if (cand.name == base or cand.name.startswith(base + ".")) \
-                and cand.get("SWMESH_appearance_hash") == identity:
+                and cand.get("SWMESH_appearance_hash") == identity \
+                and cand.get("SWMESH_unit_scale", "") == scale:
             mat = cand
             break
     if mat is None:
         mat = bpy.data.materials.new(base)
         appearance.build(mat, parsed, tuple(spec.rgba), unit_scale)
+        if scale:
+            mat["SWMESH_unit_scale"] = scale
     mat["SWMESH_rgba"] = list(spec.rgba)
     mat["SWMESH_appearance_hash"] = identity
     mat["SWMESH_appearance_name"] = base
@@ -819,8 +826,9 @@ class _Placer:
                 by_geometry.setdefault(obj[_TAG_GEOMETRY], col)
         for definition in self.scene.definitions:
             signature = self.definition_hash(definition)
-            col = by_geometry.get(signature) \
-                or by_geometry.get(_legacy_definition_hash(definition))
+            col = by_geometry.get(signature)
+            if col is None and _in_meters(self.unit_scale):
+                col = by_geometry.get(_legacy_definition_hash(definition))
             if col is None:
                 continue
             self.prototypes[definition.id] = col
@@ -897,7 +905,12 @@ class _Placer:
             obj[_TAG_GEOMETRY] = signature
 
     def definition_hash(self, definition):
-        return _definition_hash(definition, self.material_ids)
+        # The mesh is built at the scene's Unit Scale, so the scale is part
+        # of what the mesh is. Blender scales nothing when the Unit Scale
+        # changes, and a part kept across that change stood in the right
+        # place a thousand times too small.
+        return _definition_hash(definition, self.material_ids) \
+            + _scale_tag(self.unit_scale)
 
     def geometry_hash(self, inst):
         definition = self.definitions.get(inst.definition_id)
@@ -913,7 +926,9 @@ class _Placer:
             return False
         if str(signature).startswith(_HASH_VERSION):
             return signature == self.definition_hash(definition)
-        return signature == _legacy_definition_hash(definition)
+        # An older send built every mesh in meters, whatever the scene.
+        return _in_meters(self.unit_scale) \
+            and signature == _legacy_definition_hash(definition)
 
     def pose(self, obj, inst):
         obj.matrix_world = self.frame @ _matrix(inst.transform, self.unit_scale)
@@ -966,6 +981,27 @@ class _Placer:
 # took the material numbers of the export, which shift when a color is
 # added or removed anywhere in the assembly.
 _HASH_VERSION = "v2:"
+
+
+def _in_meters(unit_scale):
+    """True at Unit Scale 1: one Blender unit is one meter."""
+    return abs(float(unit_scale) - 1.0) <= 1e-9
+
+
+def _scale_tag(unit_scale):
+    """The Unit Scale a mesh or a material was built at, for its tag.
+    Nothing at 1, so the tags of a meter scene stay what they were."""
+    return "" if _in_meters(unit_scale) else "@%.9g" % float(unit_scale)
+
+
+def _rescale_tag(obj, unit_scale):
+    """Moves an object's geometry tag to the Unit Scale its mesh was just
+    built at. The triangles of the export stay what the tag says, so a
+    refresh keeps the mesh a rebuild put there."""
+    signature = obj.get(_TAG_GEOMETRY)
+    if signature and str(signature).startswith(_HASH_VERSION):
+        obj[_TAG_GEOMETRY] = str(signature).split("@", 1)[0] \
+            + _scale_tag(unit_scale)
 
 
 def _definition_hash(definition, material_ids):
@@ -1545,9 +1581,11 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
                     retired.add(holder.data.name)
                 holder.data = me
                 _material_names(holder)
+                _rescale_tag(holder, unit_scale)
                 if holder.name not in already:
                     already.add(holder.name)
                     replaced.append(holder)
+            _rescale_tag(obj, unit_scale)
             obj[_TAG_DEFINITION] = inst.definition_id
             obj[_TAG_TOLERANCE] = scene.tolerance
             if obj.name not in already:

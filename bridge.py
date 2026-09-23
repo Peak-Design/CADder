@@ -968,6 +968,13 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 stages["rig"] = {"locked": own.name}
                 log.append("the rig %s is locked: it was kept as it is, and "
                            "the parts were attached to it" % own.name)
+                if rig_update.scale_changed(bpy.context, own):
+                    note = ("The Unit Scale changed after %s was built, and "
+                            "the rig is locked, so its bones stay at the old "
+                            "scale. Unlock it and send again to build it at "
+                            "this scale." % own.name)
+                    stages["rig"]["warnings"] = [note]
+                    log.append(note)
             elif blocking is not None and not (
                     mode == rig_update.KEEP and own is not None):
                 said.stage("keeping the locked rig", 88, 96)

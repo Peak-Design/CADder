@@ -239,6 +239,17 @@ def alive(objects):
     return out
 
 
+def scale_changed(context, arm_obj) -> bool:
+    """True when the rig was built at another Unit Scale than the scene
+    has now. A rig built before the scale was recorded is taken as right."""
+    built = arm_obj.get("RIG_unit_scale") if arm_obj is not None else None
+    if built is None:
+        return False
+    from . import rig_build
+    now = rig_build._unit_scale(context)
+    return abs(float(built) - now) > 1e-9 * max(1.0, now)
+
+
 def keep_names(before: Dict[str, frozenset], occurrences) -> Dict[str, str]:
     """new group id -> the bone name that group's parts already have.
 
@@ -278,6 +289,16 @@ def apply(context, mode, manifest, arm_obj, objects, frame_rows=None,
         # import this send replaced.
         mode = REGENERATE
         report.mode = REGENERATE
+    if mode == KEEP and scale_changed(context, arm_obj):
+        # The bones were built at another Unit Scale, and the parts come in
+        # at this one: kept, the rig no longer meets its parts. Rebuilt in
+        # place, every bone keeps its name, so an animation keeps its bones.
+        # A locked rig does not come here: the job keeps it as it is.
+        mode = APPEND
+        report.mode = APPEND
+        report.warnings.append(
+            "The Unit Scale changed after the rig was built, so the rig was "
+            "built again in place and not kept")
     if mode == KEEP:
         report.kept = sorted(was)
         report.bones_after = report.bones_before
@@ -306,5 +327,5 @@ def apply(context, mode, manifest, arm_obj, objects, frame_rows=None,
     report.kept = sorted(was & now)
     report.added = sorted(now - was)
     report.removed = sorted(was - now)
-    report.warnings = list(result.warnings)
+    report.warnings.extend(result.warnings)
     return result, report

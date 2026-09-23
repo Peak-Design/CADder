@@ -1322,6 +1322,10 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
     arm_obj["RIG_rig"] = True
     arm_obj["RIG_source"] = manifest.source_path or ""
     arm_obj["RIG_frame"] = [v for row in frame for v in row]
+    # Blender units per meter the bones were built at. Blender scales
+    # nothing when the Unit Scale changes, so a rig kept across that change
+    # no longer meets its parts (rig_update.apply).
+    arm_obj["RIG_unit_scale"] = unit_scale
     arm_obj.show_in_front = True
     # What is left in the armature now is the user's own. Every bone added
     # below is this build's, and says so, so the next rebuild in place

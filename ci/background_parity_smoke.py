@@ -14,6 +14,10 @@ appends its blend the way the modal operator does.
   1. A material database in a custom Material Database Folder. The worker
      did not get the folder, so it did not know the database, and the
      operator call failed on the database name.
+
+  2. Collection instances. The import hides the prototype collection in the
+     view layer, and a view layer flag does not come across with the
+     collection. Every prototype then showed at the origin.
 """
 import json
 import os
@@ -77,13 +81,13 @@ def step_objects():
                   key=lambda o: o.name)
 
 
-def run_worker(op_kwargs, name):
+def run_worker(op_kwargs, name, filepath=None):
     """Run the worker as the modal operator does. Return the blend path, or
     None when the worker failed."""
     out_blend = os.path.join(tmp, name + ".blend")
     request = {
         "addon_module": "CADder",
-        "filepath": STEP,
+        "filepath": filepath or STEP,
         "out_blend": out_blend,
         "op_kwargs": op_kwargs,
         "scene_unit_scale": bpy.context.scene.unit_settings.scale_length,
@@ -152,6 +156,51 @@ if out is not None:
           "the appended parts carry the database material (%s)" % used)
 prefs().active_matdb = "NONE"
 prefs().matdb_dir = ""
+
+# -- 2. collection instances ---------------------------------------------------
+print("\n== collection instances")
+ASSY = os.path.join(_HERE, "fixtures", "assembly.step")
+
+
+def layer_state():
+    """{collection name: excluded} for the collections of the import, and
+    the names of the mesh objects that show."""
+    excluded = {}
+
+    def walk(lc):
+        for child in lc.children:
+            if child.collection.get("STEP_file") == ASSY:
+                excluded[child.collection.get("STEP_role", "")
+                         + ":" + child.name.split(".")[-1]] = child.exclude
+            walk(child)
+    walk(bpy.context.view_layer.layer_collection)
+    bpy.context.view_layer.update()
+    shown = sorted(o.name for o in bpy.context.view_layer.objects
+                   if o.type == "MESH" and o.visible_get())
+    return excluded, shown
+
+
+clean()
+m._cache_drop(ASSY)
+m.load_step(bpy.context, ASSY, htypes="COLLECTION_INSTANCES", up_as="Z")
+direct = layer_state()
+print("    direct:", direct)
+check(any(direct[0].values()),
+      "a direct import hides the prototype collection")
+
+clean()
+out = run_worker({"hierarchy_types": "COLLECTION_INSTANCES", "up_as": "ZPOS"},
+                 "instances", filepath=ASSY)
+check(out is not None, "the worker imports with collection instances")
+if out is not None:
+    append(out)
+    appended = layer_state()
+    print("    appended:", appended)
+    check(appended[0] == direct[0],
+          "the append hides the same collections as a direct import")
+    check(appended[1] == direct[1],
+          "the same mesh objects show as after a direct import (%d vs %d)"
+          % (len(appended[1]), len(direct[1])))
 
 if FAILS:
     print("\nbackground_parity_smoke: FAILED (%d)\n  %s"

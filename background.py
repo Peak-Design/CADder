@@ -89,6 +89,33 @@ def _reader_thread(pipe, out_queue):
         pipe.close()
 
 
+def _excluded_collections(layer_col):
+    """The collections that this layer collection tree excludes."""
+    out = []
+    for child in layer_col.children:
+        if child.exclude:
+            out.append(child.collection)
+        out.extend(_excluded_collections(child))
+    return out
+
+
+def _exclude_collections(layer_col, collections):
+    """Exclude each of the collections in this layer collection tree."""
+    found = []
+
+    def walk(lc):
+        for child in lc.children:
+            if child.collection in collections:
+                # Blender excludes the children with it.
+                found.append(child)
+            else:
+                walk(child)
+    walk(layer_col)
+    for lc in found:
+        if not lc.exclude:
+            lc.exclude = True
+
+
 class STEPPER_OT_background_import(bpy.types.Operator):
     """Import STEP files in a background process. The interface stays responsive
     and Esc cancels the import."""
@@ -322,7 +349,16 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             dt.scenes = list(df.scenes)
         new_scenes = [s for s in bpy.data.scenes if s not in pre_scenes]
         target = context.scene.collection
+        excluded = []
         for ws in new_scenes:
+            # The import hides the collection instance prototypes with the
+            # exclude flag of the view layer. That flag belongs to the
+            # worker's view layer, not to the collection, so the relink
+            # below would show the prototypes at the origin. Read it now,
+            # while the worker scene still holds the collections.
+            if ws.view_layers:
+                excluded.extend(_excluded_collections(
+                    ws.view_layers[0].layer_collection))
             for col in list(ws.collection.children):
                 ws.collection.children.unlink(col)
                 target.children.link(col)
@@ -336,6 +372,9 @@ class STEPPER_OT_background_import(bpy.types.Operator):
             from . import refresh as refresh_mod
             refresh_mod.merge_registry(context.scene, ws)
             bpy.data.scenes.remove(ws)
+        if excluded:
+            _exclude_collections(context.view_layer.layer_collection,
+                                 set(excluded))
         # Appended objects need a depsgraph pass before their matrices are valid
         context.view_layer.update()
 

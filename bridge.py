@@ -89,6 +89,9 @@ _state = {
     # main thread computes it.
     "documents": [],
     "registry_said": None,
+    # A running CADder Bridge whose version does not match this addon
+    # (_check_addin_version), or None.
+    "mismatch": None,
 }
 
 
@@ -120,6 +123,167 @@ def _addon_version() -> str:
         return "unknown"
 
 
+def _addon_name() -> str:
+    """"CADder Pro" for the Pro build, which carries the Routing module,
+    else "CADder". The add-in says which one to update."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return "CADder Pro" if os.path.isdir(os.path.join(here, "routing"))         else "CADder"
+
+
+# ── Versions of the two halves ──────────────────────────────────────────
+#
+# CADder and CADder Bridge work together when the first two numbers of
+# their versions are the same: CADder 1.1.x with CADder Bridge 1.1.x. The
+# last number is a release of one half on its own, which changes nothing
+# that the other half reads. CADder Pro has the first two numbers of the
+# CADder it is built on, and a last number of its own. docs/GUIDE.md
+# ("Versions") gives the rule for users, and .claude/RELEASING.md gives it
+# for a release.
+CADDER_RELEASES = "https://github.com/Peak-Design/CADder/releases/latest"
+BRIDGE_RELEASES = ("https://github.com/Peak-Design/CADder-SW-Bridge/"
+                   "releases/latest")
+_VERSION_CHECK_S = 2.0
+_version_checked = 0.0
+
+
+def _plain(version):
+    """A version as a person reads it: the add-in says "v1.1.0"."""
+    return str(version).strip().lstrip("vV")
+
+
+def _major_minor(version):
+    """(major, minor) of a version such as "1.1.0", "v1.1.0" or "1.1.0.0",
+    or None."""
+    if version is None:
+        return None
+    try:
+        parts = _plain(version).split(".")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError, TypeError, AttributeError):
+        return None
+
+
+def versions_match(a, b):
+    """True when two versions work together, False when they do not, None
+    when one of them is not known."""
+    ma, mb = _major_minor(a), _major_minor(b)
+    if ma is None or mb is None:
+        return None
+    return ma == mb
+
+
+def mismatch_for(addin_version, addon_version=None, addon_name=None):
+    """What to tell the user when this addon and a CADder Bridge do not
+    work together, or None when they do (or a version is not known).
+
+    A dict: "title", "versions" (one short line for each half) and
+    "advice" for the panel, which is narrow, "button" and "url" for the
+    download (no url for CADder Pro, which has no public download), and
+    "message", one line for the console."""
+    addon_version = addon_version or _addon_version()
+    addon_name = addon_name or _addon_name()
+    if versions_match(addin_version, addon_version) is not False:
+        return None
+    addin, addon = _major_minor(addin_version), _major_minor(addon_version)
+    if addin < addon:
+        update, want, url = "CADder Bridge", addon, BRIDGE_RELEASES
+    else:
+        update, want, url = addon_name, addin, CADDER_RELEASES
+    want = "%d.%d" % want
+    versions = ["CADder Bridge: %s" % _plain(addin_version),
+                "%s: %s" % (addon_name, _plain(addon_version))]
+    title = "Versions do not match"
+    if update == "CADder Pro":
+        url = ""
+        advice = "Update CADder Pro to %s from where you got it" % want
+    else:
+        advice = "Update %s to %s" % (update, want)
+    message = ("CADder Bridge %s does not match %s %s. The two work "
+               "together only when the first two numbers of their versions "
+               "match. %s%s" % (
+                   _plain(addin_version), addon_name, _plain(addon_version),
+                   advice, (": " + url) if url else "."))
+    return {"title": title, "versions": versions, "advice": advice,
+            "url": url, "button": "Download %s %s" % (update, want),
+            "message": message}
+
+
+def version_mismatch():
+    """The mismatch with a running CADder Bridge, as mismatch_for() gives
+    it, or None. Read from the last check (_check_addin_version)."""
+    return _state.get("mismatch")
+
+
+def _running_addins():
+    """The CADder Bridge add-ins whose registry files say they run: the
+    newest first. The files are read, no add-in is asked."""
+    from .rig import cad_link
+    out = []
+    for inst in cad_link._entries():
+        if cad_link._running(inst.pid) is not False:
+            out.append(inst)
+    return out
+
+
+def _check_addin_version(force=False):
+    """Compare the version of each running CADder Bridge with this addon,
+    from the pump, every _VERSION_CHECK_S. So the user sees a mismatch as
+    soon as SolidWorks starts, before anything is sent. A new mismatch is
+    printed once and redraws the panel."""
+    global _version_checked
+    now = time.monotonic()
+    if not force and now - _version_checked < _VERSION_CHECK_S:
+        return
+    _version_checked = now
+    try:
+        found = None
+        for inst in _running_addins():
+            found = mismatch_for(inst.version)
+            if found is not None:
+                break
+    except Exception as exc:                   # noqa: BLE001
+        print("[CADLink bridge] version check failed:", exc)
+        return
+    if found == _state.get("mismatch"):
+        return
+    _state["mismatch"] = found
+    if found is not None:
+        print("[CADLink bridge] " + found["message"])
+    _redraw()
+
+
+def _redraw():
+    if bpy is None:
+        return
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+    except (AttributeError, RuntimeError):
+        pass
+
+
+def draw_version_mismatch(layout):
+    """The mismatch with a running CADder Bridge, with its download: in the
+    panel under the name of the addon, and in the Info panel beside the
+    port. Draws nothing when the versions work together."""
+    found = version_mismatch()
+    if found is None:
+        return
+    box = layout.box()
+    col = box.column(align=True)
+    col.alert = True
+    col.label(text=found["title"], icon="ERROR")
+    for line in found["versions"]:
+        col.label(text=line)
+    col.label(text=found["advice"])
+    if found["url"]:
+        row = box.row()
+        row.operator("wm.url_open", text=found["button"],
+                     icon="URL").url = found["url"]
+
+
 def _instance_info() -> dict:
     info = {
         "ok": True,
@@ -127,6 +291,9 @@ def _instance_info() -> dict:
         "pid": os.getpid(),
         "port": _state["port"],
         "addon_version": _addon_version(),
+        # CADder or CADder Pro: which one the add-in tells the user to
+        # update when the versions do not match.
+        "addon_name": _addon_name(),
     }
     if bpy is not None:
         info["blender_version"] = ".".join(str(v) for v in bpy.app.version)
@@ -1182,6 +1349,7 @@ def _pump():
         return None
     _heartbeat()
     _keep_registry()
+    _check_addin_version()
     try:
         job = q.get_nowait()
     except queue.Empty:
@@ -1376,6 +1544,8 @@ def stop():
     _state["thread"] = None
     _state["port"] = None
     _state["queue"] = None
+    # the check runs from the pump, which stops with the listener
+    _state["mismatch"] = None
     _remove_registry()
     global _stall_log
     if _stall_log is not None:

@@ -232,7 +232,7 @@ bl_info = {
     "author": "ambi, Peak-Design",
     "description": "Import CAD files, link SolidWorks, and rig assemblies",
     "blender": (5, 1, 0),
-    "version": (1, 1, 0),
+    "version": (1, 1, 1),
     "location": "3D View > Tools panel > CADder",
     "category": "Import",
 }

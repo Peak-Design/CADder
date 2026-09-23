@@ -1462,6 +1462,7 @@ if bpy is not None:
                 if bridge.is_running():
                     layout.label(text="Listening on port %d" % bridge.port(),
                                  icon="PLUGIN")
+                    bridge.draw_version_mismatch(layout)
             except Exception:
                 pass
 

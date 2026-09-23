@@ -295,6 +295,35 @@ pose, builds the armature and parents the geometry, all without a file
 dialog. The listener accepts connections only from this machine, and only
 with the token the add-in reads from the user's own app data.
 
+### Which CADder Bridge works with this CADder
+
+CADder and CADder Bridge work together when the first two numbers of their
+versions are the same. The last number is a release of one of the two on
+its own. It fixes or adds something that does not change what goes over
+the link.
+
+| CADder | CADder Bridge | Together |
+|---|---|---|
+| 1.1.0 | 1.1.3 | Yes |
+| 1.1.4 | 1.1.0 | Yes |
+| 1.2.0 | 1.1.3 | No. Update CADder Bridge to 1.2 |
+| 1.1.2 | 1.2.0 | No. Update CADder to 1.2 |
+
+When the two do not match, each one says so as soon as both run, before
+you send anything:
+
+- In Blender, the **CADder** tab shows **Versions do not match** under the
+  name of the addon. It gives both versions, which one to update, and a
+  button that opens its download page. The **Info** panel under **Rig**
+  shows the same beside the port, and the System Console prints it.
+- In SolidWorks, **Send to Blender** and **Refresh Model** ask before they
+  send. The dialog gives both versions and a link to the download.
+  **Continue** sends all the same, and SolidWorks does not ask again for
+  those two versions until it closes. **Abort** sends nothing.
+
+CADder before 1.1.1 and CADder Bridge before 1.1.1 do not check. The newer
+one of the two still warns about the older one.
+
 A send replaces the last send of the same assembly. It does not replace a
 STEP import of that assembly. If the scene has one, the send stops before
 it changes anything, and SolidWorks tells you. Delete the STEP import, or
@@ -910,7 +939,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 1.1.0   | 5.1     | Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
+| 1.1.1   | 5.1     | CADder and CADder Bridge say when their versions do not match, before anything is sent. Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |
 | 2.5.0   | 5.1     | The UV release. CAD Surfaces UVs now carry the proportions of the surface, so a cylinder no longer arrives as a thin tall ribbon. Patches of one surface share one island, so a drilled hole is one tube and not three. Two CAD faces no longer share one folded island. Every island of a part holds the same number of texels for each millimeter of surface. The UV Map dropdown gains CAD Surfaces (Smart), which unfolds a bent sheet metal part into its flat pattern and a rounded tube into two islands, and one mode for each unwrap method. New import options: Pack UVs with a margin and a UDIM tile count, and Tris to Quads (on by default). A new UV panel in the sidebar makes the UV map of the selected parts again, so one part can get a treatment its neighbor does not. "Split Closed Faces" becomes "Closed surfaces" with a Single seam choice, which is the new default. The sidebar tab now sits after Item, Tool and View |

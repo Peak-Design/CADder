@@ -5277,6 +5277,9 @@ class STEP_PT_STEPper_Info(bpy.types.Panel):
         if bridge_mod is not None and bridge_mod.wanted(prefs):
             for text, icon in bridge_mod.status():
                 self.layout.label(text=text, icon=icon)
+            # A CADder Bridge that does not work with this version: here,
+            # where it is seen before anything is sent.
+            bridge_mod.draw_version_mismatch(self.layout)
 
         update = updater_mod.available_update()
         if not update:

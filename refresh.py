@@ -911,14 +911,20 @@ if bpy is not None:
             except RuntimeError:
                 pass
             n = 0
+            first = None
             for obj in objs:
                 try:
                     obj.select_set(True)
                     n += 1
                 except RuntimeError:
-                    pass       # not in the view layer
-            if n:
-                context.view_layer.objects.active = objs[0]
+                    continue   # not in the view layer
+                if first is None:
+                    first = obj
+            # The active object must be in the view layer too. The part
+            # meshes of COLLECTION_INSTANCES mode are not, and one of them
+            # often comes first in name order.
+            if first is not None:
+                context.view_layer.objects.active = first
             self.report({"INFO"}, "Selected %d object(s)" % n)
             return {"FINISHED"}
 

@@ -360,6 +360,28 @@ class CoupledPairTest(unittest.TestCase):
         self.assertEqual(inputs.candidates(m, mech), ["j002"])
         self.assertEqual(inputs.apply(m, mech, "j001"), [])
 
+    def test_a_pinion_a_gear_drives_is_not_turned_round(self):
+        # The pinion follows a motor through a gear. Turned round, the
+        # rack's coupling went onto the pinion in place of the gear, and
+        # the motor drove nothing.
+        data = _rack_pinion()
+        data["components"].append({
+            "id": "c004", "sw_path": "motor-1", "step_name": "motor",
+            "step_occurrence_path": None, "transform": _t(0, 0, 0)})
+        data["rigid_groups"].append({
+            "id": "g003", "name": "motor", "components": ["c004"],
+            "grounded": False, "frame": None, "bbox_diag": 0.05})
+        data["joints"][1]["coupling"] = {
+            "kind": "gear", "driver_joint": "j003", "ratio": 2.0}
+        data["joints"].append(_joint("j003", "revolute", "g000", "g003", [0, 0, 0]))
+        m = man_mod.parse(data)
+        mech = inputs.mechanisms(m)[0]
+        self.assertEqual(inputs.candidates(m, mech), [])
+        self.assertEqual(inputs.apply(m, mech, "j001"), [])
+        by_id = m.joint_by_id()
+        self.assertEqual(by_id["j001"].coupling.driver_joint, "j002")
+        self.assertEqual(by_id["j002"].coupling.driver_joint, "j003")
+
 
 if __name__ == "__main__":
     unittest.main()

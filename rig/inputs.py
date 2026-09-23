@@ -114,6 +114,11 @@ def _pair(manifest: Manifest, mech: Optional[Mechanism]):
         if driven.coupling is not None \
                 and driven.coupling.driver_joint == driver_id \
                 and driven.coupling.kind in _INVERTIBLE:
+            # Turned round, the coupling goes onto the driver. A driver
+            # that a coupling already drives (a pinion on a motor's gear)
+            # would lose that one, so the pair is not offered.
+            if driver.coupling is not None:
+                return None
             return driven, driver
     return None
 

@@ -115,7 +115,10 @@ static FaceMesh extract_one_face(const TopoDS_Face& face,
         fm.norms[ni + 1] = 0.0f;
         fm.norms[ni + 2] = 1.0f;
     }
-    fm.undef_norms = true;  /* normals are placeholders */
+    /* undef_norms stays false. A placeholder is not an undefined normal:
+     * Python calculates the real normals from the CAD surface after this
+     * (_recompute_face_normals). Set here, it made every native import
+     * report each face under "Undefined normals". */
 
     /* Extract triangles with global vertex offset */
     for (int i = 1; i <= nb_tris; ++i) {

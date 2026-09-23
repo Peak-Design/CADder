@@ -207,7 +207,7 @@ def sync(manifest: Manifest, report: MatchReport, objects=None,
          report_missing=None, trust_names=False) -> PoseSyncReport:
     """Move every matched object whose world pose disagrees with its
     component's manifest transform (under report.frame_rows) onto that
-    transform. Returns what moved, in metres, and what was skipped and why.
+    transform. Returns what moved, in meters, and what was skipped and why.
     The caller owns the depsgraph update afterwards.
 
     An entry whose part is not found goes to `skipped` when

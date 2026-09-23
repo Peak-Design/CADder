@@ -11,8 +11,8 @@ checks what the join SAYS about it:
     tagged with its manifest.
   * a join onto a posed bone merges nothing, so the user can clear the
     pose and join again, as the message tells them to.
-  * in a scene where one unit is a millimetre, a clean join reports no
-    drift, and the figures it gives are millimetres.
+  * in a scene where one unit is a millimeter, a clean join reports no
+    drift, and the figures it gives are millimeters.
 """
 
 import os
@@ -187,13 +187,13 @@ def posed_attach_joins_nothing():
           % (again.attached_to, again.warnings))
 
 
-# ── A millimetre scene reports millimetres ──────────────────────────────
+# ── A millimeter scene reports millimeters ──────────────────────────────
 
 def millimetre_scene_reports_millimetres():
     print("-- a join in a scene with 1 unit = 1 mm")
     fresh()
     bpy.context.scene.unit_settings.scale_length = 0.001
-    # Two metres out, so the bones stand some thousands of units from the
+    # Two meters out, so the bones stand some thousands of units from the
     # origin, where single precision is coarser than a micrometre.
     machine = build("machine", 2.0)
     gripper = build("gripper", 3.0)
@@ -204,7 +204,7 @@ def millimetre_scene_reports_millimetres():
     check(not report.drift, "a clean join reports drift: %s" % report.drift)
     check(not report.warnings, "a clean join warns: %s" % report.warnings)
 
-    # Half a millimetre off rest is half a millimetre, not 500.
+    # Half a millimeter off rest is half a millimeter, not 500.
     fresh()
     bpy.context.scene.unit_settings.scale_length = 0.001
     machine = build("machine", 2.0)
@@ -215,7 +215,7 @@ def millimetre_scene_reports_millimetres():
     bpy.context.view_layer.update()
     report = joining.join(bpy.context, host, [sub], attach_bone=attach)
     check(any(w.startswith("%s is 0.5 mm " % attach) for w in report.warnings),
-          "half a millimetre off rest reads: %s" % report.warnings)
+          "half a millimeter off rest reads: %s" % report.warnings)
 
 
 def main():

@@ -100,7 +100,7 @@ def _material(spec, name_prefix, unit_scale=1.0):
 
 def _material_identity(spec):
     """What makes one material of the export the same as another: its
-    appearance, or its colour and finish when it has none. Its number in
+    appearance, or its color and finish when it has none. Its number in
     the export's table does not: that is the order the walk found it."""
     return appearance.digest(spec.appearance_json or "%r|%r|%r|%r" % (
         tuple(round(c, 4) for c in spec.rgba), round(spec.roughness, 4),
@@ -183,12 +183,12 @@ def _mark_edges(me, w):
 
 
 def scene_unit_scale(context):
-    """Blender units per metre in the scene: 1 / Unit Scale.
+    """Blender units per meter in the scene: 1 / Unit Scale.
 
-    The .swmesh is in metres. The rig build, pose sync, matching and the
+    The .swmesh is in meters. The rig build, pose sync, matching and the
     STEP import all convert with this value (rig_build._unit_scale). The
-    direct link placed its parts at one Blender unit per metre instead, so
-    in a millimetre scene pose sync pushed every part a thousand times
+    direct link placed its parts at one Blender unit per meter instead, so
+    in a millimeter scene pose sync pushed every part a thousand times
     further out without scaling its mesh, and the rig was built there."""
     try:
         scale = float(context.scene.unit_settings.scale_length)
@@ -202,8 +202,8 @@ def cad_quality(scene):
     scene's Mesh Quality settings.
 
     The Custom distance is a length property, so Blender holds it in scene
-    units. The CAD application takes metres: in a millimetre scene, a
-    distance of 0.8 mm went to it as 0.8 m. The presets are metres
+    units. The CAD application takes meters: in a millimeter scene, a
+    distance of 0.8 mm went to it as 0.8 m. The presets are meters
     already."""
     from .. import quality as quality_mod
     spec = quality_mod.spec_of(scene.stepper)
@@ -963,7 +963,7 @@ class _Placer:
 
 
 # The hash of a part's geometry says which version of it it is. The first
-# took the material numbers of the export, which shift when a colour is
+# took the material numbers of the export, which shift when a color is
 # added or removed anywhere in the assembly.
 _HASH_VERSION = "v2:"
 
@@ -976,7 +976,7 @@ def _definition_hash(definition, material_ids):
     `material_ids` gives the identity of each material of the export by
     its number (_material_identity). The export numbers its materials in
     the order the walk finds them, so a part that did not change came back
-    with other numbers when a colour was added in front of its own. The
+    with other numbers when a color was added in front of its own. The
     hash takes the material of each triangle by what it is, in the order
     the triangles first use them."""
     digest = hashlib.blake2b(digest_size=8)
@@ -1035,7 +1035,7 @@ def build(context, path, manifest=None, collection_name=None,
     hierarchy_types; group_in_collection wraps the import in one
     collection named after the file, as the importer does.
 
-    unit_scale is Blender units per metre. None takes the scene's
+    unit_scale is Blender units per meter. None takes the scene's
     (scene_unit_scale), which is what every caller wants.
 
     This REPLACES what was there. To change only what changed, keeping the

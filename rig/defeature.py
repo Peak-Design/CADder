@@ -175,7 +175,7 @@ def orders(objects, scene=None):
     here = scene or (bpy.context.scene if bpy else None)
     parents, holders = _parents(here), _holders(here)
     # The size is a length property, so Blender holds it in scene units,
-    # and the CAD application takes metres. In a millimetre scene, 0.5 mm
+    # and the CAD application takes meters. In a millimeter scene, 0.5 mm
     # went to it as 0.5 m.
     try:
         metres = float(here.unit_settings.scale_length)

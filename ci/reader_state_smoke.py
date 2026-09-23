@@ -196,4 +196,4 @@ if FAILS:
     print("\nreader_state_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nreader_state_smoke: OK - each import starts with a clean reader")
+print("\nreader_state_smoke: OK: each import starts with a clean reader")

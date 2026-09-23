@@ -16,7 +16,7 @@ cannot run here. What can be checked is checked:
 
   2. Only an Esc press cancels. The modal handler gets key releases too.
      When the user pressed Esc to cancel a move or to close a menu, that
-     tool used the press, and the release then cancelled the import.
+     tool used the press, and the release then canceled the import.
 """
 import os
 import sys
@@ -87,5 +87,5 @@ if FAILS:
     print("\nbackground_modal_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nbackground_modal_smoke: OK - each import is an undo step, and only "
+print("\nbackground_modal_smoke: OK: each import is an undo step, and only "
       "an Esc press cancels")

@@ -97,4 +97,4 @@ if FAILS:
     print("\nrefresh_select_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nrefresh_select_smoke: OK - Select works in every hierarchy mode")
+print("\nrefresh_select_smoke: OK: Select works in every hierarchy mode")

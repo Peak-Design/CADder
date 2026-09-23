@@ -53,7 +53,7 @@ except ImportError:
 
 from . import parenting
 
-# Metres, whatever the scene's unit: every length below is converted from
+# Meters, whatever the scene's unit: every length below is converted from
 # Blender units first (see _metres_per_unit).
 _REST_TOL = 1e-6
 
@@ -91,9 +91,9 @@ def joinable(context):
 
 
 def _metres_per_unit(context):
-    """The length of one Blender unit in metres. The rig is built in
-    metres times the scene's unit scale, and a millimetre scene is one
-    CADder supports: there a figure in Blender units read as metres is a
+    """The length of one Blender unit in meters. The rig is built in
+    meters times the scene's unit scale, and a millimeter scene is one
+    CADder supports: there a figure in Blender units read as meters is a
     thousand times too large, and a tolerance of a micrometre is below
     what single precision holds some thousands of units out."""
     try:

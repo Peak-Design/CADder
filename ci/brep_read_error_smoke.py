@@ -113,4 +113,4 @@ if FAILS:
     print("\nbrep_read_error_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nbrep_read_error_smoke: OK - a damaged BREP file is an import error")
+print("\nbrep_read_error_smoke: OK: a damaged BREP file is an import error")

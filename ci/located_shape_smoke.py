@@ -167,5 +167,5 @@ if FAILS:
     print("\nlocated_shape_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nlocated_shape_smoke: OK - located shapes import in place with "
+print("\nlocated_shape_smoke: OK: located shapes import in place with "
       "matching normals on both mesh paths")

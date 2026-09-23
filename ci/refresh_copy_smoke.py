@@ -162,5 +162,5 @@ if FAILS:
     print("\nrefresh_copy_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nrefresh_copy_smoke: OK - a refresh keeps the user's copies and "
+print("\nrefresh_copy_smoke: OK: a refresh keeps the user's copies and "
       "removes what CAD removed")

@@ -1213,7 +1213,7 @@ if bpy is not None:
                     # back.
                     # The quality in Mesh Quality, the same settings that
                     # rebuild a part from a file, with its distance in
-                    # metres.
+                    # meters.
                     reply = cad_link.retessellate(
                         ids, native_import.cad_quality(context.scene),
                         persistent_ids=persistent,

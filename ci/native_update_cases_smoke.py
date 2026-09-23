@@ -460,8 +460,8 @@ def _slot_names(obj):
 
 def case_material_numbers_shift():
     """The export numbers its materials in the order the walk finds them.
-    A new part with a new colour, walked first, shifts the numbers of every
-    other colour. The update read that as new geometry on the parts that
+    A new part with a new color, walked first, shifts the numbers of every
+    other color. The update read that as new geometry on the parts that
     did not change, and replaced their meshes."""
     fresh()
     first = write_mesh(
@@ -488,9 +488,9 @@ def case_material_numbers_shift():
 
 
 def case_a_colour_takes_the_old_number():
-    """The other way round: a part changes colour, and the new colour takes
+    """The other way round: a part changes color, and the new color takes
     the number the old one had. The update saw the same numbers, reported
-    the part as unchanged, and left the old colour on it."""
+    the part as unchanged, and left the old color on it."""
     fresh()
     first = write_mesh(
         "paint", [(1, "a", 0.05, [1]), (2, "b", 0.06, [2])],
@@ -660,7 +660,7 @@ CASES = [
      lambda: case_a_renamed_document("EMPTIES")),
     ("FLAT: shifted material numbers are not new geometry",
      case_material_numbers_shift),
-    ("FLAT: a new colour on the old number is seen",
+    ("FLAT: a new color on the old number is seen",
      case_a_colour_takes_the_old_number),
     ("FLAT: the geometry hash of an older send still matches",
      case_a_geometry_tag_of_an_older_send),

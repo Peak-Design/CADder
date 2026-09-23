@@ -83,5 +83,5 @@ if FAILS:
     print("\nupdater_online_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nupdater_online_smoke: OK - the update check follows Allow Online "
+print("\nupdater_online_smoke: OK: the update check follows Allow Online "
       "Access")

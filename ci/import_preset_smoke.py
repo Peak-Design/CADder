@@ -121,4 +121,4 @@ if FAILS:
     print("\nimport_preset_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nimport_preset_smoke: OK - a preset keeps its Quality")
+print("\nimport_preset_smoke: OK: a preset keeps its Quality")

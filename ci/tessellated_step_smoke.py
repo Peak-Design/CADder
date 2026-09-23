@@ -161,5 +161,5 @@ if FAILS:
     print("\ntessellated_step_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\ntessellated_step_smoke: OK - a mesh-only STEP imports on both mesh "
+print("\ntessellated_step_smoke: OK: a mesh-only STEP imports on both mesh "
       "paths")

@@ -31,7 +31,7 @@ from CADder import main as m, refresh as R
 
 FAILS = []
 
-# Where the holes are in the fixture and how wide, in metres. The same
+# Where the holes are in the fixture and how wide, in meters. The same
 # table as defeature_step_smoke.py.
 SMALL = [((0.012, 0.012), 0.006), ((0.088, 0.012), 0.006),
          ((0.012, 0.048), 0.006), ((0.088, 0.048), 0.006)]
@@ -161,5 +161,5 @@ if FAILS:
     print("\nrefresh_defeature_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nrefresh_defeature_smoke: OK - a refresh keeps the defeature switch "
+print("\nrefresh_defeature_smoke: OK: a refresh keeps the defeature switch "
       "and what it asks for")

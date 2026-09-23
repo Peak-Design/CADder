@@ -275,5 +275,5 @@ if FAILS:
     print("\nbackground_parity_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nbackground_parity_smoke: OK - a background import matches a direct "
+print("\nbackground_parity_smoke: OK: a background import matches a direct "
       "one")

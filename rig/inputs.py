@@ -121,7 +121,7 @@ def _pair(manifest: Manifest, mech: Optional[Mechanism]):
 def _turn_coupling_round(manifest: Manifest, mech: Mechanism):
     """Moves the coupling to the other half of the pair.
 
-    The number stays what the mate said: a rack and pinion's metres per
+    The number stays what the mate said: a rack and pinion's meters per
     radian is the same fact whichever end is held, and drivers.py reads the
     channel to write off the types of the two joints. A ratio of like for like has
     no such handle, so it is the one that inverts here.

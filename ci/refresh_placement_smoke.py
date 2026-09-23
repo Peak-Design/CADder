@@ -14,7 +14,7 @@ writes when a user drags a component.
 
 The refresh used to measure the user's own move against the placement of
 the NEW import, because the import stamps were copied over before the move
-was read. Every CAD move then cancelled itself out and the part stayed where
+was read. Every CAD move then canceled itself out and the part stayed where
 it was.
 """
 import os
@@ -203,5 +203,5 @@ if FAILS:
     print("\nrefresh_placement_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))
     sys.exit(1)
-print("\nrefresh_placement_smoke: OK - a CAD placement change comes through "
+print("\nrefresh_placement_smoke: OK: a CAD placement change comes through "
       "a refresh, with the user's own move on top")

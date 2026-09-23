@@ -3,10 +3,10 @@
 
     blender -b --factory-startup --python-exit-code 1 -P ci/native_unit_scale_smoke.py
 
-The .swmesh and the manifest are in metres. Blender puts a metre at
+The .swmesh and the manifest are in meters. Blender puts a meter at
 1 / Unit Scale Blender units, and the rig build, pose sync and the STEP
 import all convert with that value. The direct link placed its geometry as
-if one Blender unit were one metre. In a millimetre scene (Unit Scale
+if one Blender unit were one meter. In a millimeter scene (Unit Scale
 0.001), pose sync then moved every part a thousand times further out
 without scaling its mesh, and the rig was built at those places: small
 parts, far apart, and bones that did not meet them. Lengths typed in the
@@ -34,8 +34,8 @@ from CADder import bridge  # noqa: E402
 from CADder.rig import defeature, native_import, swmesh  # noqa: E402
 
 TMP = os.path.join(tempfile.gettempdir(), "native_unit_scale_smoke")
-SIZE = 0.05          # every part is a triangle this many metres across
-PIVOT = 0.15         # the arm turns about this x, in metres
+SIZE = 0.05          # every part is a triangle this many meters across
+PIVOT = 0.15         # the arm turns about this x, in meters
 
 
 def _t(x):
@@ -259,7 +259,7 @@ def run(hierarchy, scale_length):
 
 def check_lengths_to_cad():
     """A length the user types in the scene goes to the CAD application in
-    metres."""
+    meters."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.preferences.addon_enable(module="CADder")
     scene = bpy.context.scene
@@ -271,7 +271,7 @@ def check_lengths_to_cad():
     if abs(asked["chord_m"] - 0.0008) > 1e-9:
         fail("lengths", "a 0.8 mm distance goes to the CAD as %g m"
              % asked["chord_m"])
-    stepper.quality_preset = "FINE"           # a preset is metres already
+    stepper.quality_preset = "FINE"           # a preset is meters already
     asked = native_import.cad_quality(scene)
     if abs(asked["chord_m"] - 0.0002) > 1e-9:
         fail("lengths", "the Fine preset goes to the CAD as %g m"
@@ -306,7 +306,7 @@ def main():
     check_lengths_to_cad()
     print("native_unit_scale_smoke: OK: a send, a refresh and a rebuild put "
           "the parts and the rig at the same scale (%s), and scene lengths "
-          "go to the CAD application in metres" % ", ".join(done))
+          "go to the CAD application in meters" % ", ".join(done))
 
 
 main()

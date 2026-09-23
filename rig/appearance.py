@@ -73,25 +73,45 @@ def _set(node, name, value):
             pass
 
 
+def _is_data(img):
+    """True when an image is read as data (Non-Color), not as a color."""
+    settings = img.colorspace_settings
+    return bool(getattr(settings, "is_data", False)
+                or settings.name == "Non-Color")
+
+
 def _image(path, non_color=False):
-    """An image datablock for a file, reused by path. None, with one log
-    line, when the file is not there: the colour still shows."""
+    """An image datablock for a file, reused by path and color space. None,
+    with one log line, when the file is not there: the color still shows.
+
+    The color space belongs to the image, not to the node that reads it.
+    SolidWorks uses one file as the color texture and as the bump map of
+    its carbon fiber appearances, and one shared image made the first use
+    decide for both: a bump read as color, or a color read as data. So a
+    file used both ways is two images."""
     if not path:
         return None
     path = os.path.normpath(path)
+    other = None
     for img in bpy.data.images:
         if img.filepath and os.path.normpath(bpy.path.abspath(img.filepath)) == path:
-            return img
+            if _is_data(img) == non_color:
+                return img
+            other = img
     if not os.path.isfile(path):
         if path not in _missing_logged:
             _missing_logged.add(path)
             print("[CADLink appearance] texture not found: %s" % path)
         return None
     try:
-        img = bpy.data.images.load(path, check_existing=True)
+        img = bpy.data.images.load(path, check_existing=other is None)
     except RuntimeError as exc:
         print("[CADLink appearance] texture not loaded: %s (%s)" % (path, exc))
         return None
+    if _is_data(img) != non_color and (img.users or not non_color):
+        # Loaded before under another path spelling, and read in the other
+        # color space. A fresh load reads a color file as color.
+        img = bpy.data.images.load(path, check_existing=False)
     if non_color:
         try:
             img.colorspace_settings.name = "Non-Color"

@@ -92,6 +92,12 @@ def main():
     if unit_scale:
         bpy.context.scene.unit_settings.scale_length = unit_scale
 
+    # The import puts the parts at the 3D cursor. Use the cursor of the
+    # parent session, or the result lands at the origin instead.
+    cursor = request.get("cursor_location")
+    if cursor:
+        bpy.context.scene.cursor.location = cursor
+
     log({"phase": "importing"})
     result = bpy.ops.import_scene.occ_import_step(
         filepath=filepath, override_file=os.path.basename(filepath),

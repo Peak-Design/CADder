@@ -74,6 +74,26 @@ def _sweep_stale_jobs(root, max_age_s=2 * 24 * 3600):
             pass
 
 
+def build_request(context, filepath, out_blend, op_kwargs, prefs):
+    """What the worker needs to import one file as this session would."""
+    return {
+        "addon_module": __package__,
+        "filepath": filepath,
+        "out_blend": out_blend,
+        "op_kwargs": op_kwargs,
+        # load_step divides the file unit scale by the scene unit
+        # length. The worker starts from a factory scene at 1.0, so
+        # without this a background import comes out a different
+        # size than the same file imported directly.
+        "scene_unit_scale": context.scene.unit_settings.scale_length,
+        # A direct import puts the parts at the 3D cursor. The worker's
+        # cursor is at the origin, so it needs this one.
+        "cursor_location": list(context.scene.cursor.location),
+        "prefs": prefs,
+        "parent_pid": os.getpid(),
+    }
+
+
 def _reader_thread(pipe, out_queue):
     try:
         for raw in iter(pipe.readline, b""):
@@ -211,19 +231,8 @@ class STEPPER_OT_background_import(bpy.types.Operator):
         self._current_file = filepath
         out_blend = os.path.join(
             self._job_dir, uuid.uuid4().hex[:8] + ".blend")
-        request = {
-            "addon_module": __package__,
-            "filepath": filepath,
-            "out_blend": out_blend,
-            "op_kwargs": self._op_kwargs,
-            # load_step divides the file unit scale by the scene unit
-            # length. The worker starts from a factory scene at 1.0, so
-            # without this a background import comes out a different
-            # size than the same file imported directly.
-            "scene_unit_scale": context.scene.unit_settings.scale_length,
-            "prefs": self._prefs_snapshot,
-            "parent_pid": os.getpid(),
-        }
+        request = build_request(context, filepath, out_blend,
+                                self._op_kwargs, self._prefs_snapshot)
         req_path = os.path.join(self._job_dir, "request.json")
         with open(req_path, "w", encoding="utf-8") as f:
             json.dump(request, f)

@@ -22,6 +22,9 @@ appends its blend the way the modal operator does.
   3. Materials that the scene has already. A direct import uses the
      material of the same name. The append made a ".001" copy of each one,
      so a change to the material reached only the first import.
+
+  4. The 3D cursor. A direct import puts the parts at the cursor. The
+     worker's cursor was at the origin, so a large file landed there.
 """
 import json
 import os
@@ -36,7 +39,7 @@ sys.path.insert(0, os.path.dirname(_ADDON))
 import bpy
 
 bpy.ops.preferences.addon_enable(module="CADder")
-from CADder import main as m, background as B
+from CADder import main as m, background as B, refresh as R
 
 FAILS = []
 
@@ -89,15 +92,8 @@ def run_worker(op_kwargs, name, filepath=None):
     """Run the worker as the modal operator does. Return the blend path, or
     None when the worker failed."""
     out_blend = os.path.join(tmp, name + ".blend")
-    request = {
-        "addon_module": "CADder",
-        "filepath": filepath or STEP,
-        "out_blend": out_blend,
-        "op_kwargs": op_kwargs,
-        "scene_unit_scale": bpy.context.scene.unit_settings.scale_length,
-        "prefs": B.prefs_snapshot(prefs()),
-        "parent_pid": os.getpid(),
-    }
+    request = B.build_request(bpy.context, filepath or STEP, out_blend,
+                              op_kwargs, B.prefs_snapshot(prefs()))
     req_path = os.path.join(tmp, name + ".json")
     with open(req_path, "w", encoding="utf-8") as f:
         json.dump(request, f)
@@ -231,6 +227,49 @@ if out is not None:
     check(len(step_objects()) == 4 and used == first,
           "both imports use the one material (%s)"
           % sorted(mat.name for mat in used))
+
+# -- 4. the 3D cursor ----------------------------------------------------------
+print("\n== the 3D cursor")
+CURSOR = (1.0, 2.0, 0.5)
+
+
+def placement():
+    """Each part's lowest corner, and the refresh basis stamped on it."""
+    bpy.context.view_layer.update()
+    out = []
+    for obj in step_objects():
+        pts = [obj.matrix_world @ v.co for v in obj.data.vertices]
+        out.append(tuple(round(min(p[k] for p in pts), 5) for k in range(3)))
+    return sorted(out)
+
+
+def basis():
+    return sorted(tuple(round(v, 5) for v in o.get(R.BASIS_PROP, ()))
+                  for o in step_objects())
+
+
+clean()
+bpy.context.scene.cursor.location = CURSOR
+m.load_step(bpy.context, STEP, htypes="TREE", up_as="Z", custom_scale=1.0)
+direct = placement()
+direct_basis = basis()
+print("    direct:", direct)
+check(bool(direct) and direct[0][2] == CURSOR[2],
+      "a direct import lands at the 3D cursor")
+
+clean()
+bpy.context.scene.cursor.location = CURSOR
+out = run_worker({"hierarchy_types": "TREE", "up_as": "ZPOS",
+                  "custom_scale": True, "user_scale": 1.0}, "cursor")
+check(out is not None, "the worker imports with the cursor moved")
+if out is not None:
+    append(out)
+    appended = placement()
+    print("    appended:", appended)
+    check(appended == direct,
+          "a background import lands where a direct import does")
+    check(basis() == direct_basis,
+          "and records the same placement for a later refresh")
 
 if FAILS:
     print("\nbackground_parity_smoke: FAILED (%d)\n  %s"

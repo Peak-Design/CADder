@@ -494,6 +494,22 @@ def _run_job(payload: dict) -> dict:
         said.close()
 
 
+def _remember_document(payload: dict):
+    """Writes on the scene which CAD document the payload came from. A
+    request back to the CAD application names it (rig/cad_link.py), so the
+    CAD application answers for this document and not for whichever one
+    the user has made active there since. An older add-in names none, and
+    the scene keeps what it has."""
+    document = payload.get("source_document")
+    if not document:
+        return
+    from .rig import cad_link
+    try:
+        bpy.context.scene[cad_link.DOCUMENT_TAG] = str(document)
+    except (AttributeError, TypeError, RuntimeError) as exc:
+        print("[CADLink bridge] could not record the source document:", exc)
+
+
 def _apply_poses_from(poses: dict) -> int:
     """Moves the scene onto the poses the CAD application pushed. The same
     path an Rebuild from CAD takes, so one rule decides how a pose reaches
@@ -608,6 +624,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 return {"ok": False, "stages": stages,
                         "error": "Send the assembly to Blender first: this "
                                  "scene has no manifest to update."}
+            _remember_document(payload)
             said.stage("moving the parts to where the CAD has them", 0, 100)
             said_count = len(poses.get("components") or [])
             moved = _apply_poses_from(poses)
@@ -851,6 +868,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         "stages": stages}
             stages["import"] = {"file": os.path.basename(step_path)}
             bpy.context.view_layer.update()
+
+        # What the send brings has arrived. Later stages can still fail,
+        # but the scene now holds this document.
+        _remember_document(payload)
 
         if have_manifest and not mesh_path and want("match"):
             said.stage("matching the parts to the manifest", 80, 85)

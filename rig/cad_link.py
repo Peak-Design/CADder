@@ -35,6 +35,12 @@ _TIMEOUT_JOB = 600.0     # tessellating a big assembly finely is not quick
 # and the user reads that instead of a bare "timed out".
 _SERVER_MARGIN_S = 30.0
 
+# The scene property that names the CAD document the scene came from.
+# bridge.py writes it from each send, and every request names that
+# document, so the CAD application answers for it and not for whichever
+# document the user has made active there since.
+DOCUMENT_TAG = "CADLINK_document"
+
 # No proxy, ever. urllib sends 127.0.0.1 through a proxy set in the
 # environment or in Internet Options: it bypasses only host names without a
 # dot. The proxy cannot reach this machine's listener, and every call
@@ -204,6 +210,20 @@ def first():
         "Bridge add-in enabled, and open the assembly.")
 
 
+def _document_path():
+    """The CAD document of the current scene, or None: before the first
+    send that named one, and outside Blender."""
+    try:
+        import bpy
+    except ImportError:
+        return None
+    try:
+        value = bpy.context.scene.get(DOCUMENT_TAG)
+    except (AttributeError, TypeError, RuntimeError, ReferenceError):
+        return None
+    return str(value) if value else None
+
+
 def _server_wait(timeout):
     """How long the CAD application may wait for its own thread, for a
     client that waits `timeout` seconds. It must answer first: a client that
@@ -218,6 +238,10 @@ def request(op, timeout=_TIMEOUT_JOB, instance=None, **fields):
     payload = dict(fields)
     payload["op"] = op
     payload.setdefault("timeout_s", _server_wait(timeout))
+    if "document_path" not in payload:
+        document = _document_path()
+        if document:
+            payload["document_path"] = document
     try:
         reply = _post(inst, "/job", payload, timeout)
     except urllib.error.HTTPError as exc:

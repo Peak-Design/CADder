@@ -144,6 +144,26 @@ def test_every_request_says_how_long_the_server_may_wait():
         server.shutdown()
 
 
+def test_a_request_names_the_document_of_the_scene(monkeypatch):
+    server = _serve()
+    try:
+        inst = _instance(server.server_address[1])
+        monkeypatch.setattr(cad_link, "_document_path", lambda: r"C:\cad\lift.SLDASM")
+        cad_link.poses(["c001"], instance=inst)
+        assert server.seen[-1][1]["document_path"] == r"C:\cad\lift.SLDASM"
+        cad_link.request("export", instance=inst, document_path=r"C:\cad\other.SLDASM")
+        assert server.seen[-1][1]["document_path"] == r"C:\cad\other.SLDASM"
+        monkeypatch.setattr(cad_link, "_document_path", lambda: None)
+        cad_link.request("status", instance=inst)
+        assert "document_path" not in server.seen[-1][1]
+    finally:
+        server.shutdown()
+
+
+def test_no_document_outside_blender():
+    assert cad_link._document_path() is None
+
+
 # ── Discovery ──────────────────────────────────────────────────────────
 
 

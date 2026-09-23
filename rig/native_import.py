@@ -271,11 +271,11 @@ def cad_paths(objects):
     return out
 
 
-def _own_collections(stem):
-    """Every collection a previous import of this file made (of any file,
-    with stem None), leaves first, so each is empty of children by the
-    time it is removed."""
-    mine = [c for c in bpy.data.collections
+def _own_collections(stem, scope):
+    """Every collection a previous import of this file made in the scene
+    (of any file, with stem None), leaves first, so each is empty of
+    children by the time it is removed."""
+    mine = [c for c in scope.collections
             if c.get(_TAG_FILE) is not None and (stem is None or c.get(_TAG_FILE) == stem)]
     depth = {}
 
@@ -294,9 +294,19 @@ class _Scope:
 
     A send or an update works in the scene it was asked for. Another scene
     of the file can hold objects with the same tags: a Full Copy of the
-    scene copies every part with them. Those are not this scene's to change,
-    and read as this scene's parts, each part had two identities and the
-    update deleted both."""
+    scene copies every part with them. Those are not this scene's to change.
+    Read as this scene's parts, each part had two identities and the update
+    deleted both, and a send into one scene deleted the send that stood in
+    every other.
+
+    `aside` holds the parts another add-on keeps out of the scene, in a
+    collection that no scene holds and a fake user keeps in the file: the
+    part a new object was made from, kept to make it again. They are that
+    add-on's. A send deleted them, which left the add-on with nothing to
+    make its object from. An update may still pair them, so a part kept
+    aside is not built again beside what was made from it, but it does not
+    move them into the import or delete them. A part kept aside and also
+    shown in the scene is in `aside` and not in `objects`."""
 
     def __init__(self, scene):
         self.collections = []
@@ -310,10 +320,24 @@ class _Scope:
                     self.collections.append(child)
                     stack.append(child)
         self._collections = seen
-        self.objects = list(scene.objects)
+        aside = {}
+        for col in bpy.data.collections:
+            if col.use_fake_user and col.as_pointer() not in seen:
+                for obj in col.all_objects:
+                    aside[obj.as_pointer()] = obj
+        self._aside = set(aside)
+        self.aside = list(aside.values())
+        self.objects = [o for o in scene.objects
+                        if o.as_pointer() not in self._aside]
 
     def has(self, collection):
         return collection.as_pointer() in self._collections
+
+    def is_aside(self, obj):
+        try:
+            return obj.as_pointer() in self._aside
+        except ReferenceError:
+            return False
 
 
 def _renamed(root, stem, scope):
@@ -327,7 +351,7 @@ def _renamed(root, stem, scope):
             coll[_TAG_FILE] = stem
             if coll.name == was or coll.name.startswith(was + "."):
                 coll.name = stem + coll.name[len(was):]
-    for obj in scope.objects:
+    for obj in scope.objects + scope.aside:
         if obj.get(_TAG_FILE) == was:
             obj[_TAG_FILE] = stem
     print("[CADLink native] the assembly was renamed: %s is now %s"
@@ -386,22 +410,34 @@ def standing(stem, scene, scope):
     return best
 
 
-def remove_previous(stem=None, scene_collection=None):
+def remove_previous(stem=None, scene_collection=None, scene=None):
     """Clears the previous native import so a send replaces rather than
     accumulates: one direct send stands in a scene at a time, whatever
     assembly it was (a different one otherwise stacks a dead rig beside
     the live one on every send, live 2026-09-14). Meshes go too: an
     orphaned datablock of a million triangles is invisible in the outliner
     and very much present in the file. `stem` narrows the removal to one
-    file's import; None takes every native import."""
+    file's import; None takes every native import. Only in `scene` (the
+    current one by default), and never a part another add-on keeps aside
+    (see _Scope)."""
     removed = 0
-    colls = _own_collections(stem)
-    objects = [o for o in bpy.data.objects
+    scope = _Scope(scene or bpy.context.scene)
+    colls = _own_collections(stem, scope)
+    objects = [o for o in scope.objects
                if o.get(_TAG_FILE) is not None and (stem is None or o.get(_TAG_FILE) == stem)]
     for coll in colls:
         for o in coll.objects:
-            if o not in objects:
+            if o not in objects and not scope.is_aside(o):
                 objects.append(o)
+    # A part kept aside and shown in the scene is in an import collection
+    # too. It leaves the collection with the import, and stays kept.
+    for obj in scope.aside:
+        for coll in colls:
+            try:
+                if obj.name in coll.objects:
+                    coll.objects.unlink(obj)
+            except (ReferenceError, RuntimeError):
+                continue
     if not colls and not objects:
         return 0
     # The rigs these parts hang from. One whose every part goes with this
@@ -1012,7 +1048,7 @@ def build(context, path, manifest=None, collection_name=None,
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
 
-    remove_previous(None, context.scene.collection)
+    remove_previous(None, context.scene.collection, context.scene)
     destination = context.scene.collection
     # One collection, named after the assembly. The shape of what is
     # inside it is the hierarchy option's business, not the name's
@@ -1140,7 +1176,7 @@ def update(context, path, manifest=None, unit_scale=None,
     # a second identity for the part. This is done before the rig lets go
     # of its parts, so a copy on a bone stays on it.
     old, copies = diff_mod.split_copies(
-        diff_mod.from_objects(scope.objects, stem),
+        diff_mod.from_objects(scope.objects + scope.aside, stem),
         rank=lambda o: (not placer.on_pose(o.payload, o.transform),
                         len(o.name), o.name))
     disowned = []
@@ -1191,7 +1227,7 @@ def update(context, path, manifest=None, unit_scale=None,
         if reshaped:
             _reshape(obj, placer, inst)
             out.reshaped.append(obj.name)
-        if pair.old.path != pair.new.path:
+        if pair.old.path != pair.new.path and not scope.is_aside(obj):
             placer.unplace(obj)
             placer.place(obj, placer.path_of(inst))
         if not pair.moved and not reshaped:
@@ -1222,6 +1258,10 @@ def update(context, path, manifest=None, unit_scale=None,
         try:
             out.removed.append(obj.name)
         except ReferenceError:
+            continue
+        if scope.is_aside(obj):
+            # Gone from the assembly, and still the other add-on's.
+            _disown(obj)
             continue
         doomed.append(obj)
     _remove_objects(doomed)

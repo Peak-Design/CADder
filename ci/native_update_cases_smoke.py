@@ -564,7 +564,96 @@ def case_a_renamed_document(hierarchy):
           "the update rebuilt the assembly and lost the renamed part")
 
 
+def case_a_send_into_another_scene():
+    """A send into one scene replaces the send that stands in THAT scene.
+    It took the parts and collections of every scene in the file."""
+    fresh()
+    m = _bolt_manifest()
+    first = bpy.context.scene
+    first.name = "v1"
+    native_import.build(bpy.context, write_mesh("bolts", _BOLT_DEFS, _BOLT_INST),
+                        manifest=m, hierarchy="TREE")
+    theirs = sorted(o.name for o in first.objects)
+    second = bpy.data.scenes.new("v2")
+    bpy.context.window.scene = second
+    native_import.build(bpy.context, write_mesh("other", _BOLT_DEFS, _BOLT_INST),
+                        manifest=m, hierarchy="TREE")
+    check(sorted(o.name for o in first.objects) == theirs,
+          "scene v1 holds %s, it held %s"
+          % (sorted(o.name for o in first.objects), theirs))
+    check("bolts" in [c.name for c in first.collection.children],
+          "scene v1 lost its import collection")
+    check(len([o for o in second.objects if o.get("SWMESH_path")]) == 2,
+          "the send into v2 did not arrive")
+
+
+def _keep_aside(obj, shown=False):
+    """What an add-on does when it keeps the part a new object was made
+    from: into a collection that no scene holds, kept by a fake user.
+    `shown` links it back where it was as well, to look at."""
+    keep = bpy.data.collections.get("Kept Aside") \
+        or bpy.data.collections.new("Kept Aside")
+    keep.use_fake_user = True
+    home = list(obj.users_collection)
+    for col in home:
+        col.objects.unlink(obj)
+    keep.objects.link(obj)
+    if shown:
+        for col in home:
+            col.objects.link(obj)
+    return keep
+
+
+def case_a_part_kept_aside(shown):
+    """A part kept aside by another add-on is that add-on's to keep. A send
+    deleted it, and a Refresh linked it into the import again or deleted
+    it when CAD removed the part."""
+    fresh()
+    m = _bolt_manifest()
+    mesh = write_mesh("bolts", _BOLT_DEFS, _BOLT_INST)
+    native_import.build(bpy.context, mesh, manifest=m, hierarchy="TREE")
+    bolt = by_path("bolt-1")
+    name = bolt.name
+    keep = _keep_aside(bolt, shown)
+    homes = sorted(c.name for c in bolt.users_collection)
+
+    # Refresh, with the bolt now inside a new subassembly: its path changes.
+    moved = write_mesh("bolts", _BOLT_DEFS, [
+        (1, "c001", "base", "base-1", 0.0, None),
+        (2, "c002", "bolt", "clamp-1/bolt-1", 0.3, None)],
+        nodes=[("clamp-1", "clamp", "", 0.0)])
+    m2 = manifest([("c001", "base-1", "pbase", 0.0, False),
+                   ("c002", "clamp-1/bolt-1", "pbolt", 0.3, False)],
+                  [("g000", ["c001"]), ("g001", ["c002"])])
+    _objects, _report, out = native_import.update(
+        bpy.context, moved, manifest=m2, hierarchy="TREE")
+    bolt = bpy.data.objects.get(name)
+    check(bolt is not None, "the refresh deleted the part kept aside")
+    check(sorted(c.name for c in bolt.users_collection) == homes,
+          "the refresh moved the part kept aside into %s"
+          % sorted(c.name for c in bolt.users_collection))
+    check(not out.added, "the refresh built the part again: %s" % out.added)
+
+    # Refresh, with the bolt deleted in CAD.
+    gone = write_mesh("bolts", _BOLT_DEFS[:1], _BOLT_INST[:1])
+    native_import.update(bpy.context, gone, manifest=m, hierarchy="TREE")
+    check(bpy.data.objects.get(name) is not None,
+          "the refresh deleted the part kept aside when CAD removed it")
+
+    # A new send of the assembly.
+    native_import.build(bpy.context, mesh, manifest=m, hierarchy="TREE")
+    bolt = bpy.data.objects.get(name)
+    check(bolt is not None, "the send deleted the part kept aside")
+    check(keep in bolt.users_collection, "the part left the collection it was kept in")
+
+
 CASES = [
+    ("TREE: a send into another scene leaves the first alone",
+     case_a_send_into_another_scene),
+    ("TREE: a part kept aside is left alone",
+     lambda: case_a_part_kept_aside(False)),
+    ("TREE: a part kept aside and shown is left alone",
+     lambda: case_a_part_kept_aside(True)),
     ("COLLECTION_INSTANCES: a renamed document is found",
      lambda: case_a_renamed_document("COLLECTION_INSTANCES")),
     ("EMPTIES: a renamed document is found",

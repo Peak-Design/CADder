@@ -2164,25 +2164,38 @@ def _list_matdb_files():
     return result
 
 
-def _matdb_enum_items(self, context):
-    """Dynamic enum items for material database selection.
+# An enum stores the number of the selected item, not its name. The number
+# was the position in the folder listing, and that changes when a file is
+# added to or removed from the folder (a shared team folder does this all
+# the time). A stored choice then read as another database. So each
+# database gets a number made from its name. The numbers start above any
+# position that an older version stored, see _migrate_active_matdb.
+_MATDB_VALUE_BASE = 1 << 16
 
-    Blender stores the number of the selected item, not its name. Numbered
-    by position, the selection moved to another database when a file was
-    added to or removed from the folder (a folder shared with a team), and
-    Save then wrote the mappings over that other database. So each item has
-    a number made from its name, and None keeps 0."""
+
+def _matdb_value(name, taken):
+    """The enum number of one database: the same in every session, whatever
+    else is in the folder."""
     import zlib
+    span = 0x7FFFFFFF - _MATDB_VALUE_BASE
+    value = zlib.crc32(name.encode("utf-8")) % span
+    # Two names with one number are very rare, but must never read as
+    # each other. The listing is sorted, so the step is the same each time.
+    while _MATDB_VALUE_BASE + value in taken:
+        value = (value + 1) % span
+    return _MATDB_VALUE_BASE + value
 
+
+def _matdb_enum_items(self, context):
+    """Dynamic enum items for material database selection. Each item has
+    the number _matdb_value gives its name, and None keeps 0."""
     global _matdb_enum_cache
     items = [("NONE", "None", "Do not use a material database", 0)]
-    used = {0}
+    taken = {0}
     for name, path in _list_matdb_files():
-        number = zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
-        while number in used:
-            number = (number + 1) & 0x7FFFFFFF
-        used.add(number)
-        items.append((name, name, f"Use material database: {name}", number))
+        value = _matdb_value(name, taken)
+        taken.add(value)
+        items.append((name, name, f"Use material database: {name}", value))
     # Blender requires the returned strings to stay referenced from Python.
     # The module-level cache prevents garbage values in the dropdown
     _matdb_enum_cache = items
@@ -2190,6 +2203,26 @@ def _matdb_enum_items(self, context):
 
 
 _matdb_enum_cache = []
+
+
+def _migrate_active_matdb():
+    """Keep the database that an older version had selected.
+
+    Up to 1.0.1 the preference stored a position in the folder listing,
+    which is below _MATDB_VALUE_BASE and matches no item now. It is read
+    once against the listing, as the older version read it, and stored
+    again by name. Called from register()."""
+    try:
+        prefs = _get_addon_prefs()
+        stored = prefs.bl_system_properties_get()
+        raw = stored.get("active_matdb") if stored is not None else None
+        if not isinstance(raw, int) or not 0 < raw < _MATDB_VALUE_BASE:
+            return
+        names = [name for name, _path in _list_matdb_files()]
+        prefs.active_matdb = names[raw - 1] if raw <= len(names) else "NONE"
+    except Exception as exc:
+        # A lost choice must never stop the addon from loading.
+        print("CADder: could not read the older database choice:", exc)
 
 
 def _get_active_matdb_path(db_name=None):
@@ -5123,11 +5156,14 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.stepper = bpy.props.PointerProperty(type=PG_Stepper)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
-    updater_mod.start()
+    # The move comes first: the older choice is read against the listing of
+    # the folder the databases end up in.
     try:
         _move_addon_matdbs()
     except Exception as exc:
         print("CADder: material databases not moved:", exc)
+    _migrate_active_matdb()
+    updater_mod.start()
 
     if rig_mod is not None:
         try:

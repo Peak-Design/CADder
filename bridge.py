@@ -514,17 +514,43 @@ def _rig_of(stem):
     return max(counts, key=counts.get) if counts else None
 
 
-def _find_rig():
-    """The rig standing in the scene, if there is one."""
+def _same_file(a, b) -> bool:
+    try:
+        return (os.path.normcase(os.path.abspath(a))
+                == os.path.normcase(os.path.abspath(b)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _rig_for(manifest, stem=None):
+    """The rig of the assembly this job brings in, or None.
+
+    First the rig that holds the parts of the import `stem`, then a rig
+    built from this manifest (the build writes the manifest path on it).
+    Never merely the first rig in the scene: each assembly keeps a rig of
+    its own beside the others, and an update that took the other rig
+    released its parts, cleared its bones and built this assembly's bones
+    inside it."""
+    if stem:
+        rig = _rig_of(stem)
+        if rig is not None:
+            return rig
+    source = getattr(manifest, "source_path", None)
+    if not source:
+        return None
+    from .rig import parenting
     for obj in bpy.context.scene.objects:
-        if obj.type == "ARMATURE" and obj.get("RIG_rig"):
+        if (obj.type == "ARMATURE" and obj.get("RIG_rig")
+                and any(_same_file(s, source)
+                        for s in parenting.rig_sources(obj))):
             return obj
     return None
 
 
 def _update_rig(mode, log, rig=None):
     """The rig half of an update: KEEP, APPEND or REGENERATE. `rig` is the
-    rig of the assembly being updated, when the update found one."""
+    rig of the assembly being updated (see _rig_for), or None when it has
+    none yet. Then KEEP and APPEND build a new one, as REGENERATE does."""
     from .rig import rig_update, ui as rig_ui
 
     manifest = rig_ui._STATE.get("manifest")
@@ -533,7 +559,7 @@ def _update_rig(mode, log, rig=None):
     report = rig_ui._STATE.get("match_report")
     frame_rows = (report.frame_rows
                   if report is not None and report.frame_agree > 0 else None)
-    arm = rig or _find_rig()
+    arm = rig
     # Where the user placed the rig. The parts were put on their poses in
     # its frame, so a new rig takes the same place and the machine stays
     # where it was put.
@@ -619,6 +645,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             if not step_path and m.step_file:
                 step_path = os.path.join(os.path.dirname(manifest_path),
                                          m.step_file)
+        manifest = rig_ui._STATE.get("manifest") if have_manifest else None
+        # The direct link's import, by the name its parts carry.
+        stem = (os.path.splitext(os.path.basename(mesh_path))[0]
+                if mesh_path else None)
 
         # The DIRECT link. Geometry the add-in tessellated itself, already
         # tagged with the component ids the manifest uses, so it replaces
@@ -649,7 +679,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # scene, and before a part moves. The rig is the one that
                 # holds this assembly's parts, not merely the first one.
                 rig = _rig_of(stem)
-                rig_hold["rig"] = rig or _find_rig()
+                rig_hold["rig"] = rig or _rig_for(manifest)
                 if rig_hold["rig"] is None:
                     return
                 rig_ui._STATE["rig_snapshot"] = rig_update.snapshot(
@@ -833,27 +863,47 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                                     for n, r in rep.skipped],
                     }
 
+        # The rig of THIS assembly, from here to relink. The first rig in
+        # the scene can belong to a different assembly, whose parts and
+        # bones this job must not touch.
+        own = (rig_hold.get("rig") or _rig_for(manifest, stem)) \
+            if have_manifest else None
+        built = None
         if have_manifest and want("build_rig"):
             # A rig the user locked is kept, and the send says so rather
             # than failing: the geometry still arrives and still attaches
             # to it, which is the whole point of locking one.
             from .rig import rig_build, rig_update
-            locked = rig_build.locked_rig(bpy.context)
             mode = (payload.get("rig_mode") or "").upper()
-            if locked is not None:
+            # rig_build builds no rig at all while any rig in the scene is
+            # locked. KEEP on a rig that stands builds nothing, so only
+            # that goes on.
+            blocking = rig_build.locked_rig(bpy.context)
+            if rig_build.is_locked(own):
                 said.stage("keeping the locked rig", 88, 96)
-                stages["rig"] = {"locked": locked.name}
+                stages["rig"] = {"locked": own.name}
                 log.append("the rig %s is locked: it was kept as it is, and "
-                           "the parts were attached to it" % locked.name)
+                           "the parts were attached to it" % own.name)
+            elif blocking is not None and not (
+                    mode == rig_update.KEEP and own is not None):
+                said.stage("keeping the locked rig", 88, 96)
+                stages["rig"] = {"locked": blocking.name}
+                log.append("the rig %s of a different assembly is locked, so "
+                           "this send did not build a rig. Unlock %s and "
+                           "send again to build it"
+                           % (blocking.name, blocking.name))
             elif mode in rig_update.MODES:
                 # An update says what to do with the rig: keep it, rebuild
                 # it inside the armature that is there (which keeps the
                 # animation), or build a new one.
                 said.stage("bringing the rig up to date", 88, 96)
-                stages["rig"] = _update_rig(mode, log, rig_hold.get("rig"))
+                stages["rig"] = _update_rig(mode, log, own)
                 if stages["rig"].get("error"):
                     return {"ok": False, "error": stages["rig"]["error"],
                             "stages": stages}
+                build = rig_ui._STATE.get("build")
+                if build is not None:
+                    built = build.armature_object
             else:
                 said.stage("building the rig", 88, 96)
                 if "FINISHED" not in bpy.ops.cadlink.build_rig():
@@ -861,25 +911,35 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                             "error": rig_ui._STATE["error"] or "rig build failed",
                             "stages": stages}
                 build = rig_ui._STATE["build"]
+                built = build.armature_object
                 stages["rig"] = {
                     "bones": len(build.bone_names),
                     "helpers": len(build.helper_names),
                     "warnings": list(build.warnings),
                 }
 
+        # The parts go on the rig this job built, or else on the rig of
+        # their own assembly. Not on the first rig in the scene: parts of
+        # a direct send carry no manifest path, so relink would bind them
+        # to a different assembly's bones by the group id alone.
         said.stage("attaching the parts to the rig", 96, 100)
-        if have_manifest and want("relink") \
-                and bpy.ops.cadlink.relink_geometry.poll():
-            if "FINISHED" in bpy.ops.cadlink.relink_geometry():
-                rig_hold["relinked"] = True
-                rep = rig_ui._STATE["parent_report"]
-                if rep is not None:
-                    stages["relink"] = {
-                        "parented": rep.bone_parented,
-                        "grounded": len(rep.grounded),
-                        "drift_violations": len(rep.violations),
-                        "posed_bones": [name for name, _ in rep.posed_bones],
-                    }
+        target = built if built is not None else own
+        try:
+            if target is not None:
+                target.name
+        except ReferenceError:
+            target = None
+        if have_manifest and want("relink") and target is not None:
+            from .rig import parenting
+            rep = parenting.relink(bpy.context, target)
+            rig_ui._STATE["parent_report"] = rep
+            rig_hold["relinked"] = True
+            stages["relink"] = {
+                "parented": rep.bone_parented,
+                "grounded": len(rep.grounded),
+                "drift_violations": len(rep.violations),
+                "posed_bones": [name for name, _ in rep.posed_bones],
+            }
         # The parts are bound at rest, so the animation can have the rig
         # back.
         released = rig_hold.get("release")

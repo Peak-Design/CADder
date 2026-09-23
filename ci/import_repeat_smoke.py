@@ -79,6 +79,59 @@ check(empty.matrix_world.translation.length < 1e-9,
       "to_cursor=False leaves the cursor out (%s)"
       % (tuple(empty.matrix_world.translation),))
 
+# ---- a second import reports the same problems, once ---------------------
+# The lists of failed and recovered parts live on the reader, and the
+# cache hands the same reader to the next import of the file. Nothing
+# emptied them, so each import of an unchanged file listed every failed
+# part once more.
+print("\n== the report of a cached import")
+
+
+def write_step(path):
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.gp import gp_Pnt
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TDataStd import TDataStd_Name
+
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    for name, shape in (
+            ("block", BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10, 10, 10).Shape()),
+            ("sketch", BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0),
+                                               gp_Pnt(10, 0, 0)).Edge())):
+        label = tool.AddShape(shape, False)
+        TDataStd_Name.Set_s(label, TCollection_ExtendedString(name))
+    w = STEPCAFControl_Writer()
+    w.Transfer(doc)
+    w.Write(path)
+
+
+import shutil
+import tempfile
+
+TMP = tempfile.mkdtemp(prefix="cadder_import_repeat_")
+EMPTY = os.path.join(TMP, "with_sketch.step")
+write_step(EMPTY)
+m._cache_drop(EMPTY)
+failed_1, recovered_1 = m.load_step(bpy.context, EMPTY, htypes="FLAT",
+                                    up_as="Z")
+failed_1, recovered_1 = list(failed_1), list(recovered_1)
+problems_1 = dict(m._cache_get(EMPTY).import_problems)
+check(len(failed_1) == 1, "the sketch part has no geometry (%s)" % failed_1)
+failed_2, recovered_2 = m.load_step(bpy.context, EMPTY, htypes="FLAT",
+                                    up_as="Z")
+check(m._cache_get(EMPTY) is not None, "the second import used the cache")
+check(list(failed_2) == failed_1,
+      "the second import reports it once (%s)" % list(failed_2))
+check(list(recovered_2) == recovered_1, "and the same recovered parts")
+problems_2 = dict(m._cache_get(EMPTY).import_problems)
+check(problems_2 == problems_1,
+      "and the same problem counts (%s, then %s)" % (problems_1, problems_2))
+
 if FAILS:
     print("\nimport_repeat_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

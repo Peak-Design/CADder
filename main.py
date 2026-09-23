@@ -2115,11 +2115,24 @@ def _list_matdb_files():
 
 
 def _matdb_enum_items(self, context):
-    """Dynamic enum items for material database selection."""
+    """Dynamic enum items for material database selection.
+
+    Blender stores the number of the selected item, not its name. Numbered
+    by position, the selection moved to another database when a file was
+    added to or removed from the folder (a folder shared with a team), and
+    Save then wrote the mappings over that other database. So each item has
+    a number made from its name, and None keeps 0."""
+    import zlib
+
     global _matdb_enum_cache
-    items = [("NONE", "None", "Do not use a material database")]
+    items = [("NONE", "None", "Do not use a material database", 0)]
+    used = {0}
     for name, path in _list_matdb_files():
-        items.append((name, name, f"Use material database: {name}"))
+        number = zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
+        while number in used:
+            number = (number + 1) & 0x7FFFFFFF
+        used.add(number)
+        items.append((name, name, f"Use material database: {name}", number))
     # Blender requires the returned strings to stay referenced from Python.
     # The module-level cache prevents garbage values in the dropdown
     _matdb_enum_cache = items

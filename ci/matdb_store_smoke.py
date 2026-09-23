@@ -129,6 +129,41 @@ finally:
 check(len(calls) == 1, "register moves the old databases (%d call(s))"
       % len(calls))
 
+PREFS = bpy.context.preferences.addons["CADder"].preferences
+
+# ---- the active database stays the same database -------------------------
+# Blender stores the number of an enum item, not its name. Numbered by
+# position in the folder, the selection moved to another database when a
+# teammate added one to a shared folder, and Save then wrote over it.
+print("\n== the selection follows the name, not the place in the folder")
+shared = os.path.join(TMP, "team")
+os.makedirs(shared)
+
+
+def put(name):
+    with open(os.path.join(shared, name + ".blend"), "wb") as fh:
+        fh.write(b"db")
+
+
+put("metal")
+put("wood")
+PREFS.matdb_dir = shared
+PREFS.active_matdb = "wood"
+check(PREFS.active_matdb == "wood", "wood is active (%r)" % PREFS.active_matdb)
+put("aluminium")
+check(PREFS.active_matdb == "wood",
+      "a database added in front keeps wood active (%r)" % PREFS.active_matdb)
+os.remove(os.path.join(shared, "aluminium.blend"))
+os.remove(os.path.join(shared, "metal.blend"))
+check(PREFS.active_matdb == "wood",
+      "databases taken away keep wood active (%r)" % PREFS.active_matdb)
+check(norm(m._get_active_matdb_path()) == norm(os.path.join(shared, "wood.blend")),
+      "and the import uses wood.blend")
+PREFS.active_matdb = "NONE"
+put("metal")
+check(PREFS.active_matdb == "NONE", "None stays None (%r)" % PREFS.active_matdb)
+PREFS.matdb_dir = ""
+
 if FAILS:
     print("\nmatdb_store_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

@@ -726,6 +726,11 @@ class STEPPER_OT_mesh_cleanup(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # In edit mode the mesh data is empty until the mode ends, and the
+        # work below failed with a traceback on it.
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Leave edit mode first")
+            return False
         return any(o.type == "MESH" for o in context.selected_objects)
 
     def execute(self, context):
@@ -794,6 +799,11 @@ class STEPPER_OT_add_box_uv(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # In edit mode the mesh data is empty until the mode ends, and the
+        # work below failed with a traceback on it.
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Leave edit mode first")
+            return False
         return any(o.type == "MESH" for o in context.selected_objects)
 
     def execute(self, context):

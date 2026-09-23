@@ -101,6 +101,15 @@ check(holes(plate) == (0, True) and lighter < plain_faces,
       "Apply Defeature took the bolt holes (%s, %d faces)"
       % (holes(plate), lighter))
 
+# The user's own work on the defeatured part. A refresh without defeature
+# keeps all of it, so one with defeature must too.
+mine = bpy.data.materials.new("My Material")
+plate.data.materials[0] = mine
+group = plate.vertex_groups.new(name="My Group")
+group.add([0, 1, 2], 0.5, "REPLACE")
+weighted = sorted(v.index for v in plate.data.vertices
+                  for g in v.groups if g.group == group.index)
+
 name = plate.name
 plate.select_set(False)
 result = bpy.ops.stepper.refresh_file(filepath=STEP)
@@ -116,6 +125,16 @@ check(len(same.data.polygons) == lighter,
 check(not same.select_get() and not bpy.context.selected_objects,
       "the refresh left the selection alone (%s)"
       % [o.name for o in bpy.context.selected_objects])
+check([ms.name if ms else None for ms in same.data.materials][:1]
+      == ["My Material"], "the user's material stays (%s)"
+      % [ms.name if ms else None for ms in same.data.materials])
+kept_group = same.vertex_groups.get("My Group")
+check(kept_group is not None, "the user's vertex group stays")
+if kept_group is not None:
+    now = sorted(v.index for v in same.data.vertices
+                 for g in v.groups if g.group == kept_group.index)
+    check(now == weighted, "with its weights, as the part did not change "
+          "(%s, was %s)" % (now, weighted))
 
 print("\n== a collection's switch")
 plate = load()

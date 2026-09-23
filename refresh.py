@@ -603,6 +603,16 @@ def _restore_vertex_groups(obj, saved):
             groups[index].add([vert], weight, "REPLACE")
 
 
+def _restore_materials(obj, names):
+    slots = obj.data.materials
+    for i, name in enumerate(names):
+        mat = bpy.data.materials.get(name) if name else None
+        if i < len(slots):
+            slots[i] = mat
+        elif mat is not None:
+            slots.append(mat)
+
+
 def _object_color_is_users(obj):
     """Whether the object color on screen is the user's pick rather than the
     one the import wrote. The importer stamps what it wrote, so anything
@@ -639,13 +649,7 @@ def _adopt(old, fresh, col_map):
         _restore_vertex_groups(old, groups)
 
     if mine is not None:
-        slots = old.data.materials
-        for i, name in enumerate(mine):
-            mat = bpy.data.materials.get(name) if name else None
-            if i < len(slots):
-                slots[i] = mat
-            elif mat is not None:
-                slots.append(mat)
+        _restore_materials(old, mine)
 
     # An instancing empty points at the collection holding its prototype.
     # That prototype is one of the objects already in the scene, so the
@@ -852,6 +856,14 @@ if bpy is not None:
                 self.report({"ERROR"}, "Nothing in the scene from this file")
                 return {"CANCELLED"}
 
+            # Regenerate builds the mesh again, and it drops the material
+            # slots and the vertex groups the user put on it. So the user's
+            # own are read now, off the defeatured mesh, and put back after
+            # it has run. The weights come back too when the part did not
+            # change, because the defeatured mesh is then the same one.
+            held = {obj.name: (_user_materials(obj), _vertex_groups(obj))
+                    for obj in defeatured_parts(path, context.scene)}
+
             # The reader caches by path, and the whole point of a refresh is
             # to read the file again.
             try:
@@ -884,6 +896,12 @@ if bpy is not None:
                     print("[CADder refresh] defeature not applied again:",
                           exc)
                     missed = len(lighter)
+                for obj in lighter:
+                    mine, groups = held.get(obj.name, (None, None))
+                    if groups is not None:
+                        _restore_vertex_groups(obj, groups)
+                    if mine is not None:
+                        _restore_materials(obj, mine)
 
             msg = "Refreshed %s: %d object(s) updated in place" % (
                 os.path.basename(path), kept)

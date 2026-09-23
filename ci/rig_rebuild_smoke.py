@@ -12,6 +12,8 @@ an update with rig_mode APPEND and checks what came back:
   * a bone the user parented to a rig bone hangs on that bone again;
   * a rig the user moved keeps its path rails and cam surfaces on its
     bones;
+  * a rig joined from two assemblies, built again for one of them, keeps
+    the other one's bones, drivers and parts;
 """
 
 import json
@@ -22,13 +24,14 @@ import sys
 import tempfile
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from CADder import bridge, rig  # noqa: E402
-from CADder.rig import graph, manifest as man_mod, rig_build  # noqa: E402
+from CADder.rig import (graph, joining, manifest as man_mod,  # noqa: E402
+                        parenting, rig_build, rig_update)
 from CADder.rig import swmesh, ui as rig_ui  # noqa: E402
 
 FAILS = []
@@ -374,11 +377,143 @@ def moved_rig_keeps_its_cam():
           % head.x)
 
 
+# ── A joined rig built again for one of its assemblies ──────────────────
+
+def joined_manifest(stem, at, coupled=False):
+    """A ground and two hinges. Both assemblies number their groups from
+    g000 and name their bones alike, as rig_join_smoke's do."""
+    parts = [("c001", "base-1", "p" + stem + "base", at, "base"),
+             ("c002", "link-1", "p" + stem + "link", at + 0.1, "link"),
+             ("c003", "lever-1", "p" + stem + "lever", at + 0.2, "lever")]
+    joints = [hinge("j001", "g000", "g001", at + 0.1),
+              hinge("j002", "g000", "g002", at + 0.2)]
+    # A limit gives the first hinge a dial of its own: a bone with no
+    # group that belongs to this assembly all the same.
+    joints[0]["limits"] = {"rotation": {"min": -1.0, "max": 1.0,
+                                        "value_at_rest": 0.0},
+                           "translation": None}
+    if coupled:
+        joints[1]["coupling"] = {"kind": "gear", "driver_joint": "j001",
+                                 "ratio": -2.0}
+    source = stem + ".rig.json"
+    return man_mod.parse(manifest(stem, parts, joints), source_path=source)
+
+
+def built_with_parts(m):
+    result = rig_build.build(bpy.context, m, graph.build(m))
+    arm = result.armature_object
+    parts = {}
+    for gid, bone_name in result.bone_names.items():
+        mesh = bpy.data.meshes.new("%s_%s" % (arm.name, gid))
+        mesh.from_pydata([(0, 0, 0), (0.02, 0, 0), (0, 0.02, 0)], [],
+                         [(0, 1, 2)])
+        obj = bpy.data.objects.new("%s_%s_part" % (arm.name, gid), mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        obj["RIG_group"] = gid
+        obj["RIG_source"] = m.source_path
+        obj.matrix_world = (arm.matrix_world
+                            @ arm.pose.bones[bone_name].matrix
+                            @ Matrix.Translation((0.03, 0.0, 0.0)))
+        parts[gid] = obj
+    parenting.relink(bpy.context, arm)
+    return result, parts
+
+
+def bones_of(arm, source):
+    return sorted(pb.name for pb in arm.pose.bones
+                  if pb.get("RIG_source") == source and pb.get("RIG_group"))
+
+
+def joined_rig_keeps_the_other_assembly():
+    print("-- a joined rig, built again for the machine alone")
+    fresh()
+    machine_m = joined_manifest("machine", 0.0)
+    gripper_m = joined_manifest("gripper", 1.0, coupled=True)
+    machine, machine_parts = built_with_parts(machine_m)
+    gripper, gripper_parts = built_with_parts(gripper_m)
+    host = machine.armature_object
+    sub = gripper.armature_object
+    sub.location = (0.35, 0.12, 0.08)
+    bpy.context.view_layer.update()
+    # A rig built before every bone said which assembly it came from.
+    for pb in sub.pose.bones:
+        if not pb.get("RIG_group") and "RIG_source" in pb.keys():
+            del pb["RIG_source"]
+
+    attach = machine.bone_names["g001"]
+    report = joining.join(bpy.context, host, [sub], attach_bone=attach)
+    check(report.attached_to == attach, "the join did not attach the gripper")
+    gripper_bones = bones_of(host, gripper_m.source_path)
+    gripper_count = sum(1 for pb in host.pose.bones
+                        if pb.name not in {b.name for b in host.pose.bones
+                                           if b.get("RIG_source")
+                                           == machine_m.source_path})
+    gripper_root = [pb.name for pb in host.pose.bones
+                    if pb.get("RIG_source") == gripper_m.source_path
+                    and pb.get("RIG_group") == "g000"][0]
+    parts = list(machine_parts.values()) + list(gripper_parts.values())
+    bpy.context.view_layer.update()
+    before = {o.name: o.matrix_world.translation.copy() for o in parts}
+
+    rig_update.release(bpy.context, host)
+    rig_build.build(bpy.context, machine_m, graph.build(machine_m), into=host)
+    parenting.relink(bpy.context, host)
+    bpy.context.view_layer.update()
+
+    check(bones_of(host, gripper_m.source_path) == gripper_bones,
+          "the gripper's bones are %s, were %s"
+          % (bones_of(host, gripper_m.source_path), gripper_bones))
+    check(bones_of(host, machine_m.source_path)
+          == sorted(machine.bone_names.values()),
+          "the machine's bones are %s" % bones_of(host, machine_m.source_path))
+    left = sum(1 for pb in host.pose.bones
+               if pb.get("RIG_source") != machine_m.source_path)
+    check(left == gripper_count,
+          "%d bone(s) of the gripper are left, was %d" % (left, gripper_count))
+    root = host.data.bones.get(gripper_root)
+    check(root is not None and root.parent is not None
+          and root.parent.name == attach,
+          "the gripper hangs on %r, not on %r"
+          % (root.parent.name if root and root.parent else None, attach))
+    driven = [fc.data_path for fc in host.animation_data.drivers] \
+        if host.animation_data else []
+    check(any(gripper.bone_names["g002"] in p or "lever.001" in p
+              for p in driven),
+          "the gripper's gear lost its driver: %s" % driven)
+    for obj in gripper_parts.values():
+        pb = host.pose.bones.get(obj.parent_bone)
+        check(obj.parent is host and pb is not None
+              and pb.get("RIG_source") == gripper_m.source_path,
+              "%s rides %r, not a bone of its own assembly"
+              % (obj.name, obj.parent_bone))
+    for obj in parts:
+        d = (obj.matrix_world.translation - before[obj.name]).length
+        check(d < 1e-5, "%s moved %.6f m" % (obj.name, d))
+    print("   gripper bones kept:", bones_of(host, gripper_m.source_path))
+
+    # An assembly the joined rig does not hold: nothing says which bones
+    # are its own, so the rig is left alone.
+    stranger = joined_manifest("stranger", 2.0)
+    count = len(host.data.bones)
+    try:
+        rig_build.build(bpy.context, stranger, graph.build(stranger),
+                        into=host)
+        refused = False
+    except ValueError as exc:
+        refused = True
+        print("   refused:", exc)
+    check(refused, "a joined rig was rebuilt for an assembly it does not hold")
+    check(len(host.data.bones) == count,
+          "the refused rebuild changed the bones: %d, was %d"
+          % (len(host.data.bones), count))
+
+
 def main():
     ball_handle_keeps_its_name()
     user_bone_keeps_its_parent()
     moved_rig_keeps_its_rails()
     moved_rig_keeps_its_cam()
+    joined_rig_keeps_the_other_assembly()
 
     print()
     if FAILS:

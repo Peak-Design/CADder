@@ -883,29 +883,86 @@ _GENERATED_TAGS = ("RIG_generated", "RIG_group", "RIG_helper", "RIG_joint",
                    "RIG_spin")
 
 
-def _clear_generated(context, arm_obj, collection):
+def _bone_source(pb):
+    """The manifest a generated bone came from: its own RIG_source, or
+    that of the nearest bone above it that has one. A rig built before
+    every bone carried the tag has it on its group and spin bones only,
+    and each of its other bones hangs below one of those. None when no
+    bone up the chain says."""
+    walk = pb
+    while walk is not None:
+        if "RIG_source" in walk.keys():
+            return walk["RIG_source"] or ""
+        walk = walk.parent
+    return None
+
+
+def _same_assembly(source, sources):
+    """The entries of `sources` that name the assembly `source` names: the
+    same path, or else the same file name, because the CAD application
+    can export to another folder from one send to the next."""
+    if source in sources:
+        return {source}
+    stem = os.path.normcase(os.path.basename(source or ""))
+    return {s for s in sources
+            if stem and os.path.normcase(os.path.basename(s)) == stem}
+
+
+def _clear_generated(context, arm_obj, collection, source=""):
     """Everything the last build made, out of a rig that is standing: its
     bones, the drivers on them, and the helper objects beside it. A bone
     with no tag of ours was put there by the user and stays, with whatever
     they hung on it.
 
+    A rig joined from several assemblies (joining.py) holds the bones of
+    each of them, and an update of one assembly removes that assembly's
+    bones only. The others stay with their drivers, and relink puts their
+    parts back on them.
+
     Returns user bone -> (parent name, use_connect) for each user bone
     that hung on a generated bone. Blender moves the child of a removed
     bone up to the removed bone's parent, so without this record a bone
     the user hung on the arm (a camera target, say) is left on the ground
-    after the update, and no longer moves with the arm."""
+    after the update, and no longer moves with the arm. A bone of another
+    assembly that hung on this one's is such a bone too."""
     orphans = {}
     _ensure_object_mode(context)
-    generated = set()
+    candidates = set()
     for pb in arm_obj.pose.bones:
         keys = pb.keys()
         if any(k in keys for k in _GENERATED_TAGS):
-            generated.add(pb.name)
+            candidates.add(pb.name)
     # A limit dial of a rig built before RIG_generated carries no tag at
     # all. It is in the limits collection, and nothing else is.
     limits = arm_obj.data.collections.get(_LIMITS_COLLECTION)
     if limits is not None:
-        generated.update(b.name for b in limits.bones)
+        candidates.update(b.name for b in limits.bones)
+    owner = {name: _bone_source(arm_obj.pose.bones[name])
+             for name in candidates}
+    sources = {s for s in owner.values() if s is not None}
+    if len(sources) > 1:
+        mine = _same_assembly(source, sources)
+        if not mine:
+            # Nothing tells this assembly's bones from the others'.
+            # Removing all of them loses the other assemblies' rigs.
+            raise ValueError(
+                "The rig %s holds more than one assembly, and none of them "
+                "is %s. The rig was not changed."
+                % (arm_obj.name, os.path.basename(source or "") or "this one"))
+        generated = {n for n, s in owner.items() if s is None or s in mine}
+    else:
+        generated = candidates
+
+    # The rails, cam surfaces and group empties of the last build, before
+    # the bones they hang on go. The armature itself stays, which is the
+    # whole point, and so does a helper object on a bone that stays.
+    doomed = [o for o in list(collection.objects)
+              if o.get("RIG_rig") and o is not arm_obj
+              and not (o.parent is arm_obj and o.parent_type == "BONE"
+                       and o.parent_bone in arm_obj.data.bones
+                       and o.parent_bone not in generated)]
+    _remove_rig_objects(doomed)
+
     animation = arm_obj.animation_data
     if animation is not None:
         for fcurve in list(animation.drivers):
@@ -934,11 +991,6 @@ def _clear_generated(context, arm_obj, collection):
                     arm_obj.data.edit_bones.remove(eb)
         finally:
             bpy.ops.object.mode_set(mode="OBJECT")
-    # The rails, cam surfaces and group empties of the last build. The
-    # armature itself stays, which is the whole point.
-    doomed = [o for o in list(collection.objects)
-              if o.get("RIG_rig") and o is not arm_obj]
-    _remove_rig_objects(doomed)
     return orphans
 
 
@@ -1230,7 +1282,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         arm_obj = into
         arm_data = arm_obj.data
         collection = _rig_collection_of(arm_obj)             or _place_rig_collection(context, manifest, rig_name)
-        orphans = _clear_generated(context, arm_obj, collection)
+        orphans = _clear_generated(context, arm_obj, collection,
+                                   manifest.source_path or "")
     else:
         collection = _place_rig_collection(context, manifest, rig_name)
         _remove_previous_rig(collection)
@@ -1573,7 +1626,12 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
     # The bone the assembly stands on, named on the armature so relink can
     # find it with no session state: anything the rig does not drive is
     # hung off it rather than left behind in world space.
+    # A ground bone that outlived the clear belongs to another assembly
+    # of a joined rig, and that rig's ground stays the ground.
+    ground = arm_obj.get("RIG_ground_bone")
     for bp in plan.bones:
+        if ground and ground in users_bones:
+            break
         if bp.root and bp.group.id in result.bone_names:
             arm_obj["RIG_ground_bone"] = result.bone_names[bp.group.id]
             break
@@ -1622,11 +1680,13 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                      + list(result.cam_off_names.values())):
             pose.bones[name].rotation_mode = "YXZ"
 
+        # Every bone of this build also names its manifest, so an update of
+        # a rig joined from several assemblies can tell whose bone it is.
+        source = manifest.source_path or ""
         for pb in pose.bones:
             if pb.name not in users_bones:
                 pb["RIG_generated"] = True
-
-        source = manifest.source_path or ""
+                pb["RIG_source"] = source
         for bp in plan.bones:
             pb = pose.bones[result.bone_names[bp.group.id]]
             pb["RIG_group"] = bp.group.id
@@ -1638,11 +1698,10 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             if bp.ball_def_name:
                 pb["RIG_joint"] = bp.joint.id
                 ctrl_pb = pose.bones[result.ball_ctrl_names[bp.group.id]]
-                # The handle has no group: the parts ride DEF. The joint and
-                # the source name it, so an update keeps its name
+                # The handle has no group: the parts ride DEF. Its joint and
+                # its source name it, so an update keeps its name
                 # (rig_update.snapshot).
                 ctrl_pb["RIG_joint"] = bp.joint.id
-                ctrl_pb["RIG_source"] = source
                 constraints.apply_ball_cone(
                     arm_obj, pb, ctrl_pb,
                     pose.bones[result.ball_goal_names[bp.group.id]],
@@ -1653,7 +1712,6 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 pb["RIG_joint"] = bp.collapsed.spin_joint.id
                 ctrl_pb = pose.bones[result.ball_ctrl_names[bp.group.id]]
                 ctrl_pb["RIG_joint"] = bp.collapsed.spin_joint.id
-                ctrl_pb["RIG_source"] = source
                 constraints.apply_cone_spin(
                     arm_obj, pb, ctrl_pb,
                     pose.bones[result.ball_goal_names[bp.group.id]],

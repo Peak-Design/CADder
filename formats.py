@@ -70,11 +70,20 @@ class ReadBREP(ReadSTEP):
             data = f.read()
 
         shape = TopoDS_Shape()
-        if data.lstrip()[:32].startswith((b"DBRep_DrawableShape",
-                                          b"CASCADE Topology")):
-            BRepTools.Read_s(shape, io.BytesIO(data), BRep_Builder())
-        else:
-            BinTools.Read_s(shape, io.BytesIO(data))
+        # A damaged file raises an OCCT exception here. load_step catches
+        # only AssertionError, so without this a direct import showed a
+        # traceback and Batch Import Folder stopped at the bad file.
+        try:
+            if data.lstrip()[:32].startswith((b"DBRep_DrawableShape",
+                                              b"CASCADE Topology")):
+                BRepTools.Read_s(shape, io.BytesIO(data), BRep_Builder())
+            else:
+                BinTools.Read_s(shape, io.BytesIO(data))
+        except Exception as e:
+            detail = str(e).strip() or type(e).__name__
+            raise AssertionError(
+                f"Error: can't read BREP file. File possibly damaged. "
+                f"({detail})")
         if shape.IsNull():
             raise AssertionError("Error: BREP file contained no shape.")
 

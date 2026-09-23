@@ -42,7 +42,7 @@ import inspect
 import json
 import os
 
-from . import material_lock
+from . import geometry_lock, material_lock
 
 try:
     import bpy
@@ -80,6 +80,12 @@ REGISTRY_PROP = "step_import_registry"
 # no longer written does not linger. Anything else on the object is the
 # user's and is never touched.
 STAMP_PREFIX = "STEP_"
+
+# The stamps that describe the mesh of a part: the materials of its slots,
+# the settings it was tessellated with, and the scale put into its
+# vertices. A part that keeps its geometry (geometry_lock.py) keeps these
+# too, so they still say what its mesh is.
+MESH_STAMPS = ("STEP_materials", "STEP_import_settings", "STEP_applied_scale")
 
 
 # -- the registry ------------------------------------------------------------
@@ -628,14 +634,21 @@ def _object_color_is_users(obj):
         return True
 
 
-def _adopt(old, fresh, col_map):
+def _adopt(old, fresh, col_map, held=frozenset()):
     """Moves the freshly imported result onto the object already in the
     scene. Returns the data the object used to hold, for purging.
 
     Only what the STEP file describes is touched. The object keeps its
     modifiers, constraints, drivers, animation, collections, visibility and
     anything parented to it, because it is the same object.
+
+    held: the meshes whose geometry is locked (geometry_lock.py). A part
+    that uses one keeps its data, and the stamps that describe it. The
+    fresh data is returned for purging instead. Everything else is done
+    as for any other part.
     """
+    kept = old.type == fresh.type and geometry_lock.keeps(old, held)
+    stamps = geometry_lock.read_tags(old, MESH_STAMPS) if kept else None
     was = old.data
     mine = _user_materials(old)
     # A locked part keeps what it has, also where that is still the
@@ -643,7 +656,12 @@ def _adopt(old, fresh, col_map):
     locks = material_lock.take([old])
     groups = _vertex_groups(old)
     keep_color = _object_color_is_users(old)
-    if old.type == fresh.type:
+    if kept:
+        # The mesh stays, and its materials and vertex groups with it.
+        was = fresh.data
+        mine = None
+        groups = None
+    elif old.type == fresh.type:
         old.data = fresh.data
     else:
         was = None
@@ -665,6 +683,8 @@ def _adopt(old, fresh, col_map):
         old.instance_collection = col_map.get(target, target)
 
     _restamp(old, fresh)
+    if stamps is not None:
+        geometry_lock.write_tags(old, stamps)
     material_lock.restore(locks)
 
     # The object color comes from the file, so a part recolored in CAD
@@ -712,9 +732,11 @@ def apply_import(path, old_objs, old_cols):
     `old_objs` and `old_cols` are what the file owned BEFORE load_step ran.
     Everything it owns now that is not in those lists is freshly made.
 
-    Returns (kept, added, gone, copies): how many objects were updated in
-    place, the names that are new in the file, the names that have gone from
-    it, and how many copies the user made of a part were left as they are.
+    Returns (kept, added, gone, copies, locked): how many objects were
+    updated in place, the names that are new in the file, the names that
+    have gone from it, how many copies the user made of a part were left as
+    they are, and how many of the objects updated in place kept their
+    locked geometry.
     """
     known_objs, known_cols = set(old_objs), set(old_cols)
     fresh_objs = [o for o in file_objects(path) if o not in known_objs]
@@ -736,8 +758,14 @@ def apply_import(path, old_objs, old_cols):
     moves = {old: (_user_move(old) if old.get(BASIS_VERSION_PROP)
                    else _KEEP) for old, _ in pairs}
 
-    # 1. The geometry, the material slots and the import's own stamps.
-    stale = [_adopt(old, fresh, col_map) for old, fresh in pairs]
+    # 1. The geometry, the material slots and the import's own stamps. A
+    #    part whose geometry is locked keeps its mesh. The count is of the
+    #    meshes kept, so an instance and its prototype count once.
+    held = geometry_lock.locked_meshes()
+    locked = sum(1 for old, fresh in pairs
+                 if old.data is not None and old.type == fresh.type
+                 and geometry_lock.keeps(old, held))
+    stale = [_adopt(old, fresh, col_map, held) for old, fresh in pairs]
 
     # 2. Parenting. The assembly structure is the file's, unless the user
     #    re-parented the object onto something of their own. That is a rig,
@@ -803,7 +831,7 @@ def apply_import(path, old_objs, old_cols):
         bpy.data.objects.remove(obj, do_unlink=True)
     _purge(stale)
 
-    return len(pairs), added_names, gone_names, len(copies)
+    return len(pairs), added_names, gone_names, len(copies), locked
 
 
 def defeatured_parts(path, scene):
@@ -886,12 +914,15 @@ if bpy is not None:
                 self.report({"ERROR"}, "Re-import failed. See the console")
                 return {"CANCELLED"}
 
-            kept, added, gone, copies = apply_import(path, old_objs, old_cols)
+            kept, added, gone, copies, locked = apply_import(
+                path, old_objs, old_cols)
 
             # The parts set to defeature go through Regenerate again, as
             # Apply Defeature sends them. The override gives it those parts
-            # and leaves the user's selection as it is.
-            lighter = defeatured_parts(path, context.scene)
+            # and leaves the user's selection as it is. A part whose
+            # geometry is locked kept its mesh, and stays out.
+            lighter = geometry_lock.split(
+                defeatured_parts(path, context.scene))[0]
             missed = 0
             if lighter:
                 try:
@@ -914,6 +945,8 @@ if bpy is not None:
             level = "INFO"
             if copies:
                 msg += ", %d copy(ies) made in Blender not changed" % copies
+            if locked:
+                msg += ", %d part(s) kept their locked geometry" % locked
             if lighter and not missed:
                 msg += ", %d part(s) defeatured again" % len(lighter)
             if missed:

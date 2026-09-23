@@ -37,7 +37,7 @@ from . import appearance, matdb, matching, progress, swmesh
 from . import diff as diff_mod
 from . import weld as weld_mod
 from .. import empties as empties_mod
-from .. import material_lock
+from .. import geometry_lock, material_lock
 
 # NOT RIG_rig: that tag means "part of the rig's own scaffolding", and
 # parenting.relink skips anything carrying it. Tagging imported geometry
@@ -63,6 +63,11 @@ _TAG_LOCAL = "SWMESH_local"
 # can tell a part that was re-tessellated from one that came back the same.
 _TAG_GEOMETRY = "SWMESH_geometry"
 _TAG_TRANSFORM = diff_mod.TAG_TRANSFORM
+# The tags that describe the mesh of a part, and not its place in the
+# assembly. A part that keeps its geometry (geometry_lock.py) keeps these
+# too, so they still say what its mesh is, and the next update still sees
+# that its geometry differs from the export.
+_MESH_TAGS = (_TAG_GEOMETRY, _TAG_TOLERANCE, "STEP_materials")
 
 
 def _material(spec, name_prefix, unit_scale=1.0):
@@ -551,12 +556,17 @@ def up_frame(up_as):
 HIERARCHIES = ("FLAT", "TREE", "EMPTIES", "COLLECTION_INSTANCES")
 
 
+def _short_name(name):
+    """The name a collection of the import gets for `name`."""
+    if len(name) > 50:
+        name = name[:25] + "_" + name[-25:]
+    return name
+
+
 def _collection(name, stem, role, parent):
     """A collection that says which import made it and what for, so a
     re-send can take its own away and leave the user's alone."""
-    if len(name) > 50:
-        name = name[:25] + "_" + name[-25:]
-    col = bpy.data.collections.new(name)
+    col = bpy.data.collections.new(_short_name(name))
     col[_TAG_FILE] = stem
     col["SWMESH_role"] = role
     parent.children.link(col)
@@ -1087,9 +1097,12 @@ def build(context, path, manifest=None, collection_name=None,
 
     # A send replaces every object. A locked part is found again by its
     # place in the assembly: the new object is locked and gets the
-    # materials back.
-    locks = material_lock.take(
-        [o for o in context.scene.objects if o.get(_TAG_FILE) is not None])
+    # materials back. A part that keeps its geometry gets its old mesh
+    # back in the same way, so its mesh stays in the file until then.
+    previous = [o for o in context.scene.objects
+                if o.get(_TAG_FILE) is not None]
+    locks = material_lock.take(previous)
+    shapes = geometry_lock.take(previous, tags=_MESH_TAGS)
     remove_previous(None, context.scene.collection, context.scene)
     destination = context.scene.collection
     # One collection, named after the assembly. The shape of what is
@@ -1128,6 +1141,10 @@ def build(context, path, manifest=None, collection_name=None,
                                 confidence="exact",
                                 object_path=obj.get(_TAG_PATH)))
 
+    # The geometry first: the old mesh carries the old materials, and the
+    # materials of a locked part then go back on the mesh it has now.
+    if geometry_lock.restore(shapes, among=objects) and hierarchy == "FLAT":
+        _rename_flat_groups(placer)
     material_lock.restore(locks, among=objects)
     # Every instance was placed through the frame, so every one anchors
     # it. The Build Rig operator trusts a frame only when something agreed
@@ -1145,6 +1162,27 @@ def build(context, path, manifest=None, collection_name=None,
     return objects, report
 
 
+def _rename_flat_groups(placer):
+    """Names each collection of the flat tree after the mesh its parts
+    use now.
+
+    The flat tree has one collection per mesh, named after it. A part that
+    keeps its geometry gets its old mesh back after the send placed it, in
+    the collection of the new mesh. The old mesh was still in the file
+    when the new one was named, so the new one, and its collection, had a
+    ".001" name."""
+    for col in list(placer.flat_groups.values()):
+        try:
+            names = {o.data.name for o in col.objects if o.data is not None}
+        except ReferenceError:
+            continue
+        if len(names) != 1:
+            continue
+        want = _short_name(names.pop())
+        if col.name != want and bpy.data.collections.get(want) is None:
+            col.name = want
+
+
 @dataclass
 class UpdateReport:
     """What an update did, in the words the user reads."""
@@ -1157,11 +1195,17 @@ class UpdateReport:
     structural: bool = False
     # Copies of a part made in Blender, which the update left alone.
     copies: List[str] = field(default_factory=list)
+    # Parts with new geometry in the export that kept their own, because
+    # their geometry is locked (geometry_lock.py).
+    locked: List[str] = field(default_factory=list)
 
     def describe(self):
-        return ("%d part(s) added, %d removed, %d moved, %d re-tessellated, "
+        text = ("%d part(s) added, %d removed, %d moved, %d re-tessellated, "
                 "%d unchanged" % (len(self.added), len(self.removed),
                                   len(self.moved), len(self.reshaped), self.kept))
+        if self.locked:
+            text += ", %d kept their locked geometry" % len(self.locked)
+        return text
 
 
 def update(context, path, manifest=None, unit_scale=None,
@@ -1182,7 +1226,8 @@ def update(context, path, manifest=None, unit_scale=None,
         object, its mesh, its materials and its modifiers, and is only
         moved and re-tagged,
       * a part that was re-tessellated or changed shape takes the new mesh
-        on the SAME object,
+        on the SAME object, unless its geometry is locked
+        (geometry_lock.py): it then keeps its mesh and only moves,
       * a part that is new is built and placed as a fresh import would,
       * a part that has gone is removed with its mesh.
 
@@ -1244,6 +1289,8 @@ def update(context, path, manifest=None, unit_scale=None,
     # New geometry brings the CAD appearances with it. A locked part gets
     # its own materials back before the database runs.
     locks = material_lock.take()
+    # The meshes that no new geometry replaces.
+    held = geometry_lock.locked_meshes()
 
     said.stage("bringing the parts up to date", 20, 85,
                len(changes.pairs) + len(changes.added) + len(changes.removed))
@@ -1266,11 +1313,21 @@ def update(context, path, manifest=None, unit_scale=None,
             reshaped = not placer.same_geometry(obj.get(_TAG_GEOMETRY), inst)
         except ReferenceError:
             continue
+        # A part whose geometry is locked keeps its mesh, and the tags
+        # that describe the mesh keep saying what it is. A tag of the new
+        # geometry would make the next update read the part as up to date,
+        # and it would not be rebuilt after the lock comes off.
+        kept = reshaped and geometry_lock.keeps(obj, held)
+        mesh_tags = geometry_lock.read_tags(obj, _MESH_TAGS) if kept else None
         placer.retag(obj, inst)
+        if kept:
+            geometry_lock.write_tags(obj, mesh_tags)
         if pair.moved:
             placer.pose(obj, inst)
             out.moved.append(obj.name)
-        if reshaped:
+        if kept:
+            out.locked.append(obj.name)
+        elif reshaped:
             _reshape(obj, placer, inst)
             out.reshaped.append(obj.name)
         if pair.old.path != pair.new.path and not scope.is_aside(obj):
@@ -1537,6 +1594,12 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
     scene = swmesh.load(path)
     materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
     locks = material_lock.take()
+    # Rebuild from CAD leaves a part whose geometry is locked out of its
+    # request. The CAD application also asks for geometry on its own (the
+    # defeatured parts of a send), and a component id can name more parts
+    # than were asked for, so the lock is also kept here.
+    held = geometry_lock.locked_meshes()
+    locked = []
 
     by_component = {}
     by_path = {}
@@ -1571,6 +1634,10 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
             if targets and len(targets) > 1:
                 mismatched.append(inst.path or inst.component_id)
                 continue
+        if not targets:
+            continue
+        targets, kept = geometry_lock.split(targets, held)
+        locked.extend(o.name for o in kept)
         if not targets:
             continue
         me = meshes.get(inst.definition_id)
@@ -1608,6 +1675,9 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
         print("[CADLink native] %d piece(s) of geometry did not name an object "
               "in this scene and were left out: %s"
               % (len(mismatched), ", ".join(mismatched[:5])))
+    if locked:
+        print("[CADLink native] %d part(s) kept their locked geometry: %s"
+              % (len(locked), ", ".join(locked[:5])))
 
     material_lock.restore(locks)
     matdb.apply(replaced, "refine")

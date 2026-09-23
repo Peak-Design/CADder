@@ -10,7 +10,7 @@ import bmesh
 import bpy
 import numpy as np
 
-from . import material_lock
+from . import geometry_lock, material_lock
 from . import quality as quality_mod
 from . import uv as uv_mod
 
@@ -251,6 +251,10 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         Apply UVs and Apply Defeature call this directly, not through the
         operator. The operator reads its parts from the selection, and they
         must know which parts failed.
+
+        A part whose geometry is locked (geometry_lock.py) is left as it
+        is. The mesh is rebuilt in place, so a mesh that a locked part
+        uses is left as it is for every part that uses it.
         """
         from . import main as m
         from . import formats
@@ -258,11 +262,16 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         # Unique mesh datablocks (multi-user meshes regenerate once and all
         # users update automatically since geometry is replaced in place).
         targets = {}
-        for obj in objects:
-            if from_step(obj):
-                targets.setdefault(obj.data, obj)
+        free, kept = geometry_lock.split(
+            [o for o in objects if from_step(o)])
+        for obj in free:
+            targets.setdefault(obj.data, obj)
         if not targets:
-            report({"WARNING"}, "Select parts that came from a file on disk")
+            if kept:
+                report({"WARNING"},
+                       "The geometry of every part in scope is locked")
+            else:
+                report({"WARNING"}, "Select parts that came from a file on disk")
             return None
 
         prefs = m._get_addon_prefs()
@@ -485,6 +494,8 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         if defeatured:
             note = (", %d defeatured (%d feature(s) out, %d left alone)"
                     % (defeatured, features[0], features[1]))
+        if kept:
+            note += ", %d part(s) kept their locked geometry" % len(kept)
         if failed:
             report({"WARNING"},
                    f"Regenerated {done}{note}; "
@@ -912,8 +923,17 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             # island per CAD face, which is what every mode below builds on.
             step = [o for o in covered if from_step(o)]
             live = [o for o in covered if from_cad_link(o) and o not in step]
+            # These modes rebuild the mesh, so a part whose geometry is
+            # locked stays as it is. Box Project, above, works on the mesh
+            # as it is, so it also works on a locked part.
+            held = geometry_lock.locked_meshes()
+            step, kept = geometry_lock.split(step, held)
+            live, kept_live = geometry_lock.split(live, held)
+            kept += kept_live
             if not step and not live:
                 self.report({"WARNING"},
+                            "The geometry of every part in scope is locked"
+                            if kept else
                             "This mode needs the CAD data. Select parts that "
                             "came from a STEP file or over the live link")
                 return {"CANCELLED"}
@@ -954,6 +974,9 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
             targets = rebuilt
             if made:
                 made = ["rebuilt " + " and ".join(made)]
+                if kept:
+                    made[0] += (", %d part(s) kept their locked geometry"
+                                % len(kept))
 
         # Regenerate has paired the triangles again as the record asks, so
         # packing is the one pass left.
@@ -1020,6 +1043,11 @@ class STEPPER_OT_apply_defeature(bpy.types.Operator):
                   % (groups, parts) if groups
                   else "set on %d part(s)" % parts)
 
+        # A part whose geometry is locked gets the switch too, and it
+        # takes effect at the first rebuild after the lock comes off. Its
+        # geometry stays as it is now.
+        covered, kept = geometry_lock.split(covered)
+
         step = [o for o in covered if from_step(o)]
         # A part is asked of the CAD application when it can be,
         # because that is the live copy.
@@ -1036,6 +1064,8 @@ class STEPPER_OT_apply_defeature(bpy.types.Operator):
         if step:
             STEPPER_OT_regenerate.rebuild(context, step, False, self.report)
             said.append("%d part(s) from the STEP file" % len(step))
+        if kept:
+            said.append("%d part(s) kept their locked geometry" % len(kept))
         if problem is not None:
             # The switches stay on, and the parts from the live link get
             # their small features taken out at their next rebuild. FINISHED

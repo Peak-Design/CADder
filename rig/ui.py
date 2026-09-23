@@ -847,6 +847,19 @@ if bpy is not None:
         return tools_mod.scope_objects(
             context, lambda o: bool(o.get("RIG_component_id")))
 
+    def _identities(objects):
+        """(the component ids, the persistent ids) of these parts, once
+        each, in the order the parts come."""
+        ids, persistent = [], []
+        for obj in objects:
+            cid = obj.get("RIG_component_id")
+            if cid and cid not in ids:
+                ids.append(cid)
+            pid = obj.get("SWMESH_persistent_id")
+            if pid and pid not in persistent:
+                persistent.append(pid)
+        return ids, persistent
+
     def _rig_holding(obj):
         """The CAD rig this object rides, directly or through the tree
         empties above it, or None."""
@@ -1082,6 +1095,9 @@ if bpy is not None:
                                  len(changed.get("moved") or []),
                                  len(changed.get("reshaped") or []),
                                  changed.get("kept", 0)))
+            locked = len(changed.get("locked") or [])
+            if locked:
+                out["changed"] += ", %d kept their locked geometry" % locked
         out["defeature"] = ((0, 0) if held is None
                             else defeature.restore(held, context.scene))
         return out
@@ -1165,31 +1181,33 @@ if bpy is not None:
 
         def execute(self, context):
             from . import native_import, cad_link, progress, defeature
+            from .. import geometry_lock
             # An error from an earlier run stays in the panel only until
             # this runs again: the CAD application can be there now.
             _STATE["error"] = ""
-            ids = []
             covered = _scope_objects(context)
-            for obj in covered:
-                cid = obj.get("RIG_component_id")
-                if cid and cid not in ids:
-                    ids.append(cid)
+            ids, persistent = _identities(covered)
             if not ids:
                 self.report({"WARNING"}, "Select parts that came from the CAD application")
                 return {"CANCELLED"}
-            persistent = []
+            # A part whose geometry is locked stays out of the request for
+            # geometry, so the CAD application does not tessellate it. It
+            # still moves to its CAD pose: a pose is not geometry.
+            shaped, locked = geometry_lock.split(covered)
+            if self.what == "GEOMETRY" and not shaped:
+                self.report({"WARNING"},
+                            "The geometry of every part in scope is locked")
+                return {"CANCELLED"}
+            shaped_ids, shaped_persistent = _identities(shaped)
             split = False
-            for obj in covered:
-                pid = obj.get("SWMESH_persistent_id")
-                if pid and pid not in persistent:
-                    persistent.append(pid)
+            for obj in shaped:
                 # A part that came in as one object per solid body. The
                 # geometry has to come back in the same pieces, so the CAD
                 # application is told which it was.
                 if native_import._BODY_SUFFIX.search(
                         str(obj.get("SWMESH_path") or "")):
                     split = True
-            changed, moved = [], 0
+            changed, moved, reply = [], 0, None
             # The CAD application takes seconds to minutes to answer, and
             # Blender holds still meanwhile, so the status bar says which
             # part of the update is running.
@@ -1224,7 +1242,7 @@ if bpy is not None:
                                     "SolidWorks: {}. Unsuppress them before you save"
                                     .format(", ".join(stages["limits"])))
                     return {"FINISHED"}
-                if self.what != "POSES":
+                if self.what != "POSES" and shaped:
                     said.stage("asking the CAD application for the geometry", 0, 60)
                     # Which parts travel without their small features is
                     # this scene's decision, so it is sent every time. A
@@ -1234,12 +1252,12 @@ if bpy is not None:
                     # rebuild a part from a file, with its distance in
                     # meters.
                     reply = cad_link.retessellate(
-                        ids, native_import.cad_quality(context.scene),
-                        persistent_ids=persistent,
+                        shaped_ids, native_import.cad_quality(context.scene),
+                        persistent_ids=shaped_persistent,
                         separate_solids=split or None,
-                        paths=native_import.cad_paths(covered),
-                        defeature=defeature.orders(covered, context.scene))
-                    said.stage("replacing the geometry", 60, 90, len(ids))
+                        paths=native_import.cad_paths(shaped),
+                        defeature=defeature.orders(shaped, context.scene))
+                    said.stage("replacing the geometry", 60, 90, len(shaped_ids))
                     changed = refine_from_reply(context, reply)
                     if not changed:
                         self.report({"WARNING"},
@@ -1268,6 +1286,8 @@ if bpy is not None:
                 said.close()
             pose_report = _STATE.get("pose_report")
             held = list(pose_report.skipped) if pose_report is not None else []
+            locked_note = (", {} part(s) kept their locked geometry".format(len(locked))
+                    if locked else "")
             if self.what == "POSES":
                 if moved or held:
                     self.report({"INFO"}, "Moved {} part(s) onto the CAD poses"
@@ -1277,13 +1297,18 @@ if bpy is not None:
                                 "CAD poses".format(pose_report.already_ok))
             elif self.what == "GEOMETRY":
                 self.report({"INFO"},
-                            "Updated {} part(s) to {} triangles ({:.3g} m chord)"
+                            "Updated {} part(s) to {} triangles ({:.3g} m chord){}"
                             .format(len(changed), reply.get("triangles", 0),
-                                    reply.get("tolerance_m", 0.0)))
+                                    reply.get("tolerance_m", 0.0), locked_note))
+            elif reply is None:
+                self.report({"INFO"},
+                            "Moved {} part(s) onto the CAD poses{}"
+                            .format(moved, locked_note))
             else:
                 self.report({"INFO"},
-                            "Updated {} part(s) to {} triangles, moved {} onto the CAD poses"
-                            .format(len(changed), reply.get("triangles", 0), moved))
+                            "Updated {} part(s) to {} triangles, moved {} onto the CAD poses{}"
+                            .format(len(changed), reply.get("triangles", 0), moved,
+                                    locked_note))
             if self.what != "GEOMETRY" and held:
                 # Last, so the status bar shows it.
                 self.report({"WARNING"},

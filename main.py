@@ -44,6 +44,7 @@ from . import curves as curves_mod
 from . import analyzer as analyzer_mod
 from . import refresh as refresh_mod
 from . import empties as empties_mod
+from . import geometry_lock
 from . import material_lock
 from . import quality as quality_mod
 from . import background as background_mod
@@ -2520,8 +2521,8 @@ def _cleanup_unused_step_materials(known_names=None):
 # The Material Database list asks on every redraw which entries the parts
 # of the scene use, and a scene can hold ten thousand parts. So the answer
 # is kept, and worked out again only after a change that can alter it.
-_usage = {"scene": 0, "names": frozenset(), "locked": 0, "stale": True,
-          "frame": None}
+_usage = {"scene": 0, "names": frozenset(), "locked": 0, "geometry": 0,
+          "stale": True, "frame": None}
 
 
 @bpy.app.handlers.persistent
@@ -2585,16 +2586,26 @@ def _scene_usage(scene):
                     and inner.instance_collection is not None):
                 instanced(inner.instance_collection)
 
+    geometry = 0
     for obj in scene.objects:
         if material_lock.is_locked(obj):
             locked += 1
+        if geometry_lock.is_locked(obj):
+            geometry += 1
         carry(obj)
         if (obj.instance_type == "COLLECTION"
                 and obj.instance_collection is not None):
             instanced(obj.instance_collection)
     _usage.update(scene=pointer, names=frozenset(names), locked=locked,
-                  stale=False)
+                  geometry=geometry, stale=False)
     return _usage["names"], locked
+
+
+def _geometry_locked(scene):
+    """The number of parts in this scene whose geometry is locked. Kept
+    with the answer of _scene_usage, so a redraw costs no scan."""
+    _scene_usage(scene)
+    return _usage["geometry"]
 
 
 def _parts_with(view_layer, name):
@@ -4369,6 +4380,14 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
         if not my_selection:
             self.report({"WARNING"}, "No rebuildable STEP objects selected")
             return {"CANCELLED"}
+        # A part whose geometry is locked keeps its mesh. The mesh is
+        # rebuilt in place, so a mesh that a locked part uses stays as it
+        # is for every part that uses it.
+        my_selection, kept = geometry_lock.split(my_selection)
+        if not my_selection:
+            self.report({"WARNING"},
+                        "The geometry of every selected part is locked")
+            return {"CANCELLED"}
 
         wanted = quality_mod.spec_of(context.scene.stepper)
 
@@ -4466,6 +4485,10 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
             mappings = _ensure_matdb_materials(db_path)
             _apply_matdb_to_objects(my_selection, mappings)
 
+        if kept:
+            self.report({"INFO"},
+                        f"Rebuilt {len(rebuilt_meshes)} mesh(es), "
+                        f"{len(kept)} part(s) kept their locked geometry")
         return {"FINISHED"}
 
 
@@ -4916,6 +4939,110 @@ class STEP_OT_MaterialLockSelect(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class STEP_OT_GeometryLock(bpy.types.Operator):
+    """Keep the geometry of the parts in scope. Rebuild from CAD, Rebuild from STEP and a refresh leave their meshes as they are. The parts still move to new poses"""
+    bl_idname = "stepper.geometry_lock"
+    bl_label = "Lock Geometry"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    lock: bpy.props.BoolProperty(
+        name="Lock",
+        description="Lock the geometry. Clear to unlock it",
+        default=True,
+    )
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.is_property_set("lock"):
+            lock = properties.lock
+        else:
+            lock = not _every_geometry_locked(_lock_scope(context))
+        if lock:
+            return cls.__doc__
+        return ("Let Rebuild from CAD, Rebuild from STEP and a refresh "
+                "replace the geometry of the parts in scope again")
+
+    @classmethod
+    def poll(cls, context):
+        # This runs on every redraw of the panel, so it looks at a limited
+        # number of objects.
+        if not _lock_state(context)[0]:
+            cls.poll_message_set("Select parts that came from a STEP file "
+                                 "or over the live link")
+            return False
+        return True
+
+    def execute(self, context):
+        targets = _lock_scope(context)
+        if not targets:
+            self.report({'WARNING'}, "Select parts that came from a STEP "
+                        "file or over the live link")
+            return {'CANCELLED'}
+        # The button sets no value: it locks the parts, or unlocks them
+        # when every one is locked already. That is decided here, from the
+        # whole scope. The panel looks at a part of a large scope only.
+        # The value goes into the operator, so Adjust Last Operation shows
+        # it and a redo does the same.
+        if not self.properties.is_property_set("lock"):
+            self.lock = not _every_geometry_locked(targets)
+        for obj in targets:
+            geometry_lock.set_locked(obj, self.lock)
+        _usage_stale()
+        verb = "Locked" if self.lock else "Unlocked"
+        self.report({'INFO'},
+                    f"{verb} the geometry of {len(targets)} part(s)")
+        return {'FINISHED'}
+
+
+class STEP_OT_GeometryLockSelect(bpy.types.Operator):
+    """Select the parts whose geometry is locked. Shift-click to add them to the selection"""
+    bl_idname = "stepper.geometry_lock_select"
+    bl_label = "Select Parts with Locked Geometry"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    extend: bpy.props.BoolProperty(
+        name="Extend",
+        description="Add the parts to the selection",
+        default=False,
+        options={'SKIP_SAVE'},
+    )
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'OBJECT':
+            cls.poll_message_set("Leave edit mode first")
+            return False
+        if _geometry_locked(context.scene) == 0:
+            cls.poll_message_set("No part in this scene has locked geometry")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        view_layer = context.view_layer
+        shown, hidden = [], 0
+        for obj in view_layer.objects:
+            if not geometry_lock.is_locked(obj):
+                continue
+            if obj.visible_get(view_layer=view_layer) and not obj.hide_select:
+                shown.append(obj)
+            else:
+                hidden += 1
+        if not shown:
+            self.report({'WARNING'}, "The parts with locked geometry are hidden"
+                        if hidden else "No part in this scene has locked geometry")
+            return {'CANCELLED'}
+        _select_only(context, shown, self.extend)
+        message = f"Selected {len(shown)} part(s) with locked geometry"
+        if hidden:
+            message += f". {hidden} hidden part(s) stay as they are"
+        self.report({'INFO'}, message)
+        return {'FINISHED'}
+
+
 def _populate_ui_mappings(stepper, mappings, source):
     """Fill the UI CollectionProperty from a mappings dict, and record the
     database file it came from. Save writes only to that file."""
@@ -5158,6 +5285,50 @@ def _routes(context):
     return live, step
 
 
+def _lock_scope(context):
+    """The parts that Lock Geometry covers. The rule is the one of the
+    rebuild buttons beside it: the parts that are selected, or the
+    collection that is active in the outliner when no part is selected."""
+    return tools_mod.scope_objects(context, geometry_lock.is_part)
+
+
+def _every_geometry_locked(parts):
+    """True when there are parts and the geometry of each one is locked."""
+    return bool(parts) and all(geometry_lock.is_locked(o) for o in parts)
+
+
+def _lock_sources(context):
+    """Where the scope of Lock Geometry comes from, in order: the
+    selection, then the active collection."""
+    yield context.selected_objects
+    holder = context.collection
+    if holder is not None:
+        yield holder.all_objects
+
+
+def _lock_state(context):
+    """(a part is in the scope of Lock Geometry, the geometry of every
+    part in it is locked), for the panel and the poll.
+
+    Both run on every redraw, so this looks at _ROUTE_SCAN objects at
+    most, and it stops when it knows both answers. In a larger scope the
+    answer is that of the parts it looked at. The operator decides from
+    the whole scope when it runs."""
+    for source in _lock_sources(context):
+        found = False
+        for i, obj in enumerate(source):
+            if i >= _ROUTE_SCAN:
+                break
+            if not geometry_lock.is_part(obj):
+                continue
+            if not geometry_lock.is_locked(obj):
+                return True, False
+            found = True
+        if found:
+            return True, True
+    return False, False
+
+
 class CADLINK_PT_quality(bpy.types.Panel):
     """How fine the mesh of a part is, whichever way the part came in.
 
@@ -5201,13 +5372,25 @@ class CADLINK_PT_quality(bpy.types.Panel):
         col.prop(prg, "tris_to_quads")
 
         tools_mod.scope_hint(layout, context)
+        buttons = []
         if live:
-            layout.operator("cadlink.update_from_cad",
-                            text="Rebuild from CAD", icon="FILE_REFRESH")
+            buttons.append(("cadlink.update_from_cad", "Rebuild from CAD"))
         if step:
-            layout.operator("stepper.regenerate",
-                            text="Rebuild from %s" % step,
-                            icon="FILE_REFRESH")
+            buttons.append(("stepper.regenerate", "Rebuild from %s" % step))
+        for n, (idname, text) in enumerate(buttons):
+            row = layout.row(align=True)
+            row.operator(idname, text=text, icon="FILE_REFRESH")
+            if n == 0:
+                # Lock Geometry once, beside the first rebuild button: it
+                # says which parts a rebuild leaves as they are. It shows
+                # whether the parts in scope are locked, and a click locks
+                # or unlocks them.
+                every = _lock_state(context)[1]
+                row.operator("stepper.geometry_lock", text="",
+                             icon="LOCKED" if every else "UNLOCKED",
+                             depress=every)
+                row.operator("stepper.geometry_lock_select", text="",
+                             icon="RESTRICT_SELECT_OFF")
         layout.operator("stepper.mesh_cleanup", text="Clean Up Meshes")
 
 
@@ -5674,6 +5857,8 @@ classes = (
     STEP_OT_MatDBRemoveEntry,
     STEP_OT_MaterialLock,
     STEP_OT_MaterialLockSelect,
+    STEP_OT_GeometryLock,
+    STEP_OT_GeometryLockSelect,
     STEP_UL_MaterialMappings,
     STEP_PT_STEPper_Info,
     CADLINK_PT_quality,
@@ -5693,6 +5878,7 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.stepper = bpy.props.PointerProperty(type=PG_Stepper)
     material_lock.register()
+    geometry_lock.register()
     bpy.app.handlers.depsgraph_update_post.append(_usage_on_update)
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post,
                      bpy.app.handlers.redo_post):
@@ -5741,5 +5927,6 @@ def unregister():
             (bpy.app.handlers.redo_post, _usage_stale)):
         if handler in handlers:
             handlers.remove(handler)
+    geometry_lock.unregister()
     material_lock.unregister()
     del bpy.types.Scene.stepper

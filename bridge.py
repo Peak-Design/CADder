@@ -851,6 +851,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         "moved": changed.moved,
                         "reshaped": changed.reshaped,
                         "kept": changed.kept,
+                        "locked": changed.locked,
                         "structural": changed.structural,
                     }
                     log.append("update: " + changed.describe())
@@ -902,7 +903,12 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 if back.moved:
                     log.append("%d part(s) of the rig put back on their CAD "
                                "pose" % len(back.moved))
-            made = native_import.quads(objects)
+            # A part whose geometry is locked keeps its mesh exactly as it
+            # is, so the passes below and the request for defeatured parts
+            # leave it out.
+            from . import geometry_lock
+            shaped = geometry_lock.split(objects)[0]
+            made = native_import.quads(shaped)
             if made:
                 log.append("tris to quads: %d mesh(es)" % made)
             # A compound surface has no chart one scale can hold, and the
@@ -910,7 +916,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # it runs here, on what just arrived.
             if prg is None or prg.uv_unwrap_compound:
                 from . import main as main_mod
-                faces, islands = main_mod._unwrap_compound_objects(objects)
+                faces, islands = main_mod._unwrap_compound_objects(shaped)
                 if faces:
                     log.append("unwrapped %d compound face(s) into %d "
                                "island(s)" % (faces, islands))
@@ -930,7 +936,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # The CAD application holds no such setting, so a send always
             # brings the small features back. The marked parts are asked for
             # again, which is what keeps the scene saying one thing.
-            asked = rig_defeature.orders(objects)
+            asked = rig_defeature.orders(shaped)
             if asked:
                 stages["mesh"]["defeature"] = len(asked)
                 log.append("defeature: asking again for %d part(s) without "

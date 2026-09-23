@@ -605,6 +605,7 @@ class _Placer:
 
         self._materials = None
         self._meshes = {}
+        # definition id of THIS export -> the collection of its prototype.
         self.prototypes = {}
         self.components_collection = None
         self.tree_cols = {"": root}
@@ -643,27 +644,42 @@ class _Placer:
         definition, in a collection of its own."""
         if self.hierarchy != "COLLECTION_INSTANCES":
             return
-        # Inside the assembly's own collection, so the scene shows one
-        # collection per send and not a hidden second one beside it.
-        components = _collection(self.stem + ".components", self.stem,
-                                 "components", self.root)
-        self.components_collection = components
         for definition in self.scene.definitions:
-            me = self.mesh(definition.id)
-            if me is None:
-                continue
-            part_col = _collection(
-                definition.name or ("definition %d" % definition.id),
-                self.stem, "part", components)
-            proto = bpy.data.objects.new(definition.name or "part", me)
-            proto[_TAG_FILE] = self.stem
-            proto[_TAG_DEFINITION] = definition.id
-            proto[_TAG_TOLERANCE] = self.scene.tolerance
-            proto["SWMESH_prototype"] = True
-            _material_names(proto)
-            part_col.objects.link(proto)
-            self.prototypes[definition.id] = part_col
-        _exclude(self.context, components)
+            self.prototype(definition.id)
+
+    def prototype(self, definition_id):
+        """The collection that holds the prototype of one definition of
+        this export. One is built when the scene has none with the same
+        geometry. None when the file holds no geometry for it."""
+        if definition_id in self.prototypes:
+            return self.prototypes[definition_id]
+        me = self.mesh(definition_id)
+        if me is None:
+            return None
+        definition = self.definitions[definition_id]
+        part_col = _collection(
+            definition.name or ("definition %d" % definition.id),
+            self.stem, "part", self.components())
+        proto = bpy.data.objects.new(definition.name or "part", me)
+        proto[_TAG_FILE] = self.stem
+        proto[_TAG_DEFINITION] = definition.id
+        proto[_TAG_TOLERANCE] = self.scene.tolerance
+        proto[_TAG_GEOMETRY] = _definition_hash(definition)
+        proto["SWMESH_prototype"] = True
+        _material_names(proto)
+        part_col.objects.link(proto)
+        self.prototypes[definition_id] = part_col
+        return part_col
+
+    def components(self):
+        """The hidden collection of the prototypes, made when needed."""
+        if self.components_collection is None:
+            # Inside the assembly's own collection, so the scene shows one
+            # collection per send and not a hidden second one beside it.
+            self.components_collection = _collection(
+                self.stem + ".components", self.stem, "components", self.root)
+            _exclude(self.context, self.components_collection)
+        return self.components_collection
 
     # ── the assembly tree ───────────────────────────────────────────────
 
@@ -713,6 +729,12 @@ class _Placer:
         file left in this scene, so an update reuses them instead of
         building a second tree beside the first. Anything the user put
         inside one of them stays where it is."""
+        # The prototypes, by their geometry. The export numbers its
+        # definitions in walk order, so the numbers shift when a part is
+        # added in front of another, and a prototype found by the old
+        # number drew a different part. A prototype of an older import has
+        # no geometry tag, and the instances that draw it say what it is.
+        by_geometry = {}
         for col in scope.collections:
             if col.get(_TAG_FILE) != self.stem:
                 continue
@@ -725,8 +747,8 @@ class _Placer:
                 self.components_collection = col
             elif col.get("SWMESH_role") == "part":
                 for obj in col.objects:
-                    if obj.get("SWMESH_prototype"):
-                        self.prototypes[_int(obj.get(_TAG_DEFINITION), -1)] = col
+                    if obj.get("SWMESH_prototype") and obj.get(_TAG_GEOMETRY):
+                        by_geometry.setdefault(obj[_TAG_GEOMETRY], col)
         for obj in scope.objects:
             if obj.get(_TAG_FILE) != self.stem or obj.type != "EMPTY":
                 continue
@@ -742,22 +764,42 @@ class _Placer:
             obj[diff_mod.TAG_ROLE] = "node"
             if _TAG_COMPONENT in obj.keys():
                 del obj[_TAG_COMPONENT]
+        for obj in scope.objects:
+            col = getattr(obj, "instance_collection", None)
+            if obj.get(_TAG_FILE) == self.stem and obj.get(_TAG_GEOMETRY) \
+                    and col is not None and col.get("SWMESH_role") == "part":
+                by_geometry.setdefault(obj[_TAG_GEOMETRY], col)
+        for definition in self.scene.definitions:
+            signature = _definition_hash(definition)
+            col = by_geometry.get(signature)
+            if col is None:
+                continue
+            self.prototypes[definition.id] = col
+            for proto in col.objects:
+                if proto.get("SWMESH_prototype"):
+                    proto[_TAG_DEFINITION] = definition.id
+                    proto[_TAG_GEOMETRY] = signature
 
     # ── the parts themselves ────────────────────────────────────────────
 
     def create(self, inst):
         """One new object for one placement, tagged and placed. None when
         the file holds no geometry for it."""
-        me = self.mesh(inst.definition_id)
-        if me is None:
-            return None
         name = inst.name or inst.component_id
         if self.hierarchy == "COLLECTION_INSTANCES":
+            # Only the prototype holds a mesh. One built here for the
+            # instance too was left with no users.
+            col = self.prototype(inst.definition_id)
+            if col is None:
+                return None
             obj = bpy.data.objects.new(name, None)
             obj.instance_type = "COLLECTION"
-            obj.instance_collection = self.prototypes.get(inst.definition_id)
+            obj.instance_collection = col
             obj.empty_display_size = 0.01
         else:
+            me = self.mesh(inst.definition_id)
+            if me is None:
+                return None
             obj = bpy.data.objects.new(name, me)
         self.retag(obj, inst)
         self.pose(obj, inst)
@@ -854,13 +896,6 @@ class _Placer:
             world = obj.matrix_world.copy()
             obj.parent = None
             obj.matrix_world = world
-
-
-def _int(value, fallback):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback
 
 
 def _definition_hash(definition):
@@ -1051,9 +1086,8 @@ def update(context, path, manifest=None, unit_scale=None,
 
     if before_changes is not None:
         before_changes(stem)
+    # A prototype the scene lacks is built when a placement needs it.
     placer.adopt_tree(scope)
-    if hierarchy == "COLLECTION_INSTANCES" and not placer.prototypes:
-        placer.build_prototypes()
 
     new = diff_mod.from_scene_file(scene, manifest)
     changes = diff_mod.compare(old, new)
@@ -1121,6 +1155,7 @@ def update(context, path, manifest=None, unit_scale=None,
         doomed.append(obj)
     _remove_objects(doomed)
     _prune_tree(placer, new)
+    _prune_prototypes(placer)
 
     matdb.apply(objects + prototypes_objects(placer.prototypes), "update")
     report.frame_agree = len(report.matched)
@@ -1145,7 +1180,17 @@ def _fit_empties(placer, objects):
 def _reshape(obj, placer, inst):
     """New geometry on an object that is already in the scene: the mesh
     DATA is replaced and the object is not, so its place, its parent, its
-    modifiers and its bone all survive."""
+    modifiers and its bone all survive.
+
+    A collection instance takes the prototype of its new definition. The
+    prototype it had is shared with the other placements of the old
+    definition, and new geometry put into it changed them all."""
+    if obj.type == "EMPTY" and obj.instance_type == "COLLECTION":
+        col = placer.prototype(inst.definition_id)
+        if col is not None and obj.instance_collection is not col:
+            obj.instance_collection = col
+        _object_colour(obj)
+        return
     me = placer.mesh(inst.definition_id)
     if me is None:
         return
@@ -1218,12 +1263,38 @@ def _prune_tree(placer, occurrences):
         placer.empties.pop(path, None)
 
 
+def _prune_prototypes(placer):
+    """Prototypes that no placement draws any more: the part left the
+    assembly, or its placements took new geometry. A collection that holds
+    anything besides the prototype is kept."""
+    components = placer.components_collection
+    if components is None:
+        return
+    wanted = {c.as_pointer() for c in placer.prototypes.values() if c is not None}
+    for col in list(components.children):
+        try:
+            if col.get("SWMESH_role") != "part" or col.as_pointer() in wanted:
+                continue
+            if col.users_dupli_group or col.children \
+                    or any(not o.get("SWMESH_prototype") for o in col.objects):
+                continue
+            for proto in list(col.objects):
+                data = proto.data
+                bpy.data.objects.remove(proto, do_unlink=True)
+                if isinstance(data, bpy.types.Mesh) and data.users == 0:
+                    bpy.data.meshes.remove(data)
+            bpy.data.collections.remove(col)
+        except (ReferenceError, RuntimeError):
+            continue
+
+
 def prototypes_objects(prototypes):
     """The prototype objects of the instancing mode, which hold the meshes
     and so the material slots."""
     out = []
     for collection in (prototypes or {}).values():
-        out.extend(collection.objects)
+        if collection is not None:
+            out.extend(collection.objects)
     return out
 
 

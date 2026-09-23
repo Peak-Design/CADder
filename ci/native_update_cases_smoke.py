@@ -358,7 +358,102 @@ def case_a_copy_on_the_rig():
     check(by_path("bolt-1") is not None, "the refresh lost the bolt")
 
 
+def _proto_mesh(obj):
+    """The mesh a collection instance draws."""
+    col = obj.instance_collection
+    check(col is not None, "%s instances nothing" % obj.name)
+    meshes = [o.data for o in col.objects if o.type == "MESH"]
+    check(len(meshes) == 1, "%s draws %d mesh(es)" % (obj.name, len(meshes)))
+    return meshes[0]
+
+
+def _width(me):
+    return max(v.co.x for v in me.vertices) - min(v.co.x for v in me.vertices)
+
+
+def _orphans():
+    return sorted(me.name for me in bpy.data.meshes if me.users == 0)
+
+
+def case_instances_find_their_prototype(older=False):
+    """The export numbers its definitions in walk order, so a part added
+    in front of another shifts the numbers. The update found prototypes by
+    the old number: the new guard drew the arm, a second arm drew nothing,
+    and the meshes built for them were left with no users."""
+    fresh()
+    first = write_mesh(
+        "inst", [(0, "base", 0.1, None), (1, "arm", 0.04, None)],
+        [(0, "c001", "base", "base-1", 0.0, None),
+         (1, "c002", "arm", "arm-1", 0.3, None)])
+    native_import.build(bpy.context, first, hierarchy="COLLECTION_INSTANCES")
+    arm_col = by_path("arm-1").instance_collection
+    if older:
+        # The prototypes of an older send carry no geometry tag.
+        for obj in bpy.data.objects:
+            if obj.get("SWMESH_prototype") and "SWMESH_geometry" in obj.keys():
+                del obj["SWMESH_geometry"]
+
+    second = write_mesh(
+        "inst", [(0, "base", 0.1, None), (1, "guard", 0.07, None),
+                 (2, "arm", 0.04, None)],
+        [(0, "c001", "base", "base-1", 0.0, None),
+         (1, "c002", "guard", "guard-1", 0.2, None),
+         (2, "c003", "arm", "arm-1", 0.3, None),
+         (2, "c004", "arm", "arm-2", 0.5, None)])
+    _objects, _report, out = native_import.update(
+        bpy.context, second, hierarchy="COLLECTION_INSTANCES")
+    check(sorted(out.added) == ["arm", "guard"] or
+          sorted(n.split(".")[0] for n in out.added) == ["arm", "guard"],
+          "added: %s" % out.added)
+    check(not out.reshaped, "re-tessellated: %s" % out.reshaped)
+    guard = by_path("guard-1")
+    check(abs(_width(_proto_mesh(guard)) - 0.07) < 1e-6,
+          "the guard draws a part %.3f wide" % _width(_proto_mesh(guard)))
+    for path in ("arm-1", "arm-2"):
+        arm = by_path(path)
+        check(arm.instance_collection is arm_col,
+              "%s does not draw the arm prototype" % path)
+    check(not _orphans(), "meshes with no users: %s" % _orphans())
+
+    # And once more, unchanged: nothing moves between prototypes.
+    _objects, _report, out = native_import.update(
+        bpy.context, second, hierarchy="COLLECTION_INSTANCES")
+    check(not out.added and not out.removed and not out.reshaped,
+          "an unchanged export changed: %s" % out.describe())
+
+
+def case_one_instance_takes_new_geometry():
+    """Two placements of one part, and the CAD application sends new
+    geometry for one of them only. The update put it into the prototype
+    the two share, so the other one changed too."""
+    fresh()
+    first = write_mesh(
+        "inst", [(0, "bolt", 0.02, None)],
+        [(0, "c001", "bolt", "bolt-1", 0.0, None),
+         (0, "c002", "bolt", "bolt-2", 0.3, None)])
+    native_import.build(bpy.context, first, hierarchy="COLLECTION_INSTANCES")
+    second = write_mesh(
+        "inst", [(0, "bolt", 0.02, None), (1, "bolt", 0.03, None)],
+        [(0, "c001", "bolt", "bolt-1", 0.0, None),
+         (1, "c002", "bolt", "bolt-2", 0.3, None)])
+    _objects, _report, out = native_import.update(
+        bpy.context, second, hierarchy="COLLECTION_INSTANCES")
+    one, two = by_path("bolt-1"), by_path("bolt-2")
+    check(abs(_width(_proto_mesh(one)) - 0.02) < 1e-6,
+          "bolt-1 took the other placement's geometry")
+    check(abs(_width(_proto_mesh(two)) - 0.03) < 1e-6,
+          "bolt-2 did not take its new geometry")
+    check(out.reshaped == [two.name], "re-tessellated: %s" % out.reshaped)
+    check(not _orphans(), "meshes with no users: %s" % _orphans())
+
+
 CASES = [
+    ("COLLECTION_INSTANCES: a shifted definition finds its prototype",
+     case_instances_find_their_prototype),
+    ("COLLECTION_INSTANCES: a prototype of an older send is found",
+     lambda: case_instances_find_their_prototype(older=True)),
+    ("COLLECTION_INSTANCES: one placement takes new geometry alone",
+     case_one_instance_takes_new_geometry),
     ("FLAT: a copy of a part on the rig stays on its bone",
      case_a_copy_on_the_rig),
     ("TREE: a copy made with Shift+D is left alone",

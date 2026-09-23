@@ -929,7 +929,12 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
         if cj.type == "fixed":
             spin_children.add(child)
             continue
-        a, b = _unit(cj.axis or []), _unit(pj.axis)
+        # A ball with no cone limit and a free joint ship no axis. Such a
+        # child cannot turn about the screw's axis, so it takes the slide
+        # alone.
+        if not cj.axis:
+            continue
+        a, b = _unit(cj.axis), _unit(pj.axis)
         if a is not None and b is not None and abs(_v_dot(a, b)) > 0.999:
             spin_children.add(child)
     for gid, (_parent, j) in parent_of.items():

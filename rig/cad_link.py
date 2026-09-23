@@ -9,7 +9,10 @@ finer tolerance.
 
 Discovery mirrors the one on the add-in's side exactly: each process drops
 a small JSON file naming its port and a per-session token, and a stale file
-whose process is gone is deleted on sight rather than tried twice.
+whose process is gone is deleted on sight rather than tried twice. A file
+whose process still runs stays, also when its ping gets no answer: the
+add-in serves one request at a time, so a ping that waits behind a long
+job times out, and neither side writes its file again.
 
 Requests are answered with a FILE PATH, not geometry. Both ends are on the
 same machine by construction (the whole protocol is 127.0.0.1), so a
@@ -27,6 +30,10 @@ _REGISTRY = os.path.join(
 
 _TIMEOUT_PING = 1.5
 _TIMEOUT_JOB = 600.0     # tessellating a big assembly finely is not quick
+# How much sooner than the client the CAD application gives up waiting for
+# its own thread. It then answers that it is busy (a dialog, most often),
+# and the user reads that instead of a bare "timed out".
+_SERVER_MARGIN_S = 30.0
 
 # No proxy, ever. urllib sends 127.0.0.1 through a proxy set in the
 # environment or in Internet Options: it bypasses only host names without a
@@ -65,49 +72,143 @@ def _post(inst, path, payload, timeout):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def discover():
-    """Every reachable CAD application, newest first. Never raises: an empty
-    list is the normal answer when none is running."""
-    found = []
+def _running(pid):
+    """True when the process `pid` runs, False when it does not, None when
+    `pid` is not a process id."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL,
+                                         wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE,
+                                                ctypes.POINTER(wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        query_limited_information = 0x1000
+        handle = kernel32.OpenProcess(query_limited_information, False, pid)
+        if not handle:
+            # Access denied: the process is there, it belongs to someone
+            # else.
+            return ctypes.get_last_error() == 5
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259            # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def _entries():
+    """The registry entries, newest first."""
+    out = []
     if not os.path.isdir(_REGISTRY):
-        return found
-    for name in sorted(os.listdir(_REGISTRY)):
+        return out
+    for name in os.listdir(_REGISTRY):
         if not name.endswith(".json"):
             continue
         path = os.path.join(_REGISTRY, name)
         try:
             with open(path, encoding="utf-8") as fh:
                 doc = json.load(fh)
-            inst = Instance(doc.get("pid"), int(doc.get("port", 0)),
+            pid = doc.get("pid")
+            if pid is None:
+                # The add-in names its file after its process id.
+                pid = os.path.splitext(name)[0]
+            inst = Instance(pid, int(doc.get("port", 0)),
                             doc.get("token"), path, doc.get("addin_version"))
-        except (OSError, ValueError, TypeError):
+            written = os.path.getmtime(path)
+        except (OSError, ValueError, TypeError, AttributeError):
             continue
         if not inst.port or not inst.token:
             continue
+        out.append((written, inst))
+    out.sort(key=lambda row: row[0], reverse=True)
+    return [inst for _written, inst in out]
+
+
+def _forget(inst):
+    try:
+        os.unlink(inst.registry_file)
+    except OSError:
+        pass
+
+
+def _scan():
+    """(the instances that answered, the instances that did not answer but
+    whose process still runs), each newest first.
+
+    Only the file of a process that has gone is deleted. A process that
+    still runs and does not answer is busy: the add-in serves one request
+    at a time, so a ping that waits behind a long job times out. Its file
+    stays, because nothing writes it again until the application
+    restarts."""
+    found, silent = [], []
+    for inst in _entries():
         try:
             reply = _post(inst, "/ping", None, _TIMEOUT_PING)
         except (urllib.error.URLError, OSError, ValueError):
-            # The application behind this entry is gone. Clearing it keeps the
-            # next discovery from paying the timeout again.
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            if _running(inst.pid) is False:
+                _forget(inst)
+            else:
+                silent.append(inst)
+            continue
+        answered = reply.get("pid")
+        if answered is not None and str(answered) != str(inst.pid):
+            # A different process listens on this port now: a session that
+            # started after this entry's own one ended. It would refuse the
+            # token of this entry, and its own entry answers for it.
+            if _running(inst.pid) is False:
+                _forget(inst)
             continue
         if reply.get("ok"):
             found.append(inst)
-    return found
+    return found, silent
+
+
+def discover():
+    """Every reachable CAD application, newest first. Never raises: an empty
+    list is the normal answer when none is running."""
+    return _scan()[0]
 
 
 def first():
     """The one CAD application to talk to, or an error explaining that there is
     none: the message a user actually needs at that moment."""
-    instances = discover()
-    if not instances:
+    instances, silent = _scan()
+    if instances:
+        return instances[0]
+    if silent:
         raise CadLinkError(
-            "No CAD application was found. Start SolidWorks with the CADder "
-            "Bridge add-in enabled, and open the assembly.")
-    return instances[0]
+            "The CAD application does not answer. It can be busy with a "
+            "different job, or it can show a dialog. Try again when it is "
+            "available.")
+    raise CadLinkError(
+        "No CAD application was found. Start SolidWorks with the CADder "
+        "Bridge add-in enabled, and open the assembly.")
+
+
+def _server_wait(timeout):
+    """How long the CAD application may wait for its own thread, for a
+    client that waits `timeout` seconds. It must answer first: a client that
+    gives up first shows "timed out" and not the reason."""
+    return max(timeout - _SERVER_MARGIN_S, timeout / 2.0)
 
 
 def request(op, timeout=_TIMEOUT_JOB, instance=None, **fields):
@@ -116,6 +217,7 @@ def request(op, timeout=_TIMEOUT_JOB, instance=None, **fields):
     inst = instance or first()
     payload = dict(fields)
     payload["op"] = op
+    payload.setdefault("timeout_s", _server_wait(timeout))
     try:
         reply = _post(inst, "/job", payload, timeout)
     except urllib.error.HTTPError as exc:

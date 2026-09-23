@@ -417,7 +417,7 @@ def remove_previous(stem=None, scene_collection=None, scene=None):
     the live one on every send, live 2026-09-14). Meshes go too: an
     orphaned datablock of a million triangles is invisible in the outliner
     and very much present in the file. `stem` narrows the removal to one
-    file's import; None takes every native import. Only in `scene` (the
+    file's import. None takes every native import. Only in `scene` (the
     current one by default), and never a part another add-on keeps aside
     (see _Scope)."""
     removed = 0

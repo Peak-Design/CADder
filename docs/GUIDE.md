@@ -415,7 +415,8 @@ in Blender. These do not change it:
 - **Rebuild from STEP**, **Rebuild Selected**, **Apply Defeature**,
   **Apply UVs** in a mode that reads the CAD data, and **Refresh from
   Disk** of a STEP file.
-- **Triangles to Quads** and the unwrap of compound surfaces after a send.
+- The **Triangles to Quads** pass and the unwrap of compound surfaces that
+  run after a send.
 
 A lock keeps the geometry and nothing else. A locked part still moves to
 the pose that SolidWorks gives it, and the material database still applies

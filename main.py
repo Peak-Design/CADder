@@ -1883,13 +1883,18 @@ def _apply_trimesh(obj, mesh, colors, mat_names, norms, uvs,
     return mesh.matrix
 
 
-def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors"):
+def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors",
+               relative=False, part_name="", fallback_color=None):
+    """Tessellate one shape into obj.data. `relative` says that `lind` is a
+    share of each edge and not a distance in file units. It must go
+    through, or a share of 0.005 cuts the mesh at 0.005 file units."""
     hacks = set([])
     if _get_addon_prefs().hack_skip_zero_solids:
         hacks.add("skip_solids")
 
     mesh, colors, mat_names, norms, uvs = precompute_mesh_data(
-        step_reader, shp, lind, angd, hacks)
+        step_reader, shp, lind, angd, hacks, part_name=part_name,
+        fallback_color=fallback_color, relative=relative)
 
     return apply_mesh_to_blender(
         obj, mesh, colors, mat_names, norms, uvs, vcol_name,
@@ -4096,6 +4101,31 @@ class STEP_OT_ClearFileCache(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _rebuild_body(step_reader, shp, node_index, obj):
+    """The part of `shp` that `obj` was made from.
+
+    Separate Solids gives each body of a shape its own object, and every
+    body keeps the tag and the node of the whole shape. A rebuild from the
+    whole shape merged every body into each one. The import names body k
+    "<part>.body<k + 1>", so the name says which body to take. None when
+    that body is not in the shape.
+    """
+    try:
+        record = json.loads(obj.get("STEP_import_settings") or "{}")
+    except (TypeError, ValueError):
+        record = {}
+    if not record.get("separate_solids"):
+        return shp
+    bodies = _split_solids([(shp, node_index, None)], step_reader)
+    if len(bodies) < 2:
+        return shp
+    _part, sep, number = str(obj.get("STEP_name", "")).rpartition(".body")
+    if not sep or not number.isdigit():
+        return None
+    k = int(number) - 1
+    return bodies[k][0] if 0 <= k < len(bodies) else None
+
+
 class STEP_OT_RebuildSelected(bpy.types.Operator):
     bl_idname = "object.occ_rebuild_selected"
     bl_label = "Rebuild Selected Objects"
@@ -4144,7 +4174,10 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
             else:
                 assert meshes[obj.data.name] == obj.data
 
-            if sel_tag in rebuilt_meshes:
+            # Once per mesh: linked copies share one. A separated body and
+            # a color variant carry the tag of their shape, but each has a
+            # mesh of its own.
+            if obj.data in rebuilt_meshes:
                 continue
 
             if prevname != curname:
@@ -4160,31 +4193,46 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                     )
                     break
 
+            # Every occurrence of a shape has its tag. Take the node the
+            # object was made from, because a color variant differs from the
+            # other occurrences only in its node.
+            source = None
             for shp, node_index in tree.get_shapes():
                 _, _, tag, name, _, _, _ = tree.nodes[node_index].get_values()
-                if tag == sel_tag:
-                    rebuilt_meshes.add(sel_tag)
-                    print("Rebuilding:", sel_tag, obj.data.name)
-                    # Reset pre-tessellation flag so shapes get re-tessellated
-                    # with the new deflection values
-                    step_reader._pre_tessellated = False
-                    lin_def, ang_def, _relative = quality_mod.resolve(
-                        wanted, step_reader.scale)
-                    build_mesh(step_reader, obj, shp, lin_def, ang_def)
-                    # Re-apply baked scale if it was applied during import
-                    applied_scale = obj.get("STEP_applied_scale", 0.0)
-                    if applied_scale and applied_scale != 1.0:
-                        mesh = obj.data
-                        vert_count = len(mesh.vertices)
-                        if vert_count > 0:
-                            verts = np.empty(vert_count * 3, dtype=np.float32)
-                            mesh.vertices.foreach_get('co', verts)
-                            verts *= applied_scale
-                            mesh.vertices.foreach_set('co', verts)
-                            mesh.update()
-                    obj.display_type = "TEXTURED"
-                    build_tags.add(obj["STEP_tag"])
-                    break
+                if tag == sel_tag and (
+                        source is None
+                        or node_index == obj.get("STEP_tree_location")):
+                    source = (shp, node_index)
+            shp = None
+            if source is not None:
+                shp, node_index = source
+                shp = _rebuild_body(step_reader, shp, node_index, obj)
+            if shp is not None:
+                rebuilt_meshes.add(obj.data)
+                print("Rebuilding:", sel_tag, obj.data.name)
+                # Reset pre-tessellation flag so shapes get re-tessellated
+                # with the new deflection values
+                step_reader._pre_tessellated = False
+                lin_def, ang_def, relative = quality_mod.resolve(
+                    wanted, step_reader.scale)
+                build_mesh(step_reader, obj, shp, lin_def, ang_def,
+                           relative=relative,
+                           part_name=obj.get("STEP_name", ""),
+                           fallback_color=(
+                               tree.nodes[node_index].color_override))
+                # Re-apply baked scale if it was applied during import
+                applied_scale = obj.get("STEP_applied_scale", 0.0)
+                if applied_scale and applied_scale != 1.0:
+                    mesh = obj.data
+                    vert_count = len(mesh.vertices)
+                    if vert_count > 0:
+                        verts = np.empty(vert_count * 3, dtype=np.float32)
+                        mesh.vertices.foreach_get('co', verts)
+                        verts *= applied_scale
+                        mesh.vertices.foreach_set('co', verts)
+                        mesh.update()
+                obj.display_type = "TEXTURED"
+                build_tags.add(obj["STEP_tag"])
 
             wm.progress_update(progress_count)
 

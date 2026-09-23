@@ -336,20 +336,13 @@ def _ops_context():
     return bpy.context.temp_override(window=win, scene=win.scene)
 
 
-def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False):
-    """Re-sending the same assembly must REPLACE the last send, not stack a
-    copy next to it: leftover objects carry stale RIG_* tags that hijack
-    matching and the frame vote (found live 2026-08-23: six re-sends of one
-    hinge left the rig built against a previous send's rotated leaf).
-    Removes every object imported from this STEP file or from an earlier
-    send of the same assembly, the import collections it left behind, and
-    the importer's cache entry for it. An import of another file that only
-    has the same name stays.
+def _same_import(step_path: str, by_stem: bool = False):
+    """A test that says whether a STEP_file tag names an import of the same
+    assembly as `step_path`.
 
     by_stem: match on the file name without its extension, for the direct
-    link, whose .swmesh replaces a STEP import of the same assembly. Both
-    standing at once left every part in the scene twice, both copies
-    parented to one rig (live 2026-09-14)."""
+    link, whose .swmesh is of the same assembly as a STEP file of that
+    name (see _step_import_of)."""
     want_full = os.path.normcase(os.path.abspath(step_path))
     want_dir = os.path.dirname(want_full)
     want_base = os.path.basename(step_path).casefold()
@@ -396,6 +389,43 @@ def _remove_previous_import(step_path: str, stages: dict, by_stem: bool = False)
                 == stem.rstrip(". ")
                 or folder == os.path.dirname(want_dir)
                 or full in rigged)
+
+    return is_same_file
+
+
+def _step_import_of(mesh_path: str):
+    """The objects of a STEP import of the assembly that this direct send
+    is of, by the rule of _same_import.
+
+    A direct send replaces the last send of its assembly, and never a STEP
+    import of it. It did: the STEP import went, with the work done on it,
+    and neither Lock Materials nor Lock Geometry could find its parts
+    again, because a STEP part has no place in the assembly to find it by.
+    Left standing next to the send, every part was in the scene twice,
+    with both copies on one rig (live 2026-09-14). So the send stops
+    instead, and says why (see _run_stages)."""
+    is_same_file = _same_import(mesh_path, by_stem=True)
+    out = []
+    for obj in bpy.data.objects:
+        try:
+            if is_same_file(obj.get("STEP_file")):
+                out.append(obj)
+        except ReferenceError:
+            continue
+    return out
+
+
+def _remove_previous_import(step_path: str, stages: dict):
+    """Re-sending the same assembly must REPLACE the last send, not stack a
+    copy next to it: leftover objects carry stale RIG_* tags that hijack
+    matching and the frame vote (found live 2026-08-23: six re-sends of one
+    hinge left the rig built against a previous send's rotated leaf).
+    Removes every object imported from this STEP file or from an earlier
+    send of the same assembly, the import collections it left behind, and
+    the importer's cache entry for it. An import of another file that only
+    has the same name stays. For a send by STEP only: a direct send
+    replaces its own last send in native_import.build."""
+    is_same_file = _same_import(step_path)
 
     removed = 0
     for obj in list(bpy.data.objects):
@@ -727,6 +757,19 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
     # it. The difference reaches several stages, so it is read once.
     updating = want("update", False)
 
+    # A direct send does not replace a STEP import of its assembly (see
+    # _step_import_of). It stops here, before it changes anything.
+    if mesh_path and not updating and want("replace"):
+        stepped = _step_import_of(mesh_path)
+        if stepped:
+            name = os.path.splitext(os.path.basename(mesh_path))[0]
+            return {"ok": False, "stages": stages,
+                    "error": "This scene has a STEP import of %s (%d "
+                             "objects). A send from SolidWorks does not "
+                             "replace a STEP import. Delete that import in "
+                             "Blender, or open a new Blender file. Then "
+                             "send again." % (name, len(stepped))}
+
     with _ops_context():
         scene = bpy.context.scene
 
@@ -818,11 +861,6 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # and put back on what arrives.
             from .rig import defeature as rig_defeature
             held = None if updating else rig_defeature.snapshot()
-            if want("replace") and not updating:
-                # A STEP import of the same assembly goes too, or the scene
-                # holds every part twice.
-                said.stage("replacing the last import", 10, 20)
-                _remove_previous_import(mesh_path, stages, by_stem=True)
             try:
                 if updating:
                     # Without a manifest the update knows no groups, and it

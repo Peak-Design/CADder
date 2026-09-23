@@ -60,8 +60,7 @@ def run_replace():
 
     stages = {}
     bridge._remove_previous_import(
-        os.path.join(tempfile.gettempdir(), "gearbox.swmesh"), stages,
-        by_stem=True)
+        os.path.join(tempfile.gettempdir(), "gearbox.step"), stages)
     if stages["replace"]["removed_objects"] != 1:
         fail("the import was not replaced: %s" % stages)
     for name in ("gearbox renders", "gearbox notes"):
@@ -73,7 +72,9 @@ def run_replace():
 
 def run_same_name():
     """Only an earlier send of the assembly goes, not a file that only has
-    its name."""
+    its name. A direct send (.swmesh) removes nothing: it finds the STEP
+    imports of its assembly by the same rule, and stops (see
+    bridge_step_import_smoke)."""
     base = os.path.join(tempfile.gettempdir(), "cadder_same_name")
     sends = {
         "same folder": os.path.join(base, "exports", "gearbox", "gearbox.step"),
@@ -94,9 +95,14 @@ def run_same_name():
         empty("rigged gear", by_hand, hand)["RIG_group"] = "g001"
         empty("rigged bolt", by_hand, hand)
         stages = {}
-        bridge._remove_previous_import(
-            os.path.join(base, "exports", "gearbox", new_file), stages,
-            by_stem=by_stem)
+        new_path = os.path.join(base, "exports", "gearbox", new_file)
+        if by_stem:
+            found = {o.name for o in bridge._step_import_of(new_path)}
+            want = set(sends) | {"rigged gear", "rigged bolt"}
+            if found != want:
+                fail("%s: found %s, not %s" % (new_file, sorted(found), sorted(want)))
+            continue
+        bridge._remove_previous_import(new_path, stages)
         for label in sends:
             if bpy.data.objects.get(label) is not None:
                 fail("%s: the send from %r was not replaced" % (new_file, label))

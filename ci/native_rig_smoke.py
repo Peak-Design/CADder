@@ -226,10 +226,10 @@ def main():
             "round %d: rig collections %s" % (round_no, rig_cols)
 
     # The direct link sent for an assembly that already stands as a rigged
-    # STEP import replaces that import: the bridge matches on the file stem,
-    # so native-other.swmesh takes native-other.step's objects away and
-    # leaves another file's alone. A file of the same name from elsewhere
-    # that no rig was matched to is not this assembly's, and stays.
+    # STEP import finds that import by the file stem, and the send stops
+    # (bridge_step_import_smoke). native-other.swmesh finds the objects of
+    # native-other.step and no other file's. A file of the same name from
+    # elsewhere that no rig was matched to is not this assembly's.
     from CADder import bridge
     step_col = bpy.data.collections.new("native-other.hierarchy")
     bpy.context.scene.collection.children.link(step_col)
@@ -243,19 +243,14 @@ def main():
         if rigged:
             o["RIG_group"] = "g001"
         step_col.objects.link(o)
-    stages = {}
-    bridge._remove_previous_import(
-        os.path.join(tempfile.gettempdir(), "native-other.swmesh"), stages, by_stem=True)
-    assert stages["replace"]["removed_objects"] == 2, stages
-    assert bpy.data.objects.get("step_stranger") is not None
-    assert bpy.data.objects.get("step_vendor") is not None
-    assert bpy.data.objects.get("step_frame") is None
-    assert bpy.data.objects.get("step_lever") is None
+    found = sorted(o.name for o in bridge._step_import_of(
+        os.path.join(tempfile.gettempdir(), "native-other.swmesh")))
+    assert found == ["step_frame", "step_lever"], found
 
     print("native_rig_smoke: OK: %d parts bone-parented with no drift, "
           "a %.2f rad bone pose turns its part by the same, a second "
           "assembly takes the first one's rig away with its parts, three "
-          "sends of one assembly leave one rig, and a direct send replaces "
+          "sends of one assembly leave one rig, and a direct send finds "
           "the STEP import of its own assembly"
           % (parent_report.bone_parented, turned))
 

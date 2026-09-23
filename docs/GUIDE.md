@@ -295,6 +295,11 @@ pose, builds the armature and parents the geometry, all without a file
 dialog. The listener accepts connections only from this machine, and only
 with the token the add-in reads from the user's own app data.
 
+A send replaces the last send of the same assembly. It does not replace a
+STEP import of that assembly. If the scene has one, the send stops before
+it changes anything, and SolidWorks tells you. Delete the STEP import, or
+open a new Blender file, and send again.
+
 The **CADder** tab holds **Mesh Quality** at the top, then the link and
 the panels that work on any part. Mesh Quality asks one question for both
 routes: how fine the mesh is, and the button to read the CAD again. See

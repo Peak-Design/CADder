@@ -8,9 +8,9 @@ checks what the join SAYS about it:
 
   * a clean join of rigs with limit dials reports no missing bone and no
     drift, for rigs built now and for rigs built before every bone was
-    tagged with its manifest;
+    tagged with its manifest.
   * a join onto a posed bone merges nothing, so the user can clear the
-    pose and join again, as the message tells them to;
+    pose and join again, as the message tells them to.
   * in a scene where one unit is a millimetre, a clean join reports no
     drift, and the figures it gives are millimetres.
 """

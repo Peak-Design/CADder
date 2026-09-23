@@ -963,9 +963,10 @@ def _clear_generated(context, arm_obj, collection, source=""):
             # Nothing tells this assembly's bones from the others'.
             # Removing all of them loses the other assemblies' rigs.
             raise ValueError(
-                "The rig %s holds more than one assembly, and none of them "
-                "is %s. The rig was not changed."
-                % (arm_obj.name, os.path.basename(source or "") or "this one"))
+                "The rig %s contains more than one assembly, and %s is not "
+                "one of them. The rig did not change."
+                % (arm_obj.name,
+                   os.path.basename(source or "") or "this assembly"))
         generated = {n for n, s in owner.items() if s is None or s in mine}
     else:
         generated = candidates
@@ -1650,9 +1651,9 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
 
     # The bone the assembly stands on, named on the armature so relink can
     # find it with no session state: anything the rig does not drive is
-    # hung off it rather than left behind in world space.
-    # A ground bone that outlived the clear belongs to another assembly
-    # of a joined rig, and that rig's ground stays the ground.
+    # hung off it rather than left behind in world space. A ground bone
+    # that outlived the clear belongs to another assembly of a joined rig,
+    # and that rig's ground stays the ground.
     ground = arm_obj.get("RIG_ground_bone")
     for bp in plan.bones:
         if ground and ground in users_bones:

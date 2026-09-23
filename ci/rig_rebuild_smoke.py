@@ -8,13 +8,13 @@ Each case sends an assembly, changes the rig the way a user does, sends
 an update with rig_mode APPEND and checks what came back:
 
   * a limited ball keeps the name of the handle the user keys, update
-    after update;
-  * a bone the user parented to a rig bone hangs on that bone again;
+    after update.
+  * a bone the user parented to a rig bone hangs on that bone again.
   * a rig the user moved keeps its path rails and cam surfaces on its
-    bones;
+    bones.
   * a rig joined from two assemblies, built again for one of them, keeps
-    the other one's bones, drivers and parts;
-  * a driver the user put on the armature object stays;
+    the other one's bones, drivers and parts.
+  * a driver the user put on the armature object stays.
   * rebuilds leave no rail or cam meshes behind, and do not move their
     names on.
 """

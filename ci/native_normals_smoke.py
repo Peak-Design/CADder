@@ -10,7 +10,8 @@ The native module gives placeholder normals, and the importer calculates
 the real ones from the CAD surface after it. The module once marked every
 face as a face with undefined normals because of those placeholders. So
 every import with the native module reported "Undefined normals" for each
-face, also for a plate that has only planes and cylinders.
+face, also for a plate that has only planes and cylinders. And a face that
+really has a point with no normal was not counted at all.
 """
 
 import os
@@ -52,6 +53,46 @@ check(problems.get("Triangulation", 0) == 0, "and no failed faces")
 part = next(o for o in bpy.data.objects
             if o.type == "MESH" and "STEP_tag" in o)
 check(len(part.data.polygons) > 0, "the part has a mesh")
+
+# A face with a point that has no normal is counted once, on both paths.
+# No fixture has a real one, so the surface properties say that every
+# point of a cylinder has none.
+from OCP.GeomAbs import GeomAbs_Cylinder  # noqa: E402
+
+_real_props = importer.BRepLProp_SLProps
+
+
+class _NoNormalOnCylinders:
+    def __init__(self, surface, order, resolution):
+        self._real = _real_props(surface, order, resolution)
+        self._cylinder = surface.GetType() == GeomAbs_Cylinder
+
+    def IsNormalDefined(self):
+        return False if self._cylinder else self._real.IsNormalDefined()
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def undefined_count(native):
+    importer._HAS_NATIVE = native
+    m._cache_drop(STEP)
+    m.load_step(bpy.context, STEP, htypes="FLAT", up_as="Z")
+    return m._cache_get(STEP).import_problems.get("Undefined normals", 0)
+
+
+has_native = importer._HAS_NATIVE
+importer.BRepLProp_SLProps = _NoNormalOnCylinders
+try:
+    native_count = undefined_count(True)
+    python_count = undefined_count(False)
+finally:
+    importer.BRepLProp_SLProps = _real_props
+    importer._HAS_NATIVE = has_native
+print("   undefined normals, native %d, Python %d" % (native_count, python_count))
+check(native_count > 0, "the native path counts faces with no normal")
+check(native_count == python_count,
+      "both paths count the same faces (%d, %d)" % (native_count, python_count))
 
 if FAILS:
     print("\nnative_normals_smoke: FAILED (%d)\n  %s"

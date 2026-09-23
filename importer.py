@@ -2143,7 +2143,10 @@ class ReadSTEP:
                     nd = prop.Normal()
                     norms_local[i] = (nd.X(), nd.Y(), nd.Z())
             else:
-                # Rare path: check each vertex individually
+                # Rare path: check each vertex individually. A face with a
+                # point that has no normal is counted once, as the Python
+                # path counts it.
+                undefined = False
                 for i in range(vc):
                     prop.SetParameters(float(u_shrunk[i]), float(v_shrunk[i]))
                     if prop.IsNormalDefined():
@@ -2151,6 +2154,10 @@ class ReadSTEP:
                         norms_local[i] = (nd.X(), nd.Y(), nd.Z())
                     else:
                         norms_local[i] = (0.0, 0.0, 1.0)
+                        undefined = True
+                if undefined:
+                    with self._lock:
+                        self.import_problems["Undefined normals"] += 1
 
             # Flip with numpy (replaces per-vertex SWIG calls)
             norms_out = norms_local

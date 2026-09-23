@@ -295,15 +295,15 @@ def relink(context, arm_obj) -> ParentReport:
 
 @dataclass
 class PoseOntoReport:
-    # (object name, metres it moved) for each object that reached its pose.
+    # (object name, meters it moved) for each object that reached its pose.
     moved: List[Tuple[str, float]] = field(default_factory=list)
     already_ok: int = 0
-    # (object name, metres it is still off its pose): the rig does not let
+    # (object name, meters it is still off its pose): the rig does not let
     # it get there.
     held: List[Tuple[str, float]] = field(default_factory=list)
 
 
-_POSE_T_TOL = 1e-4    # metres
+_POSE_T_TOL = 1e-4    # meters
 _POSE_R_TOL = 1e-3    # radians
 
 
@@ -382,7 +382,7 @@ def _pose_unlocked(pb, basis):
 
 
 def _off(now, target, scene_scale):
-    """(metres, radians) between two world matrices."""
+    """(meters, radians) between two world matrices."""
     metres = (now.translation - target.translation).length * scene_scale
     a = now.to_3x3().normalized().to_quaternion()
     b = target.to_3x3().normalized().to_quaternion()

@@ -878,7 +878,7 @@ if bpy is not None:
 
     def _cad_world(rows, obj, unit_scale, frame):
         """Where `obj` stands when its component is at `rows` (a CAD pose,
-        metres), in the frame `frame` (a 4x4 Matrix), with its own scale
+        meters), in the frame `frame` (a 4x4 Matrix), with its own scale
         kept. None for a mirrored object, which no turn can put there."""
         from mathutils import Matrix
         cad = Matrix([tuple(r) for r in rows])

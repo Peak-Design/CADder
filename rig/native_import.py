@@ -282,26 +282,54 @@ def _own_collections(stem):
     return sorted(mine, key=lambda c: -d(c))
 
 
-def _renamed(root, stem):
+class _Scope:
+    """The collections and objects of one scene.
+
+    A send or an update works in the scene it was asked for. Another scene
+    of the file can hold objects with the same tags: a Full Copy of the
+    scene copies every part with them. Those are not this scene's to change,
+    and read as this scene's parts, each part had two identities and the
+    update deleted both."""
+
+    def __init__(self, scene):
+        self.collections = []
+        seen = set()
+        stack = [scene.collection]
+        while stack:
+            for child in stack.pop().children:
+                key = child.as_pointer()
+                if key not in seen:
+                    seen.add(key)
+                    self.collections.append(child)
+                    stack.append(child)
+        self._collections = seen
+        self.objects = list(scene.objects)
+
+    def has(self, collection):
+        return collection.as_pointer() in self._collections
+
+
+def _renamed(root, stem, scope):
     """Puts the new name of the document on everything the import that is
     standing tagged with the old one."""
     was = root.get(_TAG_FILE)
     if not was or was == stem:
         return
-    for coll in bpy.data.collections:
+    for coll in scope.collections:
         if coll.get(_TAG_FILE) == was:
             coll[_TAG_FILE] = stem
             if coll.name == was or coll.name.startswith(was + "."):
                 coll.name = stem + coll.name[len(was):]
-    for obj in bpy.data.objects:
+    for obj in scope.objects:
         if obj.get(_TAG_FILE) == was:
             obj[_TAG_FILE] = stem
     print("[CADLink native] the assembly was renamed: %s is now %s"
           % (was, stem))
 
 
-def standing(stem, scene):
+def standing(stem, scene, scope):
     """The import in the scene that an export is an update OF, or None.
+    `scene` is the export, `scope` the Blender scene (a _Scope).
 
     By name, when a name matches. But a document gets RENAMED, most often
     when a revision is cut and a letter goes on the end, and the scene
@@ -315,7 +343,7 @@ def standing(stem, scene):
     INSIDE the assembly and do not change when the assembly is renamed. It
     then takes the new name.
     """
-    roots = [c for c in bpy.data.collections
+    roots = [c for c in scope.collections
              if c.get(_TAG_FILE) is not None
              and c.get("SWMESH_role") in ("flat", "hierarchy")]
     for coll in roots:
@@ -343,7 +371,7 @@ def standing(stem, scene):
             best, score = coll, hit
     if best is None:
         return None
-    _renamed(best, stem)
+    _renamed(best, stem, scope)
     return best
 
 
@@ -680,12 +708,12 @@ class _Placer:
         self.new_empties.append(emp)
         return emp
 
-    def adopt_tree(self):
+    def adopt_tree(self, scope):
         """Takes over the collections and empties a previous import of this
-        file left, so an update reuses them instead of building a second
-        tree beside the first. Anything the user put inside one of them
-        stays where it is."""
-        for col in bpy.data.collections:
+        file left in this scene, so an update reuses them instead of
+        building a second tree beside the first. Anything the user put
+        inside one of them stays where it is."""
+        for col in scope.collections:
             if col.get(_TAG_FILE) != self.stem:
                 continue
             path = col.get(_TAG_PATH)
@@ -699,7 +727,7 @@ class _Placer:
                 for obj in col.objects:
                     if obj.get("SWMESH_prototype"):
                         self.prototypes[_int(obj.get(_TAG_DEFINITION), -1)] = col
-        for obj in bpy.data.objects:
+        for obj in scope.objects:
             if obj.get(_TAG_FILE) != self.stem or obj.type != "EMPTY":
                 continue
             if diff_mod.is_part(obj) or obj.get("SWMESH_prototype") \
@@ -783,6 +811,17 @@ class _Placer:
 
     def pose(self, obj, inst):
         obj.matrix_world = self.frame @ _matrix(inst.transform, self.unit_scale)
+
+    def on_pose(self, obj, transform):
+        """True when the object stands where the CAD pose it was tagged
+        with puts it."""
+        if not transform or len(transform) != 16:
+            return False
+        try:
+            want = self.frame @ _matrix(transform, self.unit_scale)
+            return (obj.matrix_world.translation - want.translation).length                 <= 1e-5 * max(1.0, self.unit_scale)
+        except (ReferenceError, ValueError):
+            return False
 
     def place(self, obj, sw_path):
         """Into the collection, or under the empty, the mode calls for."""
@@ -931,6 +970,8 @@ class UpdateReport:
     reshaped: List[str] = field(default_factory=list)
     kept: int = 0
     structural: bool = False
+    # Copies of a part made in Blender, which the update left alone.
+    copies: List[str] = field(default_factory=list)
 
     def describe(self):
         return ("%d part(s) added, %d removed, %d moved, %d re-tessellated, "
@@ -973,7 +1014,8 @@ def update(context, path, manifest=None, unit_scale=None,
         hierarchy = "FLAT"
     said = report_to or progress.NONE
 
-    root = standing(stem, scene)
+    scope = _Scope(context.scene)
+    root = standing(stem, scene, scope)
     if root is None:
         # Nothing of this assembly is in the scene: an update of nothing is
         # an import.
@@ -984,23 +1026,42 @@ def update(context, path, manifest=None, unit_scale=None,
         out = UpdateReport(added=[o.name for o in objects], structural=True)
         return objects, report, out
 
-    if before_changes is not None:
-        before_changes(stem)
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
                      hierarchy, material_prefix)
-    placer.adopt_tree()
+    # A copy made in Blender is the user's object from here on. It keeps
+    # its place, its mesh and its parent, and loses the tags that made it
+    # a second identity for the part. This is done before the rig lets go
+    # of its parts, so a copy on a bone stays on it.
+    old, copies = diff_mod.split_copies(
+        diff_mod.from_objects(scope.objects, stem),
+        rank=lambda o: (not placer.on_pose(o.payload, o.transform),
+                        len(o.name), o.name))
+    disowned = []
+    for occurrence in copies:
+        try:
+            _disown(occurrence.payload)
+            disowned.append(occurrence.payload.name)
+        except ReferenceError:
+            continue
+    if disowned:
+        print("[CADLink native] %d copy(ies) made in Blender are no longer "
+              "tagged as parts of the assembly: %s"
+              % (len(disowned), ", ".join(disowned[:5])))
+
+    if before_changes is not None:
+        before_changes(stem)
+    placer.adopt_tree(scope)
     if hierarchy == "COLLECTION_INSTANCES" and not placer.prototypes:
         placer.build_prototypes()
 
-    old = diff_mod.from_objects(bpy.data.objects, stem)
     new = diff_mod.from_scene_file(scene, manifest)
     changes = diff_mod.compare(old, new)
 
     said.stage("bringing the parts up to date", 20, 85,
                len(changes.pairs) + len(changes.added) + len(changes.removed))
     done = 0
-    out = UpdateReport(structural=changes.structural)
+    out = UpdateReport(structural=changes.structural, copies=disowned)
     objects = []
     report = matching.MatchReport()
     report.frame_rows = frame_rows
@@ -1097,6 +1158,20 @@ def _reshape(obj, placer, inst):
         if isinstance(old, bpy.types.Mesh) and old.users == 0:
             bpy.data.meshes.remove(old)
     _object_colour(obj)
+
+
+# The tags that make an object an occurrence of the import and a part of
+# the rig. A copy made in Blender loses them. RIG_parent_mode goes too, so
+# a copy on a bone stays on it, as an object the user put there does.
+_OCCURRENCE_TAGS = (_TAG_FILE, _TAG_PATH, _TAG_PERSISTENT, _TAG_COMPONENT,
+                    _TAG_GROUP, _TAG_DEFINITION, _TAG_TOLERANCE, _TAG_LOCAL,
+                    _TAG_GEOMETRY, _TAG_TRANSFORM, "RIG_parent_mode")
+
+
+def _disown(obj):
+    for tag in _OCCURRENCE_TAGS:
+        if tag in obj.keys():
+            del obj[tag]
 
 
 def _remove_objects(doomed):

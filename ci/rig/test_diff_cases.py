@@ -63,5 +63,42 @@ class BranchTests(unittest.TestCase):
         self.assertEqual(diff.from_objects(objects, "asm"), [])
 
 
+def occ(path, persistent, name):
+    return diff.Occurrence(path=path, persistent=persistent, name=name,
+                           component_id="c001")
+
+
+class CopyTests(unittest.TestCase):
+    """A copy made in Blender has the part's tags. It is the user's object,
+    and the part is still the part."""
+
+    def test_a_copy_is_split_off_and_the_part_is_kept(self):
+        part = occ("bolt-1", "pbolt", "bolt")
+        copy = occ("bolt-1", "pbolt", "bolt.001")
+        other = occ("base-1", "pbase", "base")
+        kept, copies = diff.split_copies([copy, part, other])
+        self.assertEqual([o.name for o in kept], ["bolt", "base"])
+        self.assertEqual([o.name for o in copies], ["bolt.001"])
+        d = diff.compare(kept, [occ("bolt-1", "pbolt", "bolt"),
+                                occ("base-1", "pbase", "base")])
+        self.assertEqual((len(d.pairs), d.added, d.removed), (2, [], []))
+
+    def test_the_rank_decides_which_is_the_part(self):
+        part = occ("bolt-1", "pbolt", "bolt")
+        copy = occ("bolt-1", "pbolt", "bolt.001")
+        kept, copies = diff.split_copies(
+            [part, copy], rank=lambda o: o.name != "bolt.001")
+        self.assertEqual([o.name for o in kept], ["bolt.001"])
+        self.assertEqual([o.name for o in copies], ["bolt"])
+
+    def test_parts_without_a_path_are_not_copies(self):
+        # An older import: the parts of a rigid subassembly share one
+        # component id and carry no path.
+        a = diff.Occurrence(component_id="c002", name="rod")
+        b = diff.Occurrence(component_id="c002", name="block")
+        kept, copies = diff.split_copies([a, b])
+        self.assertEqual((len(kept), copies), (2, []))
+
+
 if __name__ == "__main__":
     unittest.main()

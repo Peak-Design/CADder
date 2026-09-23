@@ -168,6 +168,32 @@ def from_objects(objects, stem=None) -> List[Occurrence]:
     return out
 
 
+def split_copies(occurrences: List[Occurrence], rank=None):
+    """(occurrences, copies): one occurrence for each identity, and the
+    copies of it that were made in Blender.
+
+    Shift+D, Alt+D and a Full Copy of the scene copy the tags with the
+    object, so the copy has the part's path and persistent id. The match
+    pairs nothing that two old occurrences share, so the part and its copy
+    both went to `removed`, and the update deleted both. `rank` orders the
+    occurrences of one identity, the part first. Without it the shortest
+    name wins, because a copy gets a ".001" name."""
+    rank = rank or (lambda o: (len(o.name or ""), o.name or ""))
+    groups: Dict[tuple, List[Occurrence]] = {}
+    for occurrence in occurrences:
+        # Only a path names one placement. An older import without paths
+        # has the parts of a rigid subassembly under one component id,
+        # and they are not copies of each other.
+        if occurrence.path:
+            groups.setdefault(occurrence.key, []).append(occurrence)
+    copies = []
+    for same in groups.values():
+        if len(same) > 1:
+            copies.extend(sorted(same, key=rank)[1:])
+    extra = {id(o) for o in copies}
+    return [o for o in occurrences if id(o) not in extra], copies
+
+
 def from_scene_file(scene, manifest=None) -> List[Occurrence]:
     """The occurrences a .swmesh describes. The manifest adds the rigid
     group and the persistent id, which the geometry file does not carry."""

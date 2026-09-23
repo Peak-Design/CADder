@@ -16,6 +16,7 @@ import sys
 import tempfile
 
 import bpy
+from mathutils import Matrix
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
@@ -203,7 +204,169 @@ def case_branch_empties_of_an_older_send(hierarchy):
           "the update deleted the subassembly empty")
 
 
+_BOLT_DEFS = [(1, "base", 0.1, None), (2, "bolt", 0.02, None)]
+_BOLT_INST = [(1, "c001", "base", "base-1", 0.0, None),
+              (2, "c002", "bolt", "bolt-1", 0.3, None)]
+
+
+def _bolt_manifest():
+    return manifest([("c001", "base-1", "pbase", 0.0, False),
+                     ("c002", "bolt-1", "pbolt", 0.3, False)],
+                    [("g000", ["c001"]), ("g001", ["c002"])])
+
+
+def case_a_copy_made_in_blender(linked):
+    """Shift+D and Alt+D copy the tags with the object. The copy and the
+    part then had one identity, the update could pair neither, and it
+    deleted both and built the part again: the user's modifier went, and
+    the copy too."""
+    fresh()
+    m = _bolt_manifest()
+    mesh = write_mesh("bolts", _BOLT_DEFS, _BOLT_INST)
+    native_import.build(bpy.context, mesh, manifest=m, hierarchy="TREE")
+    bolt = by_path("bolt-1")
+    bolt.modifiers.new("Bevel", "BEVEL")
+    copy = bolt.copy()
+    if not linked:
+        copy.data = bolt.data.copy()
+    for col in bolt.users_collection:
+        col.objects.link(copy)
+    copy.location.x += 0.2
+    bpy.context.view_layer.update()
+    names = (bolt.name, copy.name)
+
+    for _round in range(2):
+        _objects, _report, out = native_import.update(
+            bpy.context, mesh, manifest=m, hierarchy="TREE")
+        check(not out.removed, "removed: %s" % out.removed)
+        check(not out.added, "added: %s" % out.added)
+        for name in names:
+            check(bpy.data.objects.get(name) is not None,
+                  "the update deleted %s" % name)
+    bolt, copy = (bpy.data.objects[n] for n in names)
+    check([md.type for md in bolt.modifiers] == ["BEVEL"],
+          "the part lost its modifier")
+    check(abs(bolt.matrix_world.translation.x - 0.3) < 1e-6,
+          "the part is not on its CAD pose")
+    check(abs(copy.matrix_world.translation.x - 0.5) < 1e-6,
+          "the copy moved to x=%.4f" % copy.matrix_world.translation.x)
+    check(bolt.get("SWMESH_path") == "bolt-1", "the part lost its tags")
+    check(copy.get("SWMESH_file") is None and copy.get("SWMESH_path") is None
+          and copy.get("RIG_component_id") is None,
+          "the copy still says it is the part")
+
+
+def case_a_copy_of_the_scene():
+    """A Full Copy of the scene copies every part with its tags. The update
+    of one scene must not touch the other."""
+    fresh()
+    m = _bolt_manifest()
+    mesh = write_mesh("bolts", _BOLT_DEFS, _BOLT_INST)
+    native_import.build(bpy.context, mesh, manifest=m, hierarchy="TREE")
+    here = bpy.context.scene
+    bpy.ops.scene.new(type="FULL_COPY")
+    there = [s for s in bpy.data.scenes if s is not here][0]
+    bpy.context.window.scene = here
+    theirs = sorted(o.name for o in there.objects)
+    check(len(theirs) == 2, "the scene copy holds %s" % theirs)
+
+    _objects, _report, out = native_import.update(
+        bpy.context, mesh, manifest=m, hierarchy="TREE")
+    check(not out.removed and not out.added,
+          "added %s, removed %s" % (out.added, out.removed))
+    check(sorted(o.name for o in there.objects) == theirs,
+          "the other scene changed: %s" % sorted(o.name for o in there.objects))
+    check(by_path("bolt-1", here) is not None, "this scene lost its bolt")
+
+
+def _send(mesh, man_json, update=False):
+    """A send or a Refresh through the bridge job, with a rig."""
+    import json
+    from CADder import bridge
+    man = os.path.join(TMP, "bolts.rig.json")
+    with open(man, "w", encoding="utf-8") as fh:
+        json.dump(man_json, fh)
+    payload = {
+        "step": None, "mesh": mesh, "manifest": man,
+        "steps": {"import": False, "replace": not update, "update": update,
+                  "match": True, "sync_poses": True, "build_rig": True,
+                  "relink": True, "cleanup": True},
+        "import_options": {"hierarchy_types": "FLAT", "up_as": "ZPOS"},
+    }
+    if update:
+        payload["rig_mode"] = "KEEP"
+    result = bridge._run_job(payload)
+    check(result.get("ok"), "the job failed: %s" % result.get("error"))
+    return result
+
+
+def case_a_copy_on_the_rig():
+    """A copy of a part on the rig is on the part's bone. Refresh Model
+    must leave it there, where the user put it."""
+    from CADder import rig
+    fresh()
+    try:
+        rig.register()
+    except ValueError:
+        pass                                 # registered by an earlier case
+    joint = {"id": "j001", "type": "revolute", "parent_group": "g000",
+             "child_group": "g001", "origin": [0.3, 0, 0], "axis": [0, 0, 1],
+             "secondary_axis": [1, 0, 0], "limits": None}
+    raw = {
+        "manifest_version": "1.0.0",
+        "generator": {"name": "Peak.Cadder", "version": "smoke"},
+        "units": {"length": "meter", "angle": "radian"},
+        "frame": {"handedness": "right", "up_axis": "Z",
+                  "transform_convention": "row_major_4x4_global"},
+        "step_export": {"file": "bolts.step", "ap": "AP214",
+                        "sha1": None, "occurrence_matching": None},
+        "components": [
+            {"id": "c001", "sw_path": "base-1", "step_name": "base",
+             "step_occurrence_path": None, "sw_persistent_id": "pbase",
+             "transform": _t(0.0)},
+            {"id": "c002", "sw_path": "bolt-1", "step_name": "bolt",
+             "step_occurrence_path": None, "sw_persistent_id": "pbolt",
+             "transform": _t(0.3)}],
+        "rigid_groups": [
+            {"id": "g000", "name": "base", "components": ["c001"],
+             "grounded": True, "frame": None, "bbox_diag": 0.2},
+            {"id": "g001", "name": "bolt", "components": ["c002"],
+             "grounded": False, "frame": None, "bbox_diag": 0.2}],
+        "joints": [joint], "loops": [], "warnings": [],
+    }
+    mesh = write_mesh("bolts", _BOLT_DEFS, _BOLT_INST)
+    _send(mesh, raw)
+    bolt = by_path("bolt-1")
+    check(bolt.parent is not None and bolt.parent_type == "BONE",
+          "the bolt is not on the rig")
+    copy = bolt.copy()
+    for col in bolt.users_collection:
+        col.objects.link(copy)
+    copy.matrix_world = Matrix.Translation((0.0, 0.2, 0.0)) @ bolt.matrix_world
+    bpy.context.view_layer.update()
+    placed = copy.matrix_world.copy()
+    name, bone = copy.name, bolt.parent_bone
+
+    _send(mesh, raw, update=True)
+    copy = bpy.data.objects.get(name)
+    check(copy is not None, "the refresh deleted the copy")
+    check(copy.parent is not None and copy.parent_type == "BONE"
+          and copy.parent_bone == bone,
+          "the copy is off its bone: %s %s" % (copy.parent, copy.parent_bone))
+    check((copy.matrix_world.translation - placed.translation).length < 1e-6,
+          "the copy moved")
+    check(by_path("bolt-1") is not None, "the refresh lost the bolt")
+
+
 CASES = [
+    ("FLAT: a copy of a part on the rig stays on its bone",
+     case_a_copy_on_the_rig),
+    ("TREE: a copy made with Shift+D is left alone",
+     lambda: case_a_copy_made_in_blender(False)),
+    ("TREE: a copy made with Alt+D is left alone",
+     lambda: case_a_copy_made_in_blender(True)),
+    ("TREE: a Full Copy of the scene is left alone",
+     case_a_copy_of_the_scene),
     ("EMPTIES: the subassembly empty survives an update",
      lambda: case_branch_empties_survive("EMPTIES")),
     ("COLLECTION_INSTANCES: the subassembly empty survives an update",

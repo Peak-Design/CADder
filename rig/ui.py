@@ -322,6 +322,7 @@ def _driver_changed(self, context):
     if not inputs.apply(m, mechs[self.index], self.driver):
         return
     _STATE["plan"] = None
+    _STATE["error"] = ""
     if _find_rig(context) is None:
         return          # applied at the next Build Rig
     try:
@@ -470,6 +471,7 @@ if bpy is not None:
     class CADLINK_OT_load_manifest(bpy.types.Operator):
         bl_idname = "cadlink.load_manifest"
         bl_label = "Load Manifest"
+        bl_options = {"REGISTER", "UNDO"}
         bl_description = "Parse and validate the rig manifest, plan the rig"
 
         def execute(self, context):
@@ -533,6 +535,7 @@ if bpy is not None:
     class CADLINK_OT_match_geometry(bpy.types.Operator):
         bl_idname = "cadlink.match_geometry"
         bl_label = "Match Geometry"
+        bl_options = {"REGISTER", "UNDO"}
         bl_description = "Match manifest components to scene objects"
 
         @classmethod
@@ -561,6 +564,7 @@ if bpy is not None:
     class CADLINK_OT_sync_poses(bpy.types.Operator):
         bl_idname = "cadlink.sync_poses"
         bl_label = "Snap to CAD Poses"
+        bl_options = {"REGISTER", "UNDO"}
         bl_description = ((
             "Move matched geometry onto the CAD transforms in the "
             "manifest. This fixes instances that the STEP file could only store"
@@ -625,6 +629,7 @@ if bpy is not None:
     class CADLINK_OT_build_rig(bpy.types.Operator):
         bl_idname = "cadlink.build_rig"
         bl_label = "Build Rig"
+        bl_options = {"REGISTER", "UNDO"}
         bl_description = "Build the constrained armature from the manifest"
 
         @classmethod
@@ -640,6 +645,8 @@ if bpy is not None:
             return True
 
         def execute(self, context):
+            # An error stays in the panel only until this runs again.
+            _STATE["error"] = ""
             m = _STATE["manifest"]
             # The scene frame comes from the last match, but only when at
             # least one anchor agreed with it. An unanchored frame is just
@@ -675,6 +682,7 @@ if bpy is not None:
     class CADLINK_OT_relink_geometry(bpy.types.Operator):
         bl_idname = "cadlink.relink_geometry"
         bl_label = "Relink Geometry"
+        bl_options = {"REGISTER", "UNDO"}
         bl_description = "Parent matched geometry to the rig, preserving world transforms"
 
         @classmethod
@@ -1108,6 +1116,9 @@ if bpy is not None:
 
         def execute(self, context):
             from . import native_import, cad_link, progress, defeature
+            # An error from an earlier run stays in the panel only until
+            # this runs again: the CAD application can be there now.
+            _STATE["error"] = ""
             ids = []
             covered = _scope_objects(context)
             for obj in covered:

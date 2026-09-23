@@ -353,10 +353,10 @@ def _limit_widget_wanted(bone_plan):
 
     Only a bone the user can actually pose: a dial on a body that cannot be
     grabbed says "you may turn this far" about something that does not turn
-    at all. The ball templates carry their limit as a swing cone on the
-    handle instead, and are handled there.
+    at all. A limited ball gets one too: it shows the swing cone, which has
+    to stay still while the handle turns inside it.
     """
-    if bone_plan.root or bone_plan.ball_def_name:
+    if bone_plan.root:
         return False
     joint = bone_plan.joint
     if joint is None:
@@ -552,30 +552,7 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
             handle.custom_shape = shapes_mod.widget(widgets, key, geometry, cache)
             handle.use_custom_shape_bone_size = True
 
-        # A swing-cone ball wears its limit as the cone it may lean in: the
-        # band the constraints clamp (constraints.apply_ball_cone), which is
-        # an angle from the CONE axis and not from the rest pose. A stud
-        # can rest tilted inside it, so the widget is also turned from the
-        # handle's own +Y (the rest direction) onto the cone axis, which
-        # the pole bone carries as its +Y.
-        joint = bp.joint
-        if bp.ball_def_name and joint is not None \
-                and joint.rotation_limit is not None:
-            swing = max(abs(joint.rotation_limit.min),
-                        abs(joint.rotation_limit.max))
-            lim_key = "SWW_cone_%.4f" % swing
-            handle.custom_shape = shapes_mod.widget(
-                widgets, lim_key,
-                shapes_mod.swing_cone(swing, 1.0), cache)
-            pole = pose.bones.get(result.ball_pole_names.get(gid, ""))
-            if pole is not None:
-                cone_axis = pole.bone.matrix_local.col[1].to_3d()
-                local = handle.bone.matrix_local.to_3x3().inverted() @ cone_axis
-                if local.length > 1e-9:
-                    turn = Vector((0.0, 1.0, 0.0)).rotation_difference(local)
-                    handle.custom_shape_rotation_euler = turn.to_euler("XYZ")
-
-    # The limit dials and rails.
+    # The limit dials, rails and cones.
     for gid, name in result.limit_names.items():
         lb = pose.bones.get(name)
         if lb is None:
@@ -590,7 +567,18 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
         lb.lock_scale = [True, True, True]
         styled["limit"] += 1
 
-        if joint.rotation_limit is not None:
+        if bp.ball_def_name and joint.rotation_limit is not None:
+            # A ball's limit is the cone the stud may lean in: the band the
+            # constraints clamp (constraints.apply_ball_cone), an angle from
+            # the cone axis and not from the rest pose. The bone lies on
+            # that axis, and the cone is as long as the handle.
+            swing = max(abs(joint.rotation_limit.min),
+                        abs(joint.rotation_limit.max))
+            lb.custom_shape = shapes_mod.widget(
+                widgets, "SWW_cone_%.4f" % swing,
+                shapes_mod.swing_cone(swing, 1.0), cache)
+            lb.use_custom_shape_bone_size = True
+        elif joint.rotation_limit is not None:
             lo = joint.rotation_limit.delta_min
             hi = joint.rotation_limit.delta_max
             key = "SWW_arc_%.4f_%.4f" % (lo, hi)
@@ -1422,7 +1410,16 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 lb = edit_bones.new("LIM_" + eb.name)
                 lb.head = (0.0, 0.0, 0.0)
                 lb.tail = (0.0, 1.0, 0.0)
-                lb.matrix = eb.matrix.copy()
+                if bp.ball_def_name:
+                    # A ball's limit is a band of angles from the CONE axis
+                    # (constraints.apply_ball_cone), so its cone opens along
+                    # that axis from the ball's center. The stud can rest
+                    # tilted inside it, away from the handle's rest +Y.
+                    cone_axis = (frame.to_3x3() @ Vector(bp.joint.axis)).normalized()
+                    lb.matrix = _frame_matrix(cone_axis, None,
+                                              eb.matrix.translation)
+                else:
+                    lb.matrix = eb.matrix.copy()
                 lb.length = eb.length
                 lb.use_connect = False
                 lb.parent = eb.parent

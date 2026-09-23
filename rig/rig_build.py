@@ -1027,6 +1027,11 @@ def _remove_rig_objects(doomed):
                 bpy.data.armatures.remove(data)
             elif isinstance(data, bpy.types.Curve):
                 bpy.data.curves.remove(data)
+            elif isinstance(data, bpy.types.Mesh):
+                # Path rails, surface patches and cam surfaces. Left behind,
+                # each rebuild added an orphan mesh and moved the name of
+                # the next one on by a suffix.
+                bpy.data.meshes.remove(data)
 
 
 def remove_rig(arm_obj):

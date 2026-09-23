@@ -15,6 +15,8 @@ an update with rig_mode APPEND and checks what came back:
   * a rig joined from two assemblies, built again for one of them, keeps
     the other one's bones, drivers and parts;
   * a driver the user put on the armature object stays;
+  * rebuilds leave no rail or cam meshes behind, and do not move their
+    names on.
 """
 
 import json
@@ -537,9 +539,38 @@ def object_drivers_stay():
           "%d driver(s) after the update, was %d" % (len(paths), ours + 2))
 
 
+# ── Rebuilds leave no meshes behind ─────────────────────────────────────
+
+def rebuilds_leave_no_meshes():
+    print("-- a rig with a rail and a cam, built again and again")
+    fresh()
+    rail_m = man_mod.parse(
+        manifest("meshrig", PATH_PARTS,
+                 [hinge("j001", "g000", "g001", 0.2),
+                  path_joint("j002", "g000", "g002")]),
+        source_path="meshrig.rig.json")
+    cam_m = man_mod.parse(cam_manifest(), source_path="camrig.rig.json")
+    for m in (rail_m, cam_m):
+        result = rig_build.build(bpy.context, m, graph.build(m))
+        for _ in range(3):
+            result = rig_build.build(bpy.context, m, graph.build(m))
+        for _ in range(3):
+            result = rig_build.build(bpy.context, m, graph.build(m),
+                                     into=result.armature_object)
+        names = (list(result.contact_mesh_names.values())
+                 + list(result.cam_surface_names.values()))
+        check(names and all("." not in n for n in names),
+              "the helper objects of %s moved on to %s" % (m.step_file, names))
+    orphans = sorted(me.name for me in bpy.data.meshes
+                     if me.users == 0 and me.name.startswith("CADLINK_"))
+    check(not orphans, "rebuilds left %d mesh(es) with no user: %s"
+          % (len(orphans), orphans))
+
+
 def main():
     ball_handle_keeps_its_name()
     object_drivers_stay()
+    rebuilds_leave_no_meshes()
     user_bone_keeps_its_parent()
     moved_rig_keeps_its_rails()
     moved_rig_keeps_its_cam()

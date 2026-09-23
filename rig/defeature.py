@@ -147,7 +147,7 @@ def above(collection, scene=None):
 
 
 def settings_for(obj, scene=None, parents=None, holders=None):
-    """What an object travels as: (enabled, size in metres, curved).
+    """What an object travels as: (enabled, size in scene units, curved).
 
     A collection above it that is set to defeature decides for it. Otherwise
     it answers for itself.
@@ -174,6 +174,15 @@ def orders(objects, scene=None):
     rows, seen = [], set()
     here = scene or (bpy.context.scene if bpy else None)
     parents, holders = _parents(here), _holders(here)
+    # The size is a length property, so Blender holds it in scene units,
+    # and the CAD application takes metres. In a millimetre scene, 0.5 mm
+    # went to it as 0.5 m.
+    try:
+        metres = float(here.unit_settings.scale_length)
+    except (AttributeError, TypeError):
+        metres = 1.0
+    if not metres > 0.0:
+        metres = 1.0
     for obj in objects or []:
         component = obj.get("RIG_component_id")
         if not component or component in seen:
@@ -184,7 +193,7 @@ def orders(objects, scene=None):
         seen.add(component)
         rows.append({
             "component": component,
-            "size_m": float(size),
+            "size_m": float(size) * metres,
             "curved": bool(curved),
         })
     return rows

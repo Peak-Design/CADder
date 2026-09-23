@@ -175,6 +175,41 @@ def _mark_edges(me, w):
         me.edges.foreach_set("use_seam", np.isin(keys, w.seams))
 
 
+def scene_unit_scale(context):
+    """Blender units per metre in the scene: 1 / Unit Scale.
+
+    The .swmesh is in metres. The rig build, pose sync, matching and the
+    STEP import all convert with this value (rig_build._unit_scale). The
+    direct link placed its parts at one Blender unit per metre instead, so
+    in a millimetre scene pose sync pushed every part a thousand times
+    further out without scaling its mesh, and the rig was built there."""
+    try:
+        scale = float(context.scene.unit_settings.scale_length)
+    except (AttributeError, TypeError):
+        return 1.0
+    return 1.0 / scale if scale > 0.0 else 1.0
+
+
+def cad_quality(scene):
+    """The quality fields of a request to the CAD application, from the
+    scene's Mesh Quality settings.
+
+    The Custom distance is a length property, so Blender holds it in scene
+    units. The CAD application takes metres: in a millimetre scene, a
+    distance of 0.8 mm went to it as 0.8 m. The presets are metres
+    already."""
+    from .. import quality as quality_mod
+    spec = quality_mod.spec_of(scene.stepper)
+    if spec["mode"] == "physical" and spec.get("quality") not in quality_mod.PRESETS:
+        try:
+            scale = float(scene.unit_settings.scale_length)
+        except (AttributeError, TypeError):
+            scale = 1.0
+        if scale > 0.0:
+            spec["lin_m"] = spec["lin_m"] * scale
+    return quality_mod.cad_request(spec)
+
+
 def _matrix(transform, unit_scale):
     """The instance's row-major 4x4 as a Blender matrix, translation scaled
     into scene units."""
@@ -804,7 +839,7 @@ def _definition_hash(definition):
 
 
 def build(context, path, manifest=None, collection_name=None,
-          unit_scale=1.0, material_prefix="SW ", up_as="ZPOS",
+          unit_scale=None, material_prefix="SW ", up_as="ZPOS",
           hierarchy="FLAT", report_to=None):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
@@ -820,8 +855,13 @@ def build(context, path, manifest=None, collection_name=None,
     hierarchy_types; group_in_collection wraps the import in one
     collection named after the file, as the importer does.
 
+    unit_scale is Blender units per metre. None takes the scene's
+    (scene_unit_scale), which is what every caller wants.
+
     This REPLACES what was there. To change only what changed, keeping the
     rest of the scene, see update()."""
+    if unit_scale is None:
+        unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     frame_rows = up_frame(up_as)
     stem = os.path.splitext(os.path.basename(path))[0]
@@ -898,7 +938,7 @@ class UpdateReport:
                                   len(self.moved), len(self.reshaped), self.kept))
 
 
-def update(context, path, manifest=None, unit_scale=1.0,
+def update(context, path, manifest=None, unit_scale=None,
            material_prefix="SW ", up_as="ZPOS", hierarchy="FLAT",
            report_to=None, before_changes=None):
     """Brings the scene up to date with a new export, changing only what
@@ -921,7 +961,11 @@ def update(context, path, manifest=None, unit_scale=1.0,
       * a part that has gone is removed with its mesh.
 
     The rig is not touched here. What to do with it is a separate question
-    and a separate answer: see rig_update.py."""
+    and a separate answer: see rig_update.py.
+
+    unit_scale is as for build()."""
+    if unit_scale is None:
+        unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     frame_rows = up_frame(up_as)
     stem = os.path.splitext(os.path.basename(path))[0]
@@ -1173,7 +1217,7 @@ def quads(objects):
     return main_mod._tris_to_quads_objects(objects) or 0
 
 
-def refine(context, path, unit_scale=1.0, material_prefix="SW "):
+def refine(context, path, unit_scale=None, material_prefix="SW "):
     """Swaps in finer geometry for objects that are already in the scene.
 
     The objects themselves are kept (only their mesh DATA is replaced), so
@@ -1182,7 +1226,10 @@ def refine(context, path, unit_scale=1.0, material_prefix="SW "):
     in, or the round trip would be useless for exactly the assemblies it is
     meant for.
 
-    Returns the objects whose geometry changed."""
+    unit_scale is as for build(). Returns the objects whose geometry
+    changed."""
+    if unit_scale is None:
+        unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     materials = [_material(spec, material_prefix, unit_scale) for spec in scene.materials]
 

@@ -824,11 +824,10 @@ if bpy is not None:
                     # rebuild that left it out would quietly put the holes
                     # back.
                     # The quality in Mesh Quality, the same settings that
-                    # rebuild a part from a file.
-                    from .. import quality as quality_mod
+                    # rebuild a part from a file, with its distance in
+                    # metres.
                     reply = cad_link.retessellate(
-                        ids, quality_mod.cad_request(
-                            quality_mod.spec_of(context.scene.stepper)),
+                        ids, native_import.cad_quality(context.scene),
                         persistent_ids=persistent,
                         separate_solids=split or None,
                         paths=native_import.cad_paths(covered),

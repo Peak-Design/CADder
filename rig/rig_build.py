@@ -966,8 +966,11 @@ def _clear_generated(context, arm_obj, collection, source=""):
     animation = arm_obj.animation_data
     if animation is not None:
         for fcurve in list(animation.drivers):
+            # A build puts drivers on bones only (drivers.py, cam_contact.py),
+            # so a driver on the object itself or on one of its properties
+            # is the user's, and it stays.
             name = _bone_in_path(fcurve.data_path)
-            if name is None or name in generated:
+            if name is not None and name in generated:
                 try:
                     animation.drivers.remove(fcurve)
                 except (RuntimeError, ReferenceError):

@@ -14,6 +14,7 @@ an update with rig_mode APPEND and checks what came back:
     bones;
   * a rig joined from two assemblies, built again for one of them, keeps
     the other one's bones, drivers and parts;
+  * a driver the user put on the armature object stays;
 """
 
 import json
@@ -508,8 +509,37 @@ def joined_rig_keeps_the_other_assembly():
           % (len(host.data.bones), count))
 
 
+# ── The user's drivers on the armature object stay ──────────────────────
+
+def object_drivers_stay():
+    print("-- drivers the user put on the armature object")
+    fresh()
+    joints = [hinge("j001", "g000", "g001", 0.2)]
+    send("drvrig", HINGED, joints)
+    arm = rig_object()
+    if not check(arm is not None, "no rig was built"):
+        return
+    arm["my_prop"] = 0.0
+    arm.driver_add('["my_prop"]').driver.expression = "frame / 10"
+    arm.driver_add("rotation_euler", 2).driver.expression = "0.1"
+    ours = len(arm.animation_data.drivers) - 2
+
+    send("drvrig", HINGED, joints, update=True)
+    now = rig_object()
+    paths = sorted((fc.data_path, fc.array_index)
+                   for fc in now.animation_data.drivers) \
+        if now.animation_data else []
+    check(('["my_prop"]', 0) in paths,
+          "the driver on the custom property is gone: %s" % paths)
+    check(("rotation_euler", 2) in paths,
+          "the driver on the rotation is gone: %s" % paths)
+    check(len(paths) == ours + 2,
+          "%d driver(s) after the update, was %d" % (len(paths), ours + 2))
+
+
 def main():
     ball_handle_keeps_its_name()
+    object_drivers_stay()
     user_bone_keeps_its_parent()
     moved_rig_keeps_its_rails()
     moved_rig_keeps_its_cam()

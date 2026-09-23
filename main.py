@@ -119,12 +119,20 @@ def _file_signature(filepath):
         return None
 
 
-def _cache_put(filepath, step_reader):
-    """Add to file cache with LRU eviction."""
+def _cache_put(filepath, step_reader, signature=None):
+    """Add to file cache with LRU eviction.
+
+    `signature` is the file's stamp from BEFORE the read. Stamped after it,
+    a file written again during the read (an export loop that writes the
+    same path) was cached under the new stamp with the old content, and
+    the next import got the old pose from the cache. With the stamp from
+    before, such a reader reads as stale and the file is read again."""
     if filepath in global_file_cache:
         global_file_cache.move_to_end(filepath)
     global_file_cache[filepath] = step_reader
-    global_file_cache_meta[filepath] = _file_signature(filepath)
+    if signature is None:
+        signature = _file_signature(filepath)
+    global_file_cache_meta[filepath] = signature
     while len(global_file_cache) > MAX_FILE_CACHE:
         evicted_path, _ = global_file_cache.popitem(last=False)
         global_file_cache_meta.pop(evicted_path, None)
@@ -2700,10 +2708,11 @@ def load_step(
         from . import formats
         try:
             parse_t0 = time.time()
+            signature = _file_signature(filepath)
             step_reader = formats.make_reader(
                 filepath, skip_name_prefixes=skip_prefixes)
             _record_parse_calibration(step_reader, time.time() - parse_t0)
-            _cache_put(filepath, step_reader)
+            _cache_put(filepath, step_reader, signature)
         except AssertionError as e:
             print(e)
             return False

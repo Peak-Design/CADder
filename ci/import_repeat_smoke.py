@@ -132,6 +132,35 @@ problems_2 = dict(m._cache_get(EMPTY).import_problems)
 check(problems_2 == problems_1,
       "and the same problem counts (%s, then %s)" % (problems_1, problems_2))
 
+# ---- a file rewritten during the read is not cached as fresh -------------
+# The cache stamps each reader with the file's time and size, so a file
+# written again is read again. The stamp was taken after the read, so a
+# file written again WHILE it was read (an export loop that writes the same
+# path) was cached under the new stamp with the old content.
+print("\n== a file rewritten during the read")
+from CADder import formats
+
+MOVING = os.path.join(TMP, "moving.step")
+shutil.copyfile(STEP, MOVING)
+real_make_reader = formats.make_reader
+
+
+def read_then_rewrite(filepath, **kwargs):
+    reader = real_make_reader(filepath, **kwargs)
+    st = os.stat(filepath)
+    os.utime(filepath, ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 10))
+    return reader
+
+
+formats.make_reader = read_then_rewrite
+try:
+    m._cache_drop(MOVING)
+    m.load_step(bpy.context, MOVING, htypes="FLAT", up_as="Z")
+finally:
+    formats.make_reader = real_make_reader
+check(m._cache_get(MOVING) is None,
+      "the next import reads the file again")
+
 if FAILS:
     print("\nimport_repeat_smoke: FAILED (%d)\n  %s"
           % (len(FAILS), "\n  ".join(FAILS)))

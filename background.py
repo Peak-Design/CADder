@@ -145,6 +145,7 @@ class STEPPER_OT_background_import(bpy.types.Operator):
     # The import operator that starts this one finishes before the worker
     # does, so its undo step holds none of the parts. This one pushes the
     # step when it has added them.
+    # No REGISTER: a redo would start the whole job again.
     bl_options = {"UNDO"}
 
     # JSON: {"files": ["path", ...], "op_kwargs": {...}}

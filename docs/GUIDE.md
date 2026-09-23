@@ -168,7 +168,7 @@ The material database lets you define mappings from the material names a CAD imp
 2. Assign the Blender materials you want to each part (e.g., replace "GRAY" with "Stainless Steel" etc.).
 3. In the **CADder: Material DB** sidebar panel, click **New** to create a database. The addon scans the scene and records what each original STEP material was replaced with.
 4. Manually assign/tweak material mappings in the mapping table if required.
-5. The database is saved as a `.blend` file in the addon's `MaterialDB/` folder.
+5. CADder saves the database as a `.blend` file in the material database folder.
 
 ### Importing with a database
 
@@ -487,8 +487,8 @@ only its geometry.
   that hold several solids, shells or surfaces with no assembly structure to
   tell them apart. Off by default.
 - The **material database folder** can be set in preferences. Left empty it
-  uses the folder inside the addon, which a reinstall wipes and which cannot be
-  shared between machines.
+  uses the folder Blender keeps for the extension's own files. An upgrade
+  keeps that folder, but you cannot share it between machines.
 
 ### Panel buttons
 
@@ -508,7 +508,7 @@ Each row shows an original STEP material name and a dropdown to pick the replace
 
 ### Notes
 
-- Databases are stored in the `MaterialDB/` folder inside the addon directory.
+- By default the databases are in `extensions/.user/<repository>/cadder/MaterialDB/` in the Blender user folder. An upgrade does not delete this folder. When CADder starts, it moves the databases that an older version kept inside the addon folder to this folder.
 - The active database selection is stored in addon preferences and persists across sessions and files.
 - Original STEP material names are stored on each imported object as a `STEP_materials` custom property, so re-applying a different database always works correctly.
 - Linked materials (e.g., from the Blender asset browser) are fully supported. A local copy is saved into the database file so it can be loaded in any `.blend` file.

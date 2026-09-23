@@ -1996,13 +1996,29 @@ _MATDB_TEXT_NAME = "STEPper_MaterialDB"
 _ADDON_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
+def _matdb_user_dir():
+    """The MaterialDB folder Blender keeps for this extension, or None.
+
+    Blender deletes the folder of an extension on every upgrade, and the
+    update notice sends the user straight into one. This folder is outside
+    it, so the databases survive. A legacy install (scripts/addons) has no
+    such folder and gets None."""
+    try:
+        return bpy.utils.extension_path_user(
+            __package__, path="MaterialDB", create=True)
+    except Exception:
+        # ValueError for a legacy install, OSError when it cannot be made.
+        return None
+
+
 def _get_matdb_dir():
     """The folder holding the material databases.
 
-    The addon's own MaterialDB folder by default, and a folder the user
-    names in preferences when they set one. A database inside the addon is
-    wiped by every reinstall and cannot be shared between machines or with a
-    team, which is exactly what a material library is for."""
+    The user folder of the extension by default, and a folder the user
+    names in preferences when they set one. Only a legacy install uses the
+    MaterialDB folder inside the addon, which a reinstall wipes. The default
+    folder cannot be shared between machines or with a team, which is
+    exactly what a material library is for."""
     custom = ""
     try:
         custom = (_get_addon_prefs().matdb_dir or "").strip()
@@ -2022,8 +2038,11 @@ def _get_matdb_dir():
             if _matdb_dir_warned != d:
                 _matdb_dir_warned = d
                 print("CADder: material database folder %r is "
-                      "unusable (%s). Using the addon's own folder" % (d, exc))
+                      "unusable (%s). Using the default folder" % (d, exc))
 
+    d = _matdb_user_dir()
+    if d:
+        return d
     d = os.path.join(_ADDON_DIR, "MaterialDB")
     try:
         os.makedirs(d, exist_ok=True)
@@ -2035,6 +2054,46 @@ def _get_matdb_dir():
 
 
 _matdb_dir_warned = ""
+
+
+def _move_addon_matdbs(src=None, dst=None):
+    """Move the databases out of the addon folder, into the user folder.
+
+    Older versions kept them in the MaterialDB folder inside the addon, and
+    the next upgrade deletes that folder. Runs on register, so the move is
+    done before the user can start an upgrade. A name the user folder
+    already has stays where it is: that copy is the one in use. Returns the
+    number of databases moved."""
+    import shutil
+
+    if src is None:
+        src = os.path.join(_ADDON_DIR, "MaterialDB")
+    if dst is None:
+        dst = _matdb_user_dir()
+    if not dst or not os.path.isdir(src):
+        return 0
+    if os.path.normcase(os.path.realpath(src)) == os.path.normcase(
+            os.path.realpath(dst)):
+        return 0
+    moved = 0
+    for f in sorted(os.listdir(src)):
+        if not f.lower().endswith(".blend"):
+            continue
+        target = os.path.join(dst, f)
+        if os.path.exists(target):
+            print("CADder: material database %r is in both folders. "
+                  "Keeping the one in %s" % (f, dst))
+            continue
+        try:
+            os.makedirs(dst, exist_ok=True)
+            shutil.move(os.path.join(src, f), target)
+            moved += 1
+        except OSError as exc:
+            print("CADder: could not move material database %r (%s)"
+                  % (f, exc))
+    if moved:
+        print("CADder: moved %d material database(s) to %s" % (moved, dst))
+    return moved
 
 
 def _sanitize_db_name(name):
@@ -4592,9 +4651,9 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
     matdb_dir: bpy.props.StringProperty(
         name="Material Database Folder",
         description="Folder that holds the .blend material databases. Leave it "
-                    "empty to use the MaterialDB folder inside the addon. Every"
-                    " reinstall wipes that folder, and you cannot share it "
-                    "between machines or with a team",
+                    "empty to use the default folder, which an upgrade keeps. "
+                    "You cannot share the default folder between machines or "
+                    "with a team",
         subtype="DIR_PATH",
         default="",
     )
@@ -4776,7 +4835,9 @@ class STEP_AddonPreferences(bpy.types.AddonPreferences):
         col = layout.column()
         col.prop(self, "active_matdb")
         col.prop(self, "matdb_dir")
-        if not self.matdb_dir.strip():
+        # Only a legacy install keeps the databases in the addon folder. An
+        # extension keeps them in its user folder, which an upgrade keeps.
+        if not self.matdb_dir.strip() and not _matdb_user_dir():
             col.label(text="The addon folder holds the databases. "
                            "A reinstall clears it", icon="INFO")
 
@@ -4875,6 +4936,10 @@ def register():
     bpy.types.Scene.stepper = bpy.props.PointerProperty(type=PG_Stepper)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     updater_mod.start()
+    try:
+        _move_addon_matdbs()
+    except Exception as exc:
+        print("CADder: material databases not moved:", exc)
 
     if rig_mod is not None:
         try:

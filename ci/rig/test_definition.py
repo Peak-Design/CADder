@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Which joints a mechanism defines: the color of a control bone. Blue for
-a joint in a closed chain, red for a joint that nothing else moves. No bpy.
+"""Which joints a mechanism defines, and the colors of the bones. A joint
+in a closed chain is defined, a joint that nothing else moves is free. A
+control bone is red, a hidden bone takes the color of its joint. No bpy.
 """
 
 import copy
@@ -113,15 +114,14 @@ class ControlColour(unittest.TestCase):
         from CADder.rig import graph, rig_build
         m = manifest.parse(data)
         plan = graph.build(m)
-        status = D.of_manifest(m)
         children = {j.child_group for j in m.joints}
-        return {bp.group.id: rig_build._control_colour(bp, status, children)
+        return {bp.group.id: rig_build._control_colour(bp, children)
                 for bp in plan.bones}
 
-    def test_the_input_of_a_four_bar_is_blue(self):
-        got = self.colours(four_bar_manifest())
-        self.assertEqual(got["g001"], "THEME04")
-        self.assertEqual(got["g002"], "THEME04")
+    def test_the_input_of_a_four_bar_is_red(self):
+        # Oscar, 2026-09-24: the control bone stays red, also when it is
+        # the input of a closed chain
+        self.assertEqual(self.colours(four_bar_manifest())["g001"], "THEME01")
 
     def test_a_hinge_is_red(self):
         self.assertEqual(self.colours(hinge_manifest())["g001"], "THEME01")
@@ -140,6 +140,30 @@ class ControlColour(unittest.TestCase):
         data["joints"].append({"id": "j002", "type": "free",
                                "parent_group": "g000", "child_group": "g002"})
         self.assertEqual(self.colours(data)["g002"], "THEME01")
+
+
+class MechanismColour(unittest.TestCase):
+    """The color of a hidden bone that the rig moves: the color of its
+    joint."""
+
+    def colours(self, data):
+        from CADder.rig import graph, rig_build
+        m = manifest.parse(data)
+        plan = graph.build(m)
+        status = D.of_manifest(m)
+        return {bp.group.id: rig_build._mechanism_colour(bp, status)
+                for bp in plan.bones}
+
+    def test_the_bones_a_four_bar_solves_are_blue(self):
+        got = self.colours(four_bar_manifest())
+        self.assertEqual(got["g002"], "THEME04")
+        self.assertEqual(got["g003"], "THEME04")
+
+    def test_the_grounded_root_is_gray(self):
+        self.assertEqual(self.colours(four_bar_manifest())["g000"], "THEME13")
+
+    def test_a_free_joint_is_red(self):
+        self.assertEqual(self.colours(hinge_manifest())["g001"], "THEME01")
 
 
 if __name__ == "__main__":

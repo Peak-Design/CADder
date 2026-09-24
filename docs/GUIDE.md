@@ -578,21 +578,20 @@ when the rig is built:
   Each wears a widget that says what it does: a dial with a pointer for a
   rotation, a round bar for something that slides and turns, a square bar for
   something that only slides, a helix for a screw, a ball and stud for a ball
-  joint. The color says whether the mechanism defines the joint:
-  - red: nothing else moves it. It is on an open branch, as the spin of a
-    saw blade or a door on its hinge.
-  - blue: a closed chain moves it with the rest of the mechanism: the input
-    of a four-bar, or a gear that drives another gear.
-  - gray: a ground you can move, with its whole mechanism.
+  joint. A control is red, also when it drives a closed chain, as the
+  input of a four-bar does. A ground you can move, with its whole
+  mechanism, is gray.
 - **`SW_limits`** (yellow): a fixed dial or rail beside each control that has
   a limit, drawn to the real numbers: the arc spans the angle the joint may
   turn through, the rail is as long as the travel plus half a slide bar at
   each end (so the bar's end meets the rail's end when it is hard against the
   stop), the cone opens to the swing angle. The arc rings the dial it belongs
   to, so the dial's pointer reads against it.
-- **`SW_mechanism`** (green, hidden): bones that move but that you do not
+- **`SW_mechanism`** (hidden): bones that move but that you do not
   drive: the driven half of a symmetry or gear coupling, the halves of a
-  hydraulic ram closed by aiming, anything welded solid.
+  hydraulic ram closed by aiming, anything welded solid. Each one takes the
+  color of its joint: blue when a closed chain, a coupling or a weld moves
+  it, gray for a fixed root.
 - **`SW_helpers`** (blue, hidden): scaffolding the closures need.
 
 The widgets you take hold of are solid, and drawn from both sides so they

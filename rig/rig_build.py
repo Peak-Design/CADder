@@ -45,14 +45,15 @@ _LIMITS_COLLECTION = "SW_limits"
 _MECHANISM_COLLECTION = "SW_mechanism"
 
 # Blender's stock bone color sets, so they follow the user's theme. A
-# control takes the color of its joint (definition.py): red when nothing
-# else moves it, blue when a closed chain does, gray for a root that stands
-# for a ground and moves its whole mechanism.
+# control is red, because the user poses it, also when it is the input of
+# a closed chain (Oscar, 2026-09-24). A root that stands for a ground and
+# moves its whole mechanism is gray. The hidden bones that the rig moves
+# take the color of their joint (definition.py): blue when a closed chain,
+# a coupling or a weld moves them, gray for a root.
 _COLOUR_CONTROL = "THEME01"     # red
 _COLOUR_DEFINED = "THEME04"     # blue
 _COLOUR_GROUND = "THEME13"      # gray
 _COLOUR_LIMIT = "THEME09"       # yellow
-_COLOUR_MECHANISM = "THEME03"   # green
 _COLOUR_HELPER = "THEME04"      # blue
 
 
@@ -503,18 +504,26 @@ def _control_geometry(bone_plan):
     return None, None
 
 
-def _control_colour(bone_plan, status, children):
-    """The color of a control bone. A bone with no parent is a root. One
-    the user can pose is a ground that moves its whole mechanism (a ground
-    of the Joints module), unless a joint of the manifest ends on it: a
-    free joint, an under-mated part, which is free."""
-    if bone_plan.parent_group_id is None:
-        return (_COLOUR_CONTROL if bone_plan.group.id in children
-                else _COLOUR_GROUND)
-    joint = bone_plan.joint
-    if joint is not None and status.get(joint.id) == definition.DEFINED:
-        return _COLOUR_DEFINED
+def _control_colour(bone_plan, children):
+    """The color of a control bone: red. A root that no joint of the
+    manifest ends on is a ground that moves its whole mechanism: gray. A
+    root with a joint on it is a free joint, an under-mated part: red."""
+    if bone_plan.parent_group_id is None \
+            and bone_plan.group.id not in children:
+        return _COLOUR_GROUND
     return _COLOUR_CONTROL
+
+
+def _mechanism_colour(bone_plan, status):
+    """The color of a bone the rig moves by itself: the color of its joint.
+    Blue when a closed chain, a coupling or a weld defines the joint, red
+    when nothing does, gray for a root."""
+    if bone_plan.parent_group_id is None:
+        return _COLOUR_GROUND
+    joint = bone_plan.joint
+    if joint is not None and status.get(joint.id) == definition.FREE:
+        return _COLOUR_CONTROL
+    return _COLOUR_DEFINED
 
 
 def _style_bones(context, arm_obj, plan, result, unit_scale,
@@ -557,16 +566,16 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
         if handle_name != result.bone_names[gid]:
             deformer = pose.bones.get(result.bone_names[gid])
             if deformer is not None:
-                paint(deformer, _COLOUR_MECHANISM, mechanism_coll)
+                paint(deformer, _mechanism_colour(bp, status), mechanism_coll)
                 styled["mechanism"] += 1
 
         role = _bone_role(bp, handle, ik_driven)
         if role != "control":
-            paint(handle, _COLOUR_MECHANISM, mechanism_coll)
+            paint(handle, _mechanism_colour(bp, status), mechanism_coll)
             styled["mechanism"] += 1
             continue
 
-        paint(handle, _control_colour(bp, status, children), controls_coll)
+        paint(handle, _control_colour(bp, children), controls_coll)
         styled["control"] += 1
         key, geometry = _control_geometry(bp)
         if geometry is not None:

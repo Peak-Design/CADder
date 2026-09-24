@@ -620,16 +620,25 @@ def run():
 
     control_names = {b.name for b in controls.bones}
     _check(control_names, "no control bone at all")
-    # A control takes the color of its joint (definition.py): blue when a
-    # closed chain moves it, red when nothing else does.
+    # A control is red, and gray for a ground you can move. A hidden bone
+    # the rig moves takes the color of its joint (definition.py): blue when
+    # a closed chain moves it.
     from CADder.rig import definition
     status = definition.of_manifest(m)
     children = {j.child_group for j in m.joints}
     want_colour = {}
+    hidden_colour = {}
     for bp in plan.bones:
         gid = bp.group.id
         handle = result.ball_ctrl_names.get(gid, result.bone_names.get(gid))
-        want_colour[handle] = rig_build._control_colour(bp, status, children)
+        want_colour[handle] = rig_build._control_colour(bp, children)
+        for name in {handle, result.bone_names.get(gid)}:
+            hidden_colour[name] = rig_build._mechanism_colour(bp, status)
+    for b in mechanism.bones:
+        if b.name in hidden_colour:
+            _check(b.color.palette == hidden_colour[b.name],
+                   "mechanism bone {} is {}, not {}".format(
+                       b.name, b.color.palette, hidden_colour[b.name]))
     for name in control_names:
         pb = arm_obj.pose.bones[name]
         _check(pb.custom_shape is not None,
@@ -640,8 +649,12 @@ def run():
     if manifest_path_is_demo:
         by_group = {bp.group.id: bp for bp in plan.bones}
         crank = arm_obj.pose.bones[result.bone_names["g001"]]
-        _check(crank.color.palette == "THEME04",
-               "the input of the four-bar is not a blue control")
+        _check(crank.color.palette == "THEME01",
+               "the input of the four-bar is not a red control")
+        solved = [arm_obj.pose.bones[result.bone_names[gid]]
+                  for gid in ("g002", "g003")]
+        _check(all(pb.color.palette == "THEME04" for pb in solved),
+               "the bones the four-bar solves are not blue")
         _check(status["j001"] == "defined" and status["j006"] == "defined",
                "the four-bar input and the gear it drives are not defined")
         for gid, jid in (("g004", "j005"), ("g006", "j007")):

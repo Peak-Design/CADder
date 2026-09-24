@@ -32,7 +32,7 @@ class TestImportGuards(unittest.TestCase):
                      "CADder.rig.constraints", "CADder.rig.drivers",
                      "CADder.rig.loops", "CADder.rig.parenting",
                      "CADder.rig.rig_build", "CADder.rig.ui",
-                     "CADder.rig"):
+                     "CADder.rig.definition", "CADder.rig"):
             importlib.import_module(name)
 
     def test_register_refuses_without_bpy(self):

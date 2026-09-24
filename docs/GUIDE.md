@@ -574,11 +574,16 @@ file must sit beside the manifest, exactly as the exporter wrote the pair.
 Bones are sorted into four bone collections, and only two of them are visible
 when the rig is built:
 
-- **`SW_controls`** (red): everything with a degree of freedom you can pose.
+- **`SW_controls`**: everything with a degree of freedom you can pose.
   Each wears a widget that says what it does: a dial with a pointer for a
   rotation, a round bar for something that slides and turns, a square bar for
   something that only slides, a helix for a screw, a ball and stud for a ball
-  joint.
+  joint. The color says whether the mechanism defines the joint:
+  - red: nothing else moves it. It is on an open branch, as the spin of a
+    saw blade or a door on its hinge.
+  - blue: a closed chain moves it with the rest of the mechanism: the input
+    of a four-bar, or a gear that drives another gear.
+  - gray: a ground you can move, with its whole mechanism.
 - **`SW_limits`** (yellow): a fixed dial or rail beside each control that has
   a limit, drawn to the real numbers: the arc spans the angle the joint may
   turn through, the rail is as long as the travel plus half a slide bar at

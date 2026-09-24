@@ -197,6 +197,7 @@ def run():
         else:
             print("blender_smoke.py: unknown argument {!r}".format(args[i]))
             sys.exit(2)
+    manifest_path_is_demo = manifest_path is None
     if manifest_path is None:
         fd, manifest_path = tempfile.mkstemp(suffix=".rig.json")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -619,12 +620,36 @@ def run():
 
     control_names = {b.name for b in controls.bones}
     _check(control_names, "no control bone at all")
+    # A control takes the color of its joint (definition.py): blue when a
+    # closed chain moves it, red when nothing else does.
+    from CADder.rig import definition
+    status = definition.of_manifest(m)
+    children = {j.child_group for j in m.joints}
+    want_colour = {}
+    for bp in plan.bones:
+        gid = bp.group.id
+        handle = result.ball_ctrl_names.get(gid, result.bone_names.get(gid))
+        want_colour[handle] = rig_build._control_colour(bp, status, children)
     for name in control_names:
         pb = arm_obj.pose.bones[name]
         _check(pb.custom_shape is not None,
                "control {} has no widget".format(name))
-        _check(pb.color.palette == "THEME01",
-               "control {} is not the control color".format(name))
+        _check(pb.color.palette == want_colour.get(name),
+               "control {} is {}, not {}".format(
+                   name, pb.color.palette, want_colour.get(name)))
+    if manifest_path_is_demo:
+        by_group = {bp.group.id: bp for bp in plan.bones}
+        crank = arm_obj.pose.bones[result.bone_names["g001"]]
+        _check(crank.color.palette == "THEME04",
+               "the input of the four-bar is not a blue control")
+        _check(status["j001"] == "defined" and status["j006"] == "defined",
+               "the four-bar input and the gear it drives are not defined")
+        for gid, jid in (("g004", "j005"), ("g006", "j007")):
+            pb = arm_obj.pose.bones[result.ball_ctrl_names.get(
+                gid, result.bone_names[gid])]
+            _check(status[jid] == "free" and pb.color.palette == "THEME01",
+                   "the free joint {} is not a red control".format(jid))
+        del by_group
         _check(not (all(pb.lock_location) and all(pb.lock_rotation)),
                "control {} has nothing unlocked to pose".format(name))
 

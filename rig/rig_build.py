@@ -22,7 +22,7 @@ except ImportError:
     Matrix = None
     Vector = None
 
-from . import cam_contact, constraints
+from . import cam_contact, constraints, definition
 from . import shapes as shapes_mod, drivers, loops, sliders
 from .graph import RigPlan, swing_cone
 
@@ -44,8 +44,13 @@ _CONTROLS_COLLECTION = "SW_controls"
 _LIMITS_COLLECTION = "SW_limits"
 _MECHANISM_COLLECTION = "SW_mechanism"
 
-# Blender's stock bone color sets, so they follow the user's theme.
+# Blender's stock bone color sets, so they follow the user's theme. A
+# control takes the color of its joint (definition.py): red when nothing
+# else moves it, blue when a closed chain does, gray for a root that stands
+# for a ground and moves its whole mechanism.
 _COLOUR_CONTROL = "THEME01"     # red
+_COLOUR_DEFINED = "THEME04"     # blue
+_COLOUR_GROUND = "THEME13"      # gray
 _COLOUR_LIMIT = "THEME09"       # yellow
 _COLOUR_MECHANISM = "THEME03"   # green
 _COLOUR_HELPER = "THEME04"      # blue
@@ -498,6 +503,19 @@ def _control_geometry(bone_plan):
     return None, None
 
 
+def _control_colour(bone_plan, status, children):
+    """The color of a control bone. A root the user can pose is a ground
+    that moves its whole mechanism, unless a joint of the manifest ends on
+    it: a free joint, an under-mated part, which is free."""
+    if bone_plan.root:
+        return (_COLOUR_CONTROL if bone_plan.group.id in children
+                else _COLOUR_GROUND)
+    joint = bone_plan.joint
+    if joint is not None and status.get(joint.id) == definition.DEFINED:
+        return _COLOUR_DEFINED
+    return _COLOUR_CONTROL
+
+
 def _style_bones(context, arm_obj, plan, result, unit_scale,
                  controls_coll, limits_coll, mechanism_coll, helpers_coll):
     """Color every bone by what it is, and give the ones worth grabbing a
@@ -514,6 +532,8 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
     ik_driven = _ik_driven_groups(plan)
     cache = {}
     styled = {"control": 0, "limit": 0, "mechanism": 0}
+    status = definition.of_manifest(plan.manifest)
+    children = {j.child_group for j in plan.manifest.joints}
 
     def paint(pose_bone, palette, collection):
         try:
@@ -545,7 +565,7 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
             styled["mechanism"] += 1
             continue
 
-        paint(handle, _COLOUR_CONTROL, controls_coll)
+        paint(handle, _control_colour(bp, status, children), controls_coll)
         styled["control"] += 1
         key, geometry = _control_geometry(bp)
         if geometry is not None:

@@ -146,11 +146,13 @@ def main():
         part.matrix_world.to_quaternion()).angle)
     assert abs(turned - 0.5) < 1e-4,         "posing the bone turned the part it owns by %.4f rad, not 0.5" % turned
 
-    # A DIFFERENT assembly over the direct link replaces the native import
-    # wholesale, so the rig that drove the old parts is left over nothing
-    # and must go with them (live 2026-09-14: every send of another
-    # assembly stacked one more dead armature). A rig that drives geometry
-    # from elsewhere (a STEP import) is not touched.
+    # A DIFFERENT assembly over the direct link stands beside the first,
+    # which keeps its parts and its rig (CADder 1.2: each configuration of
+    # an assembly is a send of its own). A send of the SAME assembly with
+    # no rig replaces its parts, and the rig that drove them is left over
+    # nothing and must go with them (live 2026-09-14: dead armatures
+    # stacked up). A rig that drives geometry from elsewhere (a STEP
+    # import) is not touched.
     keep_col = bpy.data.collections.new("keep_Rig")
     bpy.context.scene.collection.children.link(keep_col)
     keep_arm = bpy.data.objects.new("keep_Rig", bpy.data.armatures.new("keep_Rig"))
@@ -168,6 +170,12 @@ def main():
     rig_collection_names = [c.name for c in arm.users_collection]
     objects2, _ = native_import.build(bpy.context, other_mesh, manifest=None)
     assert len(objects2) == 2
+    assert bpy.data.objects.get(rig_name) is arm, \
+        "the send of another assembly removed the rig of the first"
+    assert all(o.parent is arm for o in by_component.values()), \
+        "the send of another assembly took the parts of the first off its rig"
+    objects1, _ = native_import.build(bpy.context, mesh_path, manifest=None)
+    assert len(objects1) == 2
     assert bpy.data.objects.get(rig_name) is None, \
         "the rig of the replaced assembly is still in the scene"
     dead = [o.name for o in bpy.data.objects
@@ -249,7 +257,8 @@ def main():
 
     print("native_rig_smoke: OK: %d parts bone-parented with no drift, "
           "a %.2f rad bone pose turns its part by the same, a second "
-          "assembly takes the first one's rig away with its parts, three "
+          "assembly stands beside the first, a send without a rig takes "
+          "the rig of the replaced parts away, three "
           "sends of one assembly leave one rig, and a direct send finds "
           "the STEP import of its own assembly"
           % (parent_report.bone_parented, turned))

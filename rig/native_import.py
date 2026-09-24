@@ -35,6 +35,7 @@ from mathutils import Matrix
 
 from . import appearance, matdb, matching, progress, swmesh
 from . import diff as diff_mod
+from . import imports as imports_mod
 from . import weld as weld_mod
 from .. import empties as empties_mod
 from .. import geometry_lock, material_lock
@@ -264,7 +265,17 @@ _TAG_ROLE = diff_mod.TAG_ROLE  # what a collection of an import is for
 # the assembly. Objects and collections the user puts in it are the
 # user's.
 _ROLE_TOP = "top"
-_TOP_SUFFIX = "_Top_Level"
+# The names of one import (Oscar, 2026-09-24). The stem is
+# "<assembly>_<configuration>", and it names the top collection itself.
+# In it are "<stem>_Parts" and the rig, "<stem>_Rig". Two configurations
+# of one assembly then stand side by side with names of their own: a
+# collection name is unique in a file, so an assembly collection named
+# after the assembly alone got ".001" in the second. Before 1.2 the top
+# was "<stem>_Top_Level" and the assembly collection the stem.
+_PARTS_SUFFIX = "_Parts"
+_LEGACY_TOP_SUFFIX = "_Top_Level"
+_TAG_DOCUMENT = imports_mod.TAG_DOCUMENT
+_TAG_CONFIGURATION = imports_mod.TAG_CONFIGURATION
 # Blender cuts a longer name at this many bytes.
 _NAME_BYTES = 63
 
@@ -370,21 +381,58 @@ class _Scope:
             return False
 
 
-def _top_name(stem):
-    """The name of the top collection of the import `stem`.
+def _fit_name(stem, suffix=""):
+    """The stem with `suffix` on the end, as a collection name.
 
     The stem is made short as _short_name does. When its characters take
     more bytes than the name has room for, it is made shorter again, so
     Blender does not cut the suffix off the end."""
     base = _short_name(stem)
-    room = _NAME_BYTES - len(_TOP_SUFFIX.encode("utf-8"))
+    room = _NAME_BYTES - len(suffix.encode("utf-8"))
     if len(base.encode("utf-8")) > room:
         keep = len(base) // 2
         while keep > 1 and len((stem[:keep] + "_" + stem[-keep:])
                                .encode("utf-8")) > room:
             keep -= 1
         base = stem[:keep] + "_" + stem[-keep:]
-    return base + _TOP_SUFFIX
+    return base + suffix
+
+
+def _top_name(stem):
+    """The name of the top collection of the import `stem`: the stem."""
+    return _fit_name(stem)
+
+
+def _parts_name(stem):
+    """The name of the collection that holds the parts of `stem`."""
+    return _fit_name(stem, _PARTS_SUFFIX)
+
+
+def _default_names(stem, top):
+    """The names a send gives the top collection (`top` True) or the parts
+    collection of `stem`, now and before 1.2. A name that is one of these
+    is the send's, and a rename takes it along. Any other name is one the
+    user gave."""
+    if top:
+        return (_top_name(stem), _fit_name(stem, _LEGACY_TOP_SUFFIX))
+    return (_parts_name(stem), _short_name(stem))
+
+
+def _is_default(name, stem, top):
+    for default in _default_names(stem, top):
+        if name == default or name.startswith(default + "."):
+            return True
+    return False
+
+
+def _mark(col, document, configuration):
+    """Writes on a collection of an import which document and which
+    configuration it holds. An older add-in says neither, and the
+    collection keeps what it has."""
+    if document:
+        col[_TAG_DOCUMENT] = str(document)
+    if configuration:
+        col[_TAG_CONFIGURATION] = str(configuration)
 
 
 def _tops(scope):
@@ -406,7 +454,8 @@ def _new_top(stem):
     return col
 
 
-def _top_collection(stem, scope, destination):
+def _top_collection(stem, scope, destination, document=None,
+                    configuration=None):
     """The top collection for a send of `stem`. The scene's own is used
     again, where it is and with what is in it: the user can have moved it
     into a collection of their own, or put work of their own in it.
@@ -415,6 +464,7 @@ def _top_collection(stem, scope, destination):
     if top is None:
         top = _new_top(stem)
         destination.children.link(top)
+    _mark(top, document, configuration)
     return top
 
 
@@ -447,29 +497,88 @@ def _wrap(root, stem, scope, scene_collection):
 
 
 def _renamed(root, stem, scope):
-    """Puts the new name of the document on everything the import that is
-    standing tagged with the old one."""
+    """Puts the new name of the import on everything the import that is
+    standing tagged with the old one: the document was renamed, or an
+    import from before 1.2 becomes the import of one configuration.
+
+    The collections take the new name when they still have the name a send
+    gave them. A name the user gave stays. The rig of the import takes the
+    new name too, and says it drives the import by its new name, or the
+    next relink would leave its parts off it."""
     was = root.get(_TAG_FILE)
     if not was or was == stem:
         return
     for coll in scope.collections:
-        if coll.get(_TAG_FILE) == was:
-            coll[_TAG_FILE] = stem
-            if coll.get(_TAG_ROLE) == _ROLE_TOP:
-                # A name the user gave it stays.
-                old = _top_name(was)
-                if coll.name == old or coll.name.startswith(old + "."):
-                    coll.name = _top_name(stem) + coll.name[len(old):]
-            elif coll.name == was or coll.name.startswith(was + "."):
-                coll.name = stem + coll.name[len(was):]
+        if coll.get(_TAG_FILE) != was:
+            continue
+        coll[_TAG_FILE] = stem
+        role = coll.get(_TAG_ROLE)
+        if role == _ROLE_TOP:
+            if _is_default(coll.name, was, top=True):
+                coll.name = _top_name(stem)
+        elif role in ("flat", "hierarchy"):
+            if _is_default(coll.name, was, top=False):
+                coll.name = _parts_name(stem)
+        elif coll.name.startswith(was + "."):
+            # The hidden ".components" of the instancing mode.
+            coll.name = stem + coll.name[len(was):]
     for obj in scope.objects + scope.aside:
         if obj.get(_TAG_FILE) == was:
             obj[_TAG_FILE] = stem
-    print("[CADLink native] the assembly was renamed: %s is now %s"
-          % (was, stem))
+    _rename_rigs(was, stem, scope)
+    print("[CADLink native] the import %s is now %s" % (was, stem))
 
 
-def standing(stem, scene, scope):
+def _rename_rigs(was, stem, scope):
+    """The rigs of the import `was` drive the import `stem` from now on."""
+    for obj in scope.objects:
+        try:
+            if obj.type != "ARMATURE" or not obj.get("RIG_rig") \
+                    or was not in imports_mod.rig_stems(obj):
+                continue
+        except ReferenceError:
+            continue
+        obj[imports_mod.TAG_IMPORT] = stem
+        old = was + "_Rig"
+        if obj.name == old or obj.name.startswith(old + "."):
+            obj.name = stem + "_Rig"
+            if obj.data is not None and obj.data.name.startswith(old):
+                obj.data.name = stem + "_Rig"
+        for coll in obj.users_collection:
+            if coll.name == old or coll.name.startswith(old + "."):
+                coll.name = stem + "_Rig"
+
+
+def adopt_legacy(stem, document, configuration, scope):
+    """The import of `document` a CADder before 1.2 made, taken over as the
+    import `stem` of `configuration`. Returns its parts collection, or None.
+
+    Before 1.2 a send had no configuration, and its stem was the name of
+    the document alone. The first send of that document from 1.2 on takes
+    it over, so its top collection, the work the user put in it, and its
+    locked materials carry on, and no second copy of the assembly stands
+    beside the new one. An import that already has a configuration is
+    never taken: it is one configuration, and this is another."""
+    if not document or not configuration:
+        return None
+    base = os.path.splitext(os.path.basename(str(document)))[0]
+    if not base or base == stem:
+        return None
+    if any(c.get(_TAG_FILE) == stem for c in scope.collections):
+        return None
+    for coll in scope.collections:
+        if (coll.get(_TAG_FILE) == base
+                and coll.get(_TAG_ROLE) in ("flat", "hierarchy")
+                and not coll.get(_TAG_CONFIGURATION)):
+            _renamed(coll, stem, scope)
+            for other in scope.collections:
+                if other.get(_TAG_FILE) == stem:
+                    _mark(other, document, configuration)
+            return coll
+    return None
+
+
+def standing(stem, scene, scope, configuration=None):
     """The import in the scene that an export is an update OF, or None.
     `scene` is the export, `scope` the Blender scene (a _Scope).
 
@@ -484,6 +593,10 @@ def standing(stem, scene, scope):
     holds, by the occurrence paths, which are the names of the components
     INSIDE the assembly and do not change when the assembly is renamed. It
     then takes the new name.
+
+    Never the import of another configuration: it holds the same paths,
+    and it is not this import. An import from before 1.2 says no
+    configuration, and it can be this one.
     """
     roots = [c for c in scope.collections
              if c.get(_TAG_FILE) is not None
@@ -491,6 +604,9 @@ def standing(stem, scene, scope):
     for coll in roots:
         if coll.get(_TAG_FILE) == stem:
             return coll
+    roots = [c for c in roots
+             if not c.get(_TAG_CONFIGURATION)
+             or c.get(_TAG_CONFIGURATION) == configuration]
 
     known = {i.path for i in scene.instances if i.path}
     tag = _TAG_PATH
@@ -523,15 +639,21 @@ def standing(stem, scene, scope):
 
 def remove_previous(stem=None, scene_collection=None, scene=None,
                     keep_top=None):
-    """Clears the previous native import so a send replaces rather than
-    accumulates: one direct send stands in a scene at a time, whatever
-    assembly it was (a different one otherwise stacks a dead rig beside
-    the live one on every send, live 2026-09-14). Meshes go too: an
-    orphaned datablock of a million triangles is invisible in the outliner
-    and very much present in the file. `stem` narrows the removal to one
-    file's import. None takes every native import. Only in `scene` (the
-    current one by default), and never a part another add-on keeps aside
-    (see _Scope).
+    """Clears the previous native import of `stem` so a send replaces it
+    rather than stacking a second copy beside it. Meshes go too, when no
+    other import uses them: an orphaned datablock of a million triangles
+    is invisible in the outliner and very much present in the file. None
+    takes every native import. Only in `scene` (the current one by
+    default), and never a part another add-on keeps aside (see _Scope).
+
+    A send removes only its own import (Oscar, 2026-09-24). The other
+    configurations of the assembly, and other assemblies, stay, each with
+    its own rig. Up to 1.1 a send removed every import in the scene: a
+    different assembly otherwise stacked a dead rig beside the live one on
+    every send (live 2026-09-14). Each import now has a rig of its own,
+    named after its stem, and a rig goes with the last of its parts
+    (below). ci/native_configurations_smoke.py sends two configurations
+    and a second assembly in turn, and counts the rigs.
 
     A top collection is not removed with its import. It goes only when
     nothing is left in it, and never the one of `keep_top`, the stem the
@@ -698,6 +820,17 @@ def _collection(name, stem, role, parent):
     return col
 
 
+def _root_collection(stem, role, parent, document=None, configuration=None):
+    """The collection that holds the parts of the import `stem`,
+    "<stem>_Parts"."""
+    col = bpy.data.collections.new(_parts_name(stem))
+    col[_TAG_FILE] = stem
+    col["SWMESH_role"] = role
+    _mark(col, document, configuration)
+    parent.children.link(col)
+    return col
+
+
 def _paths(manifest):
     """component id -> sw_path, and sw_path -> component, from the
     manifest. The path is the assembly tree: "sub-1/part-2" hangs under
@@ -776,7 +909,8 @@ class _Placer:
     """
 
     def __init__(self, context, scene, manifest, stem, root, frame,
-                 unit_scale, hierarchy, material_prefix):
+                 unit_scale, hierarchy, material_prefix, document=None,
+                 configuration=None):
         self.context = context
         self.scene = scene
         self.manifest = manifest
@@ -786,6 +920,11 @@ class _Placer:
         self.unit_scale = unit_scale
         self.hierarchy = hierarchy
         self.material_prefix = material_prefix
+        self.document = document
+        self.configuration = configuration
+        # geometry hash -> a mesh another configuration of this document
+        # already has, read when the first mesh is needed.
+        self._shared = None
 
         self.group_of = _group_of(manifest)
         self.persistent_of = _persistent_of(manifest)
@@ -826,9 +965,44 @@ class _Placer:
         definition = self.definitions.get(definition_id)
         me = None
         if definition is not None:
-            me = _build_mesh(definition, self.materials, self.unit_scale)
+            signature = self.definition_hash(definition)
+            me = self.shared_meshes().get(signature)
+            if me is None:
+                me = _build_mesh(definition, self.materials, self.unit_scale)
+                me[_TAG_GEOMETRY] = signature
         self._meshes[definition_id] = me
         return me
+
+    def shared_meshes(self):
+        """geometry hash -> the mesh of a part that another configuration
+        of this document has in the scene.
+
+        A part that two configurations hold the same way is one mesh in
+        Blender, as two placements of it in one configuration are (Oscar,
+        2026-09-24). The hash covers the triangles, the materials of each
+        triangle and the Unit Scale, so a part with another appearance in
+        the other configuration, or another shape, gets a mesh of its own.
+        The mesh says which geometry it was built from. Rebuild from CAD
+        makes new meshes that say nothing, and so did a send before 1.2,
+        so neither is taken."""
+        if self._shared is not None:
+            return self._shared
+        self._shared = {}
+        if not self.document:
+            return self._shared
+        for obj in _Scope(self.context.scene).objects:
+            try:
+                if obj.get(_TAG_FILE) in (None, self.stem) \
+                        or obj.get(_TAG_DOCUMENT) != self.document:
+                    continue
+                for holder in _mesh_holders(obj):
+                    me = holder.data
+                    signature = me.get(_TAG_GEOMETRY) if me is not None else None
+                    if signature:
+                        self._shared.setdefault(signature, me)
+            except (ReferenceError, AttributeError):
+                continue
+        return self._shared
 
     def build_prototypes(self):
         """The instancing mode's hidden prototypes: one object per
@@ -1009,6 +1183,13 @@ class _Placer:
         between two sends of one assembly, so an update rewrites them all
         rather than trusting what is there."""
         obj[_TAG_FILE] = self.stem
+        # Which document and configuration the part is of. A request back
+        # to the CAD application names both, so it answers for this
+        # configuration and not for the one that is active there.
+        if self.document:
+            obj[_TAG_DOCUMENT] = str(self.document)
+        if self.configuration:
+            obj[_TAG_CONFIGURATION] = str(self.configuration)
         obj[_TAG_COMPONENT] = inst.component_id
         gid = self.group_of.get(inst.component_id)
         if gid is not None:
@@ -1194,7 +1375,8 @@ def _legacy_definition_hash(definition):
 
 def build(context, path, manifest=None, collection_name=None,
           unit_scale=None, material_prefix="SW ", up_as="ZPOS",
-          hierarchy="FLAT", report_to=None):
+          hierarchy="FLAT", report_to=None, document=None,
+          configuration=None):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
     The report is what ties this into the existing pipeline: every entry is
@@ -1206,10 +1388,14 @@ def build(context, path, manifest=None, collection_name=None,
     up_as is the CAD axis that becomes Blender's up (the STEP importer's
     option, same spelling): the geometry is turned and the report's frame
     says so, so the rig lands on it. hierarchy is the STEP importer's
-    hierarchy_types; group_in_collection wraps the import in one
-    collection named after the file, as the importer does. That
-    collection goes in the top collection, "<file>_Top_Level", and the
-    rig build puts the rig collection next to it.
+    hierarchy_types. The parts go in one collection, "<file>_Parts", in
+    the top collection, "<file>", and the rig build puts the rig
+    collection, "<file>_Rig", next to it. The file is named after the
+    document and the configuration.
+
+    `document` is the path of the CAD document and `configuration` the
+    configuration the file holds, as the send says them. Both go on the
+    parts, so a request back to the CAD application names them.
 
     unit_scale is Blender units per meter. None takes the scene's
     (scene_unit_scale), which is what every caller wants.
@@ -1224,31 +1410,34 @@ def build(context, path, manifest=None, collection_name=None,
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
 
-    # A send replaces every object. A locked part is found again by its
-    # place in the assembly: the new object is locked and gets the
-    # materials back. A part that keeps its geometry gets its old mesh
-    # back in the same way, so its mesh stays in the file until then.
+    # An import from before 1.2 of this document becomes this one, so it is
+    # replaced below and not left standing beside it.
+    adopt_legacy(stem, document, configuration, _Scope(context.scene))
+    # A send replaces every object of its import. A locked part is found
+    # again by its place in the assembly: the new object is locked and
+    # gets the materials back. A part that keeps its geometry gets its old
+    # mesh back in the same way, so its mesh stays in the file until then.
     previous = [o for o in context.scene.objects
-                if o.get(_TAG_FILE) is not None]
+                if o.get(_TAG_FILE) == stem]
     locks = material_lock.take(previous)
     shapes = geometry_lock.take(previous, tags=_MESH_TAGS)
-    remove_previous(None, context.scene.collection, context.scene,
+    remove_previous(stem, context.scene.collection, context.scene,
                     keep_top=stem)
     # The top collection holds the assembly, and the rig next to it. A
     # re-send uses the one it made before, in the place it has now.
     destination = _top_collection(stem, _Scope(context.scene),
-                                  context.scene.collection)
-    # One collection, named after the assembly. The shape of what is
-    # inside it is the hierarchy option's business, not the name's
-    # (Oscar, 2026-09-16: a send should simply put the assembly in a
-    # collection of its own name).
+                                  context.scene.collection,
+                                  document, configuration)
+    # One collection for the parts. The shape of what is inside it is the
+    # hierarchy option's business, not the name's (Oscar, 2026-09-16: a
+    # send should simply put the assembly in a collection of its own).
     role = {"FLAT": "flat", "TREE": "hierarchy", "EMPTIES": "hierarchy",
             "COLLECTION_INSTANCES": "hierarchy"}[hierarchy]
-    root = _collection(stem, stem, role, destination)
+    root = _root_collection(stem, role, destination, document, configuration)
 
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
-                     hierarchy, material_prefix)
+                     hierarchy, material_prefix, document, configuration)
     placer.build_prototypes()
 
     objects = []
@@ -1343,7 +1532,8 @@ class UpdateReport:
 
 def update(context, path, manifest=None, unit_scale=None,
            material_prefix="SW ", up_as="ZPOS", hierarchy="FLAT",
-           report_to=None, before_changes=None):
+           report_to=None, before_changes=None, document=None,
+           configuration=None):
     """Brings the scene up to date with a new export, changing only what
     changed. Returns (objects, MatchReport, UpdateReport).
 
@@ -1367,7 +1557,7 @@ def update(context, path, manifest=None, unit_scale=None,
     The rig is not touched here. What to do with it is a separate question
     and a separate answer: see rig_update.py.
 
-    unit_scale is as for build()."""
+    unit_scale, `document` and `configuration` are as for build()."""
     if unit_scale is None:
         unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
@@ -1378,23 +1568,29 @@ def update(context, path, manifest=None, unit_scale=None,
     said = report_to or progress.NONE
 
     scope = _Scope(context.scene)
-    root = standing(stem, scene, scope)
+    adopt_legacy(stem, document, configuration, scope)
+    root = standing(stem, scene, scope, configuration)
     if root is None:
         # Nothing of this assembly is in the scene: an update of nothing is
         # an import.
         objects, report = build(
             context, path, manifest=manifest, unit_scale=unit_scale,
             material_prefix=material_prefix, up_as=up_as, hierarchy=hierarchy,
-            report_to=report_to)
+            report_to=report_to, document=document,
+            configuration=configuration)
         out = UpdateReport(added=[o.name for o in objects], structural=True)
         return objects, report, out
     # A scene from before the top collection gets one around its
     # assembly. Nothing else about the layout changes.
     _wrap(root, stem, scope, context.scene.collection)
+    _mark(root, document, configuration)
+    top = _tops(_Scope(context.scene)).get(stem)
+    if top is not None:
+        _mark(top, document, configuration)
 
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
-                     hierarchy, material_prefix)
+                     hierarchy, material_prefix, document, configuration)
     # A copy made in Blender is the user's object from here on. It keeps
     # its place, its mesh and its parent, and loses the tags that made it
     # a second identity for the part. This is done before the rig lets go
@@ -1561,7 +1757,8 @@ def _reshape(obj, placer, inst):
 # a copy on a bone stays on it, as an object the user put there does.
 _OCCURRENCE_TAGS = (_TAG_FILE, _TAG_PATH, _TAG_PERSISTENT, _TAG_COMPONENT,
                     _TAG_GROUP, _TAG_DEFINITION, _TAG_TOLERANCE, _TAG_LOCAL,
-                    _TAG_GEOMETRY, _TAG_TRANSFORM, "RIG_parent_mode")
+                    _TAG_GEOMETRY, _TAG_TRANSFORM, _TAG_DOCUMENT,
+                    _TAG_CONFIGURATION, "RIG_parent_mode")
 
 
 def _disown(obj):
@@ -1714,7 +1911,8 @@ def quads(objects):
     return main_mod._tris_to_quads_objects(objects) or 0
 
 
-def refine(context, path, unit_scale=None, material_prefix="SW "):
+def refine(context, path, unit_scale=None, material_prefix="SW ",
+           stems=None):
     """Swaps in finer geometry for objects that are already in the scene.
 
     The objects themselves are kept (only their mesh DATA is replaced), so
@@ -1722,6 +1920,12 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
     That is the whole point: refining a part must not cost the pose it is
     in, or the round trip would be useless for exactly the assemblies it is
     meant for.
+
+    `stems` names the imports the geometry is for. Two configurations of
+    one assembly hold parts with the same paths and ids, and the geometry
+    of one configuration is not the other's: a part can be a different
+    configuration of the part in each (imports.py). None takes every
+    import, as before 1.2.
 
     unit_scale is as for build(). Returns the objects whose geometry
     changed."""
@@ -1739,7 +1943,7 @@ def refine(context, path, unit_scale=None, material_prefix="SW "):
 
     by_component = {}
     by_path = {}
-    for obj in bpy.data.objects:
+    for obj in imports_mod.only(bpy.data.objects, stems):
         cid = obj.get(_TAG_COMPONENT)
         if cid:
             by_component.setdefault(cid, []).append(obj)

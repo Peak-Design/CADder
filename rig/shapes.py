@@ -460,18 +460,18 @@ def widget_collection(parent):
 
 
 def exclude_widgets(view_layer):
-    def find(layer_col):
+    """Excludes the widget collection everywhere it is in the view layer.
+    Each rig collection holds it, and each place is a layer of its own:
+    with two rigs side by side, the widgets showed in the second (two
+    configurations of one assembly, 2026-09-24)."""
+    def walk(layer_col):
         if layer_col.collection.name == WIDGET_COLLECTION:
-            return layer_col
+            layer_col.exclude = True
+            return
         for child in layer_col.children:
-            hit = find(child)
-            if hit is not None:
-                return hit
-        return None
+            walk(child)
 
-    lc = find(view_layer.layer_collection)
-    if lc is not None:
-        lc.exclude = True
+    walk(view_layer.layer_collection)
 
 
 def widget(collection, name, geometry, cache):

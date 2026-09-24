@@ -582,9 +582,9 @@ def case_a_send_into_another_scene():
           "scene v1 holds %s, it held %s"
           % (sorted(o.name for o in first.objects), theirs))
     # The import collection is in the top collection of the send.
-    top = bpy.data.collections.get("bolts_Top_Level")
+    top = bpy.data.collections.get("bolts")
     check(top is not None and top.name in first.collection.children
-          and "bolts" in top.children,
+          and "bolts_Parts" in top.children,
           "scene v1 lost its import collection")
     check(len([o for o in second.objects if o.get("SWMESH_path")]) == 2,
           "the send into v2 did not arrive")

@@ -9,7 +9,8 @@ bridge took the first rig it found in the scene for a send that had no rig
 of its own yet. An update then cleared that rig's bones and built the other
 assembly's bones inside it, and relink hung the parts on the wrong rig. A
 locked rig of one assembly also made a send of a different assembly skip
-its own rig and attach its parts to the locked one.
+its own rig and attach its parts to the locked one. From 1.2 the send
+builds its own rig beside the locked one.
 
 Every send runs through bridge._run_job, the path SolidWorks drives.
 """
@@ -264,7 +265,9 @@ def run_keep_relinks_own(tmp):
 
 def run_other_locked_send(tmp):
     """A different assembly's rig is locked, and this assembly is sent for
-    the first time. Its parts must not go on the locked rig."""
+    the first time. It builds a rig of its own: a lock stops only a build
+    of the rig it is on (CADder 1.2). Its parts must not go on the locked
+    rig."""
     where = "other rig locked: send"
     bpy.ops.wm.read_factory_settings(use_empty=True)
     other = other_rig(tmp, where)
@@ -276,9 +279,10 @@ def run_other_locked_send(tmp):
         fail(where, "the send failed: %s" % result.get("error"))
     check_other_intact(where, other, before)
     check_off_other(where, other)
+    check_on_own_rig(where, other)
     rig_stage = (result.get("stages") or {}).get("rig") or {}
-    if rig_stage.get("locked") != other.name:
-        fail(where, "the reply does not name the locked rig: %s" % rig_stage)
+    if not rig_stage.get("bones") or rig_stage.get("locked"):
+        fail(where, "the send built no rig of its own: %s" % rig_stage)
     return where
 
 

@@ -153,7 +153,7 @@ def main():
     _check(sorted(o.name for o in lifter.objects) == sorted([inner.name, block.name]),
            "the subassembly's parts are not in its collection: %s"
            % [o.name for o in lifter.objects])
-    _check(loose.name in [o.name for o in bpy.data.collections["cam"].objects],
+    _check(loose.name in [o.name for o in bpy.data.collections["cam_Parts"].objects],
            "the loose rod is not at the root")
 
     # Every part of the subassembly is the SAME component and so the same

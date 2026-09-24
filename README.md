@@ -61,25 +61,26 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
   <img src="docs/images/rig.png" alt="A generated rig, with the limit arcs drawn" width="80%">
 </p>
 
-## New in 1.1.0
+## New in 1.2.0
 
-- **Lock Materials**: keep the materials of a part through the material
-  database, Refresh Model and Regenerate.
-- **Lock Geometry**: keep the mesh of a part, and your changes to it,
-  through Rebuild from CAD, Refresh Model, a send and Regenerate.
-- **A better Material Database**: hide the entries the scene does not
-  use, select the parts of an entry, remove an entry, and keep the
-  database's materials in the file to use again.
-- **Refresh Model keeps your rig**: your handles, mechanism inputs,
-  drivers and bones stay. SolidWorks offers the button only when a
-  running Blender holds the document.
-- **The rig next to its assembly**: a send puts the assembly collection
-  and the rig collection side by side in one `<assembly>_Top_Level`
-  collection.
-- **Automatic rig engine**: more mechanisms move as they do in SolidWorks.
-- **The SolidWorks Bridge** is in the Windows version only.
+- **Configurations side by side**: each configuration of an assembly is a
+  send of its own, in `<assembly>_<configuration>` with its own rig. A
+  send of another configuration, or of another assembly, no longer
+  replaces the one before.
+- **Send several configurations at once**: select **Multiple
+  configurations** in the Export Options of CADder Bridge, and pick the
+  configurations at each send.
+- **One mesh for a part that does not change**: a part that two
+  configurations hold the same way shares its mesh. A part with another
+  shape or appearance gets its own.
+- **Refresh Model and Rebuild from CAD know the configuration**: Refresh
+  Model asks which configurations to refresh, and Rebuild from CAD asks
+  for each configuration on its own.
+- **A list of the rigs** in the Rig panel, to set the mechanism inputs of
+  each configuration.
 
-The full list is in the [release notes](docs/RELEASE_1.1.0.md) and the
+CADder 1.2 needs CADder Bridge 1.2. The full list is in the
+[release notes](docs/RELEASE_1.2.0.md) and the
 [version history](docs/GUIDE.md#version-history).
 
 ## Features

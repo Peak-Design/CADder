@@ -5,9 +5,12 @@
 
 A send put the assembly collection at the scene root and the rig
 collection inside it, or loose among the other collections of the scene.
-Now a send makes "<name>_Top_Level", with the assembly collection and the
+Now a send makes a top collection with the assembly collection and the
 rig collection side by side in it, so the rig is easy to find (Oscar,
-2026-09-23). This checks, in all four hierarchy modes:
+2026-09-23). From 1.2 the top collection is "<name>", the name of the
+send (the document and the configuration), and holds "<name>_Parts" and
+"<name>_Rig" (Oscar, 2026-09-24). This checks, in all four hierarchy
+modes:
 
   * the layout after a send,
   * a re-send uses the same top collection, also after the user moved it,
@@ -16,9 +19,10 @@ rig collection side by side in it, so the rig is easy to find (Oscar,
     layout and keeps the parts and the rig,
   * an update of a scene that has the top collection changes nothing
     about the layout,
-  * a renamed assembly renames the top collection,
-  * a different assembly leaves no empty top collection behind, and one
-    that still holds something stays.
+  * a renamed assembly renames the top collection and the rig,
+  * a different assembly stands beside the first, each with its own rig,
+    a send of one leaves the other as it is, and a lock on one rig does
+    not stop the build of the other.
 
 Every send runs through bridge._run_job, the path SolidWorks drives.
 """
@@ -40,7 +44,7 @@ from CADder.rig import native_import, rig_build, swmesh  # noqa: E402
 from CADder.rig import ui as rig_ui  # noqa: E402
 
 MODES = ("FLAT", "TREE", "EMPTIES", "COLLECTION_INSTANCES")
-SUFFIX = "_Top_Level"
+PARTS = "_Parts"
 
 # (component id, path, persistent id, x, mesh). A subassembly has no mesh.
 HINGE = [("c001", "base-1", "pbase", 0.0, "base"),
@@ -216,9 +220,12 @@ def layout():
     return out
 
 
-def the_rig():
+def the_rig(stem=None):
+    """The one rig of the scene, or with `stem`, the one rig of that
+    import. None when there is not exactly one."""
     arms = [o for o in bpy.data.objects
-            if o.type == "ARMATURE" and o.get("RIG_rig")]
+            if o.type == "ARMATURE" and o.get("RIG_rig")
+            and (stem is None or o.get("RIG_import") == stem)]
     return arms[0] if len(arms) == 1 else None
 
 
@@ -260,8 +267,8 @@ def user_collection(name, parent, obj_name):
 def check_assembly(where, mode, stem="hinge"):
     """The assembly collection is laid out as a send made it before the
     top collection."""
-    asm = bpy.data.collections.get(stem)
-    check(asm is not None, where, "no %s collection" % stem)
+    asm = bpy.data.collections.get(stem + PARTS)
+    check(asm is not None, where, "no %s collection" % (stem + PARTS))
     parts = parts_of(stem)
     check(sorted(parts) == ["base-1", "sub-1/arm-1", "sub-1/pin-1"], where,
           "the parts are %s" % sorted(parts))
@@ -293,23 +300,24 @@ def check_assembly(where, mode, stem="hinge"):
 
 
 def check_top(where, mode, stem="hinge", rig_name=None, at_root=True,
-              extra=()):
+              extra=(), others=False):
     """The top collection holds the assembly collection and the rig
-    collection, and whatever the test put in it, nothing else."""
+    collection, and whatever the test put in it, nothing else. With
+    `others`, the scene holds other imports too."""
     top = top_of(stem)
     check(top is not None, where, "no single top collection of %s: %s"
           % (stem, [c.name for c in tops()]))
-    check(top.name == stem + SUFFIX, where, "the top collection is %s" % top.name)
+    check(top.name == stem, where, "the top collection is %s" % top.name)
     if at_root:
         check(top.name in root_names(), where,
               "the top collection is not at the scene root: %s" % root_names())
-    check(stem not in root_names(), where,
+    check(stem + PARTS not in root_names(), where,
           "the assembly collection is still at the scene root")
-    want = sorted([stem, rig_name or stem + "_Rig"] + list(extra))
+    want = sorted([stem + PARTS, rig_name or stem + "_Rig"] + list(extra))
     check(names(top) == want, where,
           "the top collection holds %s, not %s" % (names(top), want))
     check_assembly(where, mode, stem)
-    arm = the_rig()
+    arm = the_rig(stem if others else None)
     check(arm is not None, where, "no single rig")
     check([c.name for c in arm.users_collection] == [rig_name or stem + "_Rig"],
           where, "the rig is in %s" % [c.name for c in arm.users_collection])
@@ -347,7 +355,7 @@ def first_send(mode):
     # tree the send was built with, and the bridge sees no STEP import.
     scope = native_import._Scope(bpy.context.scene)
     found = native_import.standing("hinge", swmesh.load(mesh), scope)
-    check(found is not None and found.name == "hinge", where,
+    check(found is not None and found.name == "hinge" + PARTS, where,
           "the update finds %s" % (found.name if found else None))
     read = rig_ui._options_in_scene("hinge").get("hierarchy_types")
     check(read == mode, where, "the scene reads as %s" % read)
@@ -375,7 +383,7 @@ def resend(mode):
     # And a collection of their own inside the assembly: the rig of one
     # part, next to the part.
     holder = bpy.data.collections["sub-1"] if mode == "TREE" \
-        else bpy.data.collections["hinge"]
+        else bpy.data.collections["hinge" + PARTS]
     user_collection("arm_Rig", holder, "arm handle")
 
     send("hinge", mode)
@@ -402,7 +410,7 @@ def old_layout(stem="hinge", into=None):
     (or inside `into`, a collection of its tree)."""
     top = top_of(stem)
     scene_root = bpy.context.scene.collection
-    asm = bpy.data.collections[stem]
+    asm = bpy.data.collections[stem + PARTS]
     rig_col = bpy.data.collections[stem + "_Rig"]
     top.children.unlink(asm)
     scene_root.children.link(asm)
@@ -423,7 +431,7 @@ def old_update(mode, rig_mode, into_group=False):
     bones = sorted(b.name for b in arm.data.bones)
     parts = {path: obj.as_pointer() for path, obj in parts_of("hinge").items()}
     # A collection of the user's own inside the assembly stays where it is.
-    holder = "sub-1" if mode == "TREE" else "hinge"
+    holder = "sub-1" if mode == "TREE" else "hinge" + PARTS
     user_collection("arm_Rig", bpy.data.collections[holder], "arm handle")
 
     send("hinge", mode, update=True, rig_mode=rig_mode)
@@ -439,7 +447,7 @@ def old_update(mode, rig_mode, into_group=False):
               "the rig was replaced")
         check(sorted(b.name for b in the_rig().data.bones) == bones, where,
               "the bones changed")
-    check(bpy.data.collections["hinge"].name in top.children, where,
+    check(bpy.data.collections["hinge" + PARTS].name in top.children, where,
           "the assembly collection is not in the top collection")
 
 
@@ -467,7 +475,7 @@ def new_update(mode):
     where = "%s update of a new scene" % mode
     fresh()
     send("hinge", mode)
-    holder = "sub-1" if mode == "TREE" else "hinge"
+    holder = "sub-1" if mode == "TREE" else "hinge" + PARTS
     user_collection("arm_Rig", bpy.data.collections[holder], "arm handle")
     before = layout()
     send("hinge", mode, update=True, rig_mode="APPEND")
@@ -486,51 +494,65 @@ def renamed(mode):
     top = top_of("hinge2")
     check(top is not None and top.as_pointer() == pointer, where,
           "the renamed assembly has another top collection")
-    # The rig keeps its name: KEEP and APPEND keep the rig itself.
-    check_top(where, mode, stem="hinge2", rig_name="hinge_Rig")
+    # KEEP keeps the rig itself, and it takes the new name with the rest.
+    arm = the_rig()
+    check(arm is not None and arm.get("RIG_import") == "hinge2", where,
+          "the rig drives %s" % (arm.get("RIG_import") if arm else None))
+    check_top(where, mode, stem="hinge2", rig_name="hinge2_Rig")
 
 
 def other_assembly(mode):
+    """A different assembly stands beside the first, each with its own
+    rig (Oscar, 2026-09-24). Up to 1.1 a send removed every other import."""
     where = "%s different assembly" % mode
     fresh()
     send("hinge", mode)
+    hinge_top = top_of("hinge").as_pointer()
+    hinge_parts = {p: o.as_pointer() for p, o in parts_of("hinge").items()}
     send("gizmo", mode, parts=GIZMO, joints=GIZMO_JOINTS)
-    check([c.name for c in tops()] == ["gizmo" + SUFFIX], where,
+    check(sorted(c.name for c in tops()) == ["gizmo", "hinge"], where,
           "top collections: %s" % [c.name for c in tops()])
     top = top_of("gizmo")
-    check(names(top) == ["gizmo", "gizmo_Rig"], where,
+    check(names(top) == ["gizmo" + PARTS, "gizmo_Rig"], where,
           "the top collection holds %s" % names(top))
     check(top.name in root_names(), where, "not at the scene root")
     check(not numbered(), where, "numbered copies: %s" % numbered())
+    check(top_of("hinge").as_pointer() == hinge_top
+          and {p: o.as_pointer() for p, o in parts_of("hinge").items()}
+          == hinge_parts, where, "the send of gizmo changed hinge")
+    check_top(where, mode, others=True)
+    gizmo = the_rig("gizmo")
+    check(gizmo is not None, where, "gizmo has no rig of its own")
+    for obj in parts_of("gizmo").values():
+        check(rides(obj, gizmo), where, "%s does not ride gizmo_Rig" % obj.name)
 
-    # A top collection that still holds something stays: here a
-    # collection of the user's that was inside the assembly.
-    user_collection("gizmo notes", bpy.data.collections["gizmo"], "memo")
+    # A send of hinge again replaces hinge only.
+    gizmo_parts = {p: o.as_pointer() for p, o in parts_of("gizmo").items()}
     send("hinge", mode)
-    old = top_of("gizmo")
-    check(old is not None and names(old) == ["gizmo notes"], where,
-          "the other top collection holds %s"
-          % (names(old) if old is not None else None))
-    check(bpy.data.objects.get("memo") is not None, where,
-          "the user's object was removed")
-    check_top(where, mode)
+    check({p: o.as_pointer() for p, o in parts_of("gizmo").items()}
+          == gizmo_parts, where, "the send of hinge changed gizmo")
+    check(len([o for o in bpy.data.objects if o.type == "ARMATURE"]) == 2,
+          where, "the rigs are %s" % [o.name for o in bpy.data.objects
+                                      if o.type == "ARMATURE"])
+    check_top(where, mode, others=True)
 
-    # And a locked rig.
-    locked = the_rig()
+    # A lock on the rig of hinge does not stop a build of gizmo, and the
+    # send of gizmo leaves the locked rig as it is.
+    locked = the_rig("hinge")
     locked[rig_build.LOCK_TAG] = True
+    pointer = locked.as_pointer()
+    old_gizmo = the_rig("gizmo").as_pointer()
     send("gizmo", mode, parts=GIZMO, joints=GIZMO_JOINTS)
-    kept = top_of("hinge")
-    check(kept is not None and names(kept) == ["hinge_Rig"], where,
-          "the top collection of the locked rig holds %s"
-          % (names(kept) if kept is not None else None))
-    check(names(top_of("gizmo")) == ["gizmo", "gizmo notes"], where,
+    check(the_rig("hinge").as_pointer() == pointer, where,
+          "the locked rig was replaced")
+    check(the_rig("gizmo") is not None
+          and the_rig("gizmo").as_pointer() != old_gizmo, where,
+          "gizmo was not built again beside a locked rig")
+    check(names(top_of("gizmo")) == ["gizmo" + PARTS, "gizmo_Rig"], where,
           "the new top collection holds %s" % names(top_of("gizmo")))
 
-    # With nothing left in them, the top collections go, also the one of
-    # the assembly that is not in the scene now.
+    # With nothing left in them, the top collections go.
     locked[rig_build.LOCK_TAG] = False
-    rig_build.remove_rig(locked)
-    bpy.data.collections.remove(bpy.data.collections["gizmo notes"])
     native_import.remove_previous()
     check(not tops(), where, "top collections left: %s"
           % [c.name for c in tops()])
@@ -539,18 +561,25 @@ def other_assembly(mode):
 def long_names():
     where = "long names"
     for stem in ("A" * 70, "B" * 50, "Ü" * 40, "short"):
-        name = native_import._top_name(stem)
-        check(name.endswith(SUFFIX), where, "%r lost the suffix" % name)
-        check(len(name.encode("utf-8")) <= 63, where,
-              "%r is %d bytes" % (name, len(name.encode("utf-8"))))
+        for name in (native_import._top_name(stem),
+                     native_import._parts_name(stem)):
+            check(len(name.encode("utf-8")) <= 63, where,
+                  "%r is %d bytes" % (name, len(name.encode("utf-8"))))
+        name = native_import._parts_name(stem)
+        check(name.endswith(PARTS), where, "%r lost the suffix" % name)
+    check(native_import._top_name("short") == "short", where,
+          "the top collection of short is %r" % native_import._top_name("short"))
     fresh()
     stem = "Long-Assembly-Name-" + "x" * 60
     send(stem, "FLAT")
     top = top_of(stem)
-    check(top is not None and top.name == native_import._top_name(stem)
-          and top.name.endswith(SUFFIX), where,
-          "the top collection of a long stem is %s"
+    check(top is not None and top.name == native_import._top_name(stem),
+          where, "the top collection of a long stem is %s"
           % (top.name if top is not None else None))
+    parts = [c for c in top.children if c.get("SWMESH_role") == "flat"]
+    check(len(parts) == 1 and parts[0].name == native_import._parts_name(stem),
+          where, "the parts collection of a long stem is %s"
+          % [c.name for c in top.children])
 
 
 def main():
@@ -569,11 +598,11 @@ def main():
     old_update("FLAT", "KEEP", into_group=True)
     long_names()
     print("native_top_level_smoke: OK: in FLAT, TREE, EMPTIES and "
-          "COLLECTION_INSTANCES a send puts the assembly and the rig side "
-          "by side in <name>_Top_Level, a re-send uses it again where the "
-          "user put it, an update wraps an older scene and keeps the parts "
-          "and the rig, a rename renames it, and a different assembly "
-          "leaves no empty one behind")
+          "COLLECTION_INSTANCES a send puts <name>_Parts and <name>_Rig "
+          "side by side in <name>, a re-send uses it again where the user "
+          "put it, an update wraps an older scene and keeps the parts and "
+          "the rig, a rename renames it, and a different assembly stands "
+          "beside the first with its own rig")
 
 
 # Other smokes import the helpers above.

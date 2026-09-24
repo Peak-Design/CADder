@@ -88,6 +88,9 @@ _state = {
     # last said (_scene_documents). Read by the ping thread, so only the
     # main thread computes it.
     "documents": [],
+    # document path -> the configurations of it the scenes hold
+    # (_scene_configurations), the same way.
+    "configurations": {},
     "registry_said": None,
     # A running CADder Bridge whose version does not match this addon
     # (_check_addin_version), or None.
@@ -307,6 +310,10 @@ def _instance_info() -> dict:
     # scene of that document. Always present, so the add-in can tell "none"
     # from an older bridge that does not say.
     info["documents"] = list(_state.get("documents") or [])
+    # Which configurations of each document, for Refresh Model to offer
+    # (CADder Bridge 1.2). A scene from before 1.2 names none.
+    info["configurations"] = {
+        k: list(v) for k, v in (_state.get("configurations") or {}).items()}
     return info
 
 
@@ -560,7 +567,7 @@ def _same_import(step_path: str, by_stem: bool = False):
     return is_same_file
 
 
-def _step_import_of(mesh_path: str):
+def _step_import_of(mesh_path: str, document: str = None):
     """The objects of a STEP import of the assembly that this direct send
     is of, by the rule of _same_import.
 
@@ -570,12 +577,22 @@ def _step_import_of(mesh_path: str):
     again, because a STEP part has no place in the assembly to find it by.
     Left standing next to the send, every part was in the scene twice,
     with both copies on one rig (live 2026-09-14). So the send stops
-    instead, and says why (see _run_stages)."""
-    is_same_file = _same_import(mesh_path, by_stem=True)
+    instead, and says why (see _run_stages).
+
+    From 1.2 the files of a send are named after the document and the
+    configuration. A STEP file from before is named after the document
+    alone, so that name is tried too."""
+    tests = [_same_import(mesh_path, by_stem=True)]
+    if document:
+        base = os.path.splitext(os.path.basename(str(document)))[0]
+        if base:
+            tests.append(_same_import(
+                os.path.join(os.path.dirname(mesh_path), base + ".swmesh"),
+                by_stem=True))
     out = []
     for obj in bpy.data.objects:
         try:
-            if is_same_file(obj.get("STEP_file")):
+            if any(test(obj.get("STEP_file")) for test in tests):
                 out.append(obj)
         except ReferenceError:
             continue
@@ -707,7 +724,9 @@ def _leave_object_modes():
     return left
 
 
-def _ask_again_without_small_features(asked, opts, separate_solids):
+def _ask_again_without_small_features(asked, opts, separate_solids,
+                                      stem=None, document=None,
+                                      configuration=None):
     """Asks the CAD application for the marked parts again, AFTER the send
     this is answering has finished.
 
@@ -719,7 +738,10 @@ def _ask_again_without_small_features(asked, opts, separate_solids):
     again, and the marked parts come back a moment later.
 
     The quality is the one the send itself used, which the import options
-    carry, so the parts that come back match the ones beside them.
+    carry, so the parts that come back match the ones beside them. The
+    parts are of the import `stem`, in `configuration` of `document`: a
+    send of several configurations asks for each one's parts in its own
+    configuration.
     """
     def run():
         from . import quality as quality_mod
@@ -728,8 +750,10 @@ def _ask_again_without_small_features(asked, opts, separate_solids):
             reply = cad_link.retessellate(
                 [row["component"] for row in asked],
                 quality_mod.cad_request(quality_mod.spec_of(opts)),
-                separate_solids=separate_solids, defeature=asked)
-            changed = rig_ui.refine_from_reply(bpy.context, reply)
+                separate_solids=separate_solids, defeature=asked,
+                document=document, configuration=configuration)
+            changed = rig_ui.refine_from_reply(
+                bpy.context, reply, {stem} if stem else None)
             print("[CADLink defeature] %d part(s) came back without their "
                   "small features" % len(changed))
         except Exception as exc:                       # noqa: BLE001
@@ -798,13 +822,13 @@ def _remember_document(payload: dict):
         print("[CADLink bridge] could not record the source document:", exc)
 
 
-def _apply_poses_from(poses: dict) -> int:
+def _apply_poses_from(poses: dict, stems=None) -> int:
     """Moves the scene onto the poses the CAD application pushed. The same
     path an Rebuild from CAD takes, so one rule decides how a pose reaches
-    the objects."""
+    the objects. `stems` are the imports the poses are for, None for all."""
     from .rig import ui as rig_ui
 
-    return rig_ui._apply_poses(bpy.context, poses)
+    return rig_ui._apply_poses(bpy.context, poses, stems=stems)
 
 
 def _rig_of(stem):
@@ -851,11 +875,13 @@ def _rig_for(manifest, stem=None):
     return None
 
 
-def _update_rig(mode, log, rig=None):
+def _update_rig(mode, log, rig=None, stem=None):
     """The rig half of an update: KEEP, APPEND or REGENERATE. `rig` is the
     rig of the assembly being updated (see _rig_for), or None when it has
-    none yet. Then KEEP and APPEND build a new one, as REGENERATE does."""
-    from .rig import rig_update, ui as rig_ui
+    none yet. Then KEEP and APPEND build a new one, as REGENERATE does.
+    `stem` is the import: the bones keep the names of the parts of this
+    import only."""
+    from .rig import imports, rig_update, ui as rig_ui
 
     manifest = rig_ui._STATE.get("manifest")
     if manifest is None:
@@ -870,7 +896,8 @@ def _update_rig(mode, log, rig=None):
     placed = arm.matrix_world.copy() if arm is not None else None
     try:
         result, rig_report = rig_update.apply(
-            bpy.context, mode, manifest, arm, bpy.data.objects,
+            bpy.context, mode, manifest, arm,
+            imports.only(bpy.data.objects, stem),
             frame_rows=frame_rows,
             before=rig_ui._STATE.get("rig_snapshot") or {})
     except Exception as exc:
@@ -915,7 +942,14 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             _remember_document(payload)
             said.stage("moving the parts to where the CAD has them", 0, 100)
             said_count = len(poses.get("components") or [])
-            moved = _apply_poses_from(poses)
+            # Only the parts of the configuration the CAD application has
+            # active. Another configuration of the assembly holds parts
+            # with the same ids, and they are not where these poses say.
+            from .rig import imports
+            stems = imports.stems_of(bpy.context.scene,
+                                     payload.get("source_document"),
+                                     payload.get("configuration"))
+            moved = _apply_poses_from(poses, stems)
             stages["poses"] = {"moved": moved, "components": said_count}
             bpy.context.view_layer.update()
         return {"ok": True, "stages": stages, "log": log}
@@ -923,11 +957,15 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
     # An UPDATE brings the scene up to date part by part. A send replaces
     # it. The difference reaches several stages, so it is read once.
     updating = want("update", False)
+    # The document and the configuration the files hold. An add-in before
+    # 1.2 says no configuration.
+    document = payload.get("source_document") or None
+    configuration = payload.get("configuration") or None
 
     # A direct send does not replace a STEP import of its assembly (see
     # _step_import_of). It stops here, before it changes anything.
     if mesh_path and not updating and want("replace"):
-        stepped = _step_import_of(mesh_path)
+        stepped = _step_import_of(mesh_path, document)
         if stepped:
             name = os.path.splitext(os.path.basename(mesh_path))[0]
             return {"ok": False, "stages": stages,
@@ -984,7 +1022,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             if not os.path.isfile(mesh_path):
                 return {"ok": False, "error": "mesh not found: %s" % mesh_path,
                         "stages": stages}
-            from .rig import native_import, rig_update
+            from .rig import imports, native_import, rig_update
             opts = payload.get("import_options") or {}
             rig_ui.remember_import_options(scene, opts)
             # The CAD application asks for quads or does not, and the scene
@@ -1008,8 +1046,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 rig_hold["rig"] = rig or _rig_for(manifest)
                 if rig_hold["rig"] is None:
                     return
+                # The parts of this import only: another configuration of
+                # the assembly holds parts with the same ids.
                 rig_ui._STATE["rig_snapshot"] = rig_update.snapshot(
-                    rig_hold["rig"], bpy.data.objects)
+                    rig_hold["rig"], imports.only(bpy.data.objects, stem))
                 # The rig goes to its rest pose and lets go of its parts,
                 # because a part moved while on a posed bone is bound again
                 # with the pose in it. Only a rig this assembly's parts
@@ -1027,7 +1067,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # and collection that carries it. So it is written down here
             # and put back on what arrives.
             from .rig import defeature as rig_defeature
-            held = None if updating else rig_defeature.snapshot()
+            held = None if updating else rig_defeature.snapshot(stem=stem)
             try:
                 if updating:
                     # Without a manifest the update knows no groups, and it
@@ -1036,14 +1076,15 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                     # hangs on still knows it by that group.
                     groups = {} if manifest is not None else {
                         o: o["RIG_group"] for o in bpy.data.objects
-                        if o.get("SWMESH_file") is not None
+                        if o.get("SWMESH_file") == stem
                         and o.get("RIG_group") is not None}
                     objects, report, changed = native_import.update(
                         bpy.context, mesh_path,
                         manifest=manifest,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
-                        report_to=said, before_changes=before_changes)
+                        report_to=said, before_changes=before_changes,
+                        document=document, configuration=configuration)
                     for obj, gid in groups.items():
                         try:
                             if obj.get("RIG_group") is None:
@@ -1066,7 +1107,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         manifest=manifest,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
-                        report_to=said)
+                        report_to=said, document=document,
+                        configuration=configuration)
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
@@ -1133,7 +1175,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             }
             bpy.context.view_layer.update()
             if held is not None:
-                parts, groups = rig_defeature.restore(held)
+                parts, groups = rig_defeature.restore(held, stem=stem)
                 if parts or groups:
                     log.append(
                         "defeature: %d part(s) and %d collection(s) kept their "
@@ -1148,7 +1190,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                            "their small features" % len(asked))
                 _ask_again_without_small_features(
                     asked, opts,
-                    opts.get("separate_solids"))
+                    opts.get("separate_solids"), stem, document,
+                    configuration)
 
         if not mesh_path and want("import", bool(step_path)):
             if not step_path or not os.path.isfile(step_path):
@@ -1227,10 +1270,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # to it, which is the whole point of locking one.
             from .rig import rig_build, rig_update
             mode = (payload.get("rig_mode") or "").upper()
-            # rig_build builds no rig at all while any rig in the scene is
+            # rig_build builds no rig while a rig it would replace is
             # locked. KEEP on a rig that stands builds nothing, so only
             # that goes on.
-            blocking = rig_build.locked_rig(bpy.context)
+            blocking = rig_build.locked_rig(bpy.context, manifest)
             if rig_build.is_locked(own):
                 said.stage("keeping the locked rig", 88, 96)
                 stages["rig"] = {"locked": own.name}
@@ -1256,7 +1299,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # it inside the armature that is there (which keeps the
                 # animation), or build a new one.
                 said.stage("bringing the rig up to date", 88, 96)
-                stages["rig"] = _update_rig(mode, log, own)
+                stages["rig"] = _update_rig(mode, log, own, stem)
                 if stages["rig"].get("error"):
                     return {"ok": False, "error": stages["rig"]["error"],
                             "stages": stages}
@@ -1299,6 +1342,11 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 target.name
         except ReferenceError:
             target = None
+        # The rig drives the import of this job. The build names it after
+        # the manifest, and the geometry file says it for certain.
+        if target is not None and stem:
+            from .rig import imports
+            target[imports.TAG_IMPORT] = stem
         if have_manifest and want("relink") and target is not None:
             from .rig import parenting
             rep = parenting.relink(bpy.context, target)
@@ -1406,16 +1454,36 @@ def _scene_documents() -> list:
     the tag, so a scene opened again in a new Blender still says which
     document it holds. Main thread only. Empty while bpy.data is not
     readable, during add-on registration."""
-    from .rig import cad_link
+    from .rig import cad_link, imports
     found = set()
     try:
         for scene in bpy.data.scenes:
             document = scene.get(cad_link.DOCUMENT_TAG)
             if document:
                 found.add(str(document))
+            # Every document a scene holds an import of, also when the
+            # last send was of another one.
+            found.update(imports.held(scene))
     except (AttributeError, RuntimeError, TypeError):
         return []
     return sorted(found)
+
+
+def _scene_configurations() -> dict:
+    """document path -> the configurations the scenes of this file hold of
+    it (rig/imports.held). Refresh Model in the CAD add-in offers them.
+    A scene from before 1.2 holds a document with no configuration, and
+    says none. Main thread only."""
+    from .rig import imports
+    out = {}
+    try:
+        for scene in bpy.data.scenes:
+            for document, names in imports.held(scene).items():
+                known = out.setdefault(document, [])
+                known.extend(n for n in names if n not in known)
+    except (AttributeError, RuntimeError, TypeError):
+        return {}
+    return out
 
 
 def _keep_registry(force=False):
@@ -1444,15 +1512,18 @@ def _keep_registry(force=False):
     # Never an escape into the pump: that would stop every job.
     try:
         documents = _scene_documents()
+        configurations = _scene_configurations()
         try:
             blend = bpy.data.filepath or ""
         except AttributeError:
             blend = ""
-        said = (tuple(documents), blend)
+        said = (tuple(documents), blend,
+                tuple(sorted((k, tuple(v)) for k, v in configurations.items())))
         gone = not os.path.exists(path)
         if not gone and said == _state.get("registry_said"):
             return
         _state["documents"] = documents
+        _state["configurations"] = configurations
         _write_registry()
         _state["registry_said"] = said
         if gone:
@@ -1522,6 +1593,7 @@ def start():
         _state["timer_running"] = True
     # Empty during add-on registration. The pump fills it in at once.
     _state["documents"] = _scene_documents()
+    _state["configurations"] = _scene_configurations()
     _state["registry_said"] = None
     try:
         _write_registry()

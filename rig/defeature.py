@@ -243,18 +243,23 @@ def turn_on(collection, objects, scene=None):
 
 # -- Keeping the setting across a whole rebuild ----------------------------
 
-def snapshot(scene=None):
+def snapshot(scene=None, stem=None):
     """The settings of the scene, by component id and by collection name.
 
     Rebuilding the whole assembly replaces every object and every
     collection, so what the scene was holding has to be written down before
     it goes and put back on what arrives.
+
+    `stem` is the import that is rebuilt. Another configuration of the
+    assembly holds parts with the same component ids and settings of its
+    own, so only the parts of this import are read (imports.py).
     """
     if bpy is None:
         return {"components": {}, "collections": {}}
+    from . import imports
     scene = scene or bpy.context.scene
     components, collections = {}, {}
-    for obj in bpy.data.objects:
+    for obj in imports.only(bpy.data.objects, stem):
         component = obj.get("RIG_component_id")
         settings = _set(obj)
         if not component or settings is None or not settings.enabled:
@@ -270,17 +275,19 @@ def snapshot(scene=None):
     return {"components": components, "collections": collections}
 
 
-def restore(taken, scene=None):
+def restore(taken, scene=None, stem=None):
     """Puts a snapshot back. Returns how many objects and collections it
     reached. A part or a collection that is no longer in the assembly is
-    simply not there to set, which is the right answer and not an error."""
+    simply not there to set, which is the right answer and not an error.
+    `stem` is as for snapshot(): the parts of other imports keep theirs."""
     if bpy is None or not taken:
         return 0, 0
+    from . import imports
     scene = scene or bpy.context.scene
     components = taken.get("components") or {}
     collections = taken.get("collections") or {}
     objects_set = 0
-    for obj in bpy.data.objects:
+    for obj in imports.only(bpy.data.objects, stem):
         row = components.get(obj.get("RIG_component_id"))
         settings = _set(obj)
         if row is None or settings is None:

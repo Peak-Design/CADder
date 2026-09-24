@@ -22,7 +22,7 @@ except ImportError:
     Matrix = None
     Vector = None
 
-from . import cam_contact, constraints, definition
+from . import cam_contact, constraints, definition, imports
 from . import shapes as shapes_mod, drivers, loops, sliders
 from .graph import RigPlan, swing_cone
 
@@ -91,20 +91,31 @@ def is_locked(arm_obj):
     return bool(arm_obj is not None and arm_obj.get(LOCK_TAG))
 
 
-def locked_rig(context=None):
+def locked_rig(context=None, manifest=None):
     """The locked rig standing in the scene, or None.
 
     Looks at the scene rather than at one collection: a locked rig moved
-    somewhere else in the outliner is still locked."""
+    somewhere else in the outliner is still locked.
+
+    With a manifest, only a rig of the import it describes counts: its
+    stem, or the rig name a build of it takes. Each configuration of an
+    assembly, and each assembly, has a rig of its own, and building one
+    does not change the others, so a lock on one does not stop a build of
+    another (Oscar, 2026-09-24). Without one, any locked rig does."""
     if bpy is None:
         return None
     try:
         objects = (context or bpy.context).scene.objects
     except AttributeError:
         objects = bpy.data.objects
+    stem = imports.stem_of(manifest) if manifest is not None else None
+    name = _rig_name(manifest) if manifest is not None else None
     for obj in objects:
         if obj.type == "ARMATURE" and obj.get("RIG_rig") and is_locked(obj):
-            return obj
+            if manifest is None or stem in imports.rig_stems(obj) \
+                    or obj.name == name \
+                    or any(c.name == name for c in obj.users_collection):
+                return obj
     return None
 
 
@@ -694,12 +705,16 @@ def _ensure_object_mode(context):
 
 def _driven_objects(manifest):
     """The scene objects matching has tagged for this manifest: the ones
-    relink will attach to bones."""
+    relink will attach to bones. Not the parts of another import, which
+    can hold the same ids: another configuration of the assembly."""
     ids = {c.id for c in manifest.components}
     gids = {g.id for g in manifest.rigid_groups}
+    stems = imports.in_scene({imports.stem_of(manifest)} - {None})
     out = []
     for obj in bpy.data.objects:
         if obj.get("RIG_rig") or obj.get("RIG_helper") or obj.get("CADLINK_widget"):
+            continue
+        if not imports.rig_may_take(obj, stems):
             continue
         if (obj.get("RIG_component_id") in ids
                 or obj.get("RIG_component_of") in ids
@@ -1410,7 +1425,7 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
     # ---- Phase 1: Object mode, datablocks only -------------------------
     # Before anything is created or removed: a locked rig is not rebuilt,
     # and a half-built one is worse than none.
-    standing = locked_rig(context)
+    standing = locked_rig(context, manifest)
     if standing is not None:
         raise RigLocked(
             "%s is locked. Unlock it to build the rig again." % standing.name)
@@ -1443,6 +1458,12 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         collection.objects.link(arm_obj)
     arm_obj["RIG_rig"] = True
     arm_obj["RIG_source"] = manifest.source_path or ""
+    # The import this rig drives. Relink puts only its parts on the rig:
+    # another configuration of the assembly holds parts with the same
+    # group ids (imports.py).
+    stem = imports.stem_of(manifest)
+    if stem:
+        arm_obj[imports.TAG_IMPORT] = stem
     arm_obj["RIG_frame"] = [v for row in frame for v in row]
     # Blender units per meter the bones were built at. Blender scales
     # nothing when the Unit Scale changes, so a rig kept across that change

@@ -212,9 +212,10 @@ def _up_of_parts(stem):
 _REPLY_MESH = re.compile(r"^cadlink-refine-[0-9a-fA-F]+\.swmesh$")
 
 
-def refine_from_reply(context, reply):
+def refine_from_reply(context, reply, stems=None):
     """Swaps in the geometry a reply to "retessellate" names, and deletes
     the reply's file once it is read. Returns the objects that changed.
+    `stems` are the imports the geometry is for (native_import.refine).
 
     No request names a file for the answer, so the add-in writes one to
     the temp folder, and it is Blender's to delete: nothing else reads it.
@@ -224,7 +225,7 @@ def refine_from_reply(context, reply):
     from . import native_import
     path = reply["mesh"]
     try:
-        return native_import.refine(context, path)
+        return native_import.refine(context, path, stems=stems)
     finally:
         if _REPLY_MESH.match(os.path.basename(str(path or ""))):
             try:
@@ -360,6 +361,86 @@ def _driver_changed(self, context):
         _STATE["error"] = str(exc)
 
 
+# ── Which rig the panel works on ────────────────────────────────────────
+#
+# A scene can hold a rig for each configuration of an assembly, and for
+# each assembly (Oscar, 2026-09-24). The inputs in the panel are those of
+# the loaded manifest, and the manifest field is in the STEP Rig panel,
+# which most users never open. So the Rig panel offers the rigs of the
+# sends in the scene, and a pick loads the manifest of that rig.
+
+_RIG_ITEMS = []        # Blender needs the items of a dynamic enum kept alive
+
+
+def _send_rigs(context):
+    """The rigs of the direct sends in the scene, by name."""
+    from . import imports
+    try:
+        scene = context.scene
+    except AttributeError:
+        return []
+    stems = set()
+    for col in imports._collections_of(scene):
+        if col.get("SWMESH_role") == "top" and col.get("SWMESH_file"):
+            stems.add(str(col["SWMESH_file"]))
+    out = [o for o in scene.objects
+           if o.type == "ARMATURE" and o.get("RIG_rig") and o.get("RIG_source")
+           and imports.rig_stems(o) & stems]
+    return sorted(out, key=lambda o: o.name)
+
+
+def _rig_items(self, context):
+    rigs = _send_rigs(context) if context is not None else []
+    items = [(str(i), arm.name,
+              "Show the mechanism inputs of " + arm.name,
+              "OUTLINER_OB_ARMATURE", i)
+             for i, arm in enumerate(rigs)]
+    if not items:
+        items = [("NONE", "(no rig)", "", "NONE", 0)]
+    _RIG_ITEMS[:] = items
+    return items
+
+
+def _rig_get(self):
+    from . import imports
+    manifest = _STATE.get("manifest")
+    stem = imports.stem_of(manifest) if manifest is not None else None
+    for i, arm in enumerate(_send_rigs(bpy.context)):
+        if stem and stem in imports.rig_stems(arm):
+            return i
+    return 0
+
+
+def _rig_set(self, value):
+    rigs = _send_rigs(bpy.context)
+    if not 0 <= value < len(rigs):
+        return
+    path = rigs[value].get("RIG_source")
+    self.manifest_path = str(path)
+    _load_manifest(bpy.context, bpy.path.abspath(str(path)))
+
+
+def _load_manifest(context, path):
+    """Loads the manifest at `path` into the panel. Returns (ok, message):
+    the message is the error, or what was loaded."""
+    _reset_state()
+    if not path or not os.path.isfile(path):
+        _STATE["error"] = "Manifest file not found: {}".format(path)
+        return False, _STATE["error"]
+    try:
+        m = manifest_mod.load(path)
+        plan = graph.build(m)
+    except ManifestError as exc:
+        _STATE["error"] = str(exc)
+        return False, str(exc)
+    _STATE["manifest"] = m
+    _STATE["plan"] = plan
+    _sync_mechanisms(context, m)
+    return True, "Loaded {}: {} joints, {} groups, {} loops, {} warnings".format(
+        os.path.basename(path), len(m.joints), len(m.rigid_groups),
+        len(m.loops), len(m.warnings))
+
+
 def _stored_choices(context):
     arm = _find_rig(context)
     if arm is None:
@@ -451,6 +532,10 @@ def _cad_link_enabled(context):
 
 
 def _find_rig(context):
+    """The rig the panel works on: the one built last, else the rig of the
+    manifest that is loaded, else the first rig in the scene. The scene can
+    hold a rig for each configuration of an assembly, and the choices of
+    the panel are for the loaded manifest."""
     build = _STATE.get("build")
     if build is not None and build.armature_object is not None:
         try:
@@ -458,10 +543,16 @@ def _find_rig(context):
                 return build.armature_object
         except ReferenceError:
             pass
-    for obj in context.scene.objects:
-        if obj.type == "ARMATURE" and obj.get("RIG_rig"):
-            return obj
-    return None
+    rigs = [obj for obj in context.scene.objects
+            if obj.type == "ARMATURE" and obj.get("RIG_rig")]
+    manifest = _STATE.get("manifest")
+    if manifest is not None:
+        from . import imports
+        stem = imports.stem_of(manifest)
+        for obj in rigs:
+            if stem and stem in imports.rig_stems(obj):
+                return obj
+    return rigs[0] if rigs else None
 
 
 if bpy is not None:
@@ -507,25 +598,11 @@ if bpy is not None:
 
         def execute(self, context):
             path = bpy.path.abspath(context.scene.cad_link.manifest_path)
-            _reset_state()
-            if not path or not os.path.isfile(path):
-                _STATE["error"] = "Manifest file not found: {}".format(path)
-                self.report({"ERROR"}, _STATE["error"])
+            ok, message = _load_manifest(context, path)
+            if not ok:
+                self.report({"ERROR"}, message)
                 return {"CANCELLED"}
-            try:
-                m = manifest_mod.load(path)
-                plan = graph.build(m)
-            except ManifestError as exc:
-                _STATE["error"] = str(exc)
-                self.report({"ERROR"}, str(exc))
-                return {"CANCELLED"}
-            _STATE["manifest"] = m
-            _STATE["plan"] = plan
-            _sync_mechanisms(context, m)
-            self.report({"INFO"}, "Loaded {}: {} joints, {} groups, {} loops, "
-                        "{} warnings".format(
-                            os.path.basename(path), len(m.joints),
-                            len(m.rigid_groups), len(m.loops), len(m.warnings)))
+            self.report({"INFO"}, message)
             return {"FINISHED"}
 
     class CADLINK_OT_import_step(bpy.types.Operator):
@@ -667,7 +744,7 @@ if bpy is not None:
         def poll(cls, context):
             if _STATE["manifest"] is None:
                 return False
-            standing = rig_build.locked_rig(context)
+            standing = rig_build.locked_rig(context, _STATE["manifest"])
             if standing is not None:
                 cls.poll_message_set(
                     "%s is locked. Unlock it to build the rig again"
@@ -847,6 +924,30 @@ if bpy is not None:
         return tools_mod.scope_objects(
             context, lambda o: bool(o.get("RIG_component_id")))
 
+    def _by_import(objects):
+        """The parts of `objects` by the document and the configuration
+        they are of: [(document, configuration, stems, parts)], in the
+        order the parts come.
+
+        A request to the CAD application is for one configuration, and the
+        answer is only for the parts of that configuration: another
+        configuration of the assembly holds parts with the same ids
+        (imports.py). A part from before 1.2 names neither, and goes with
+        the others of its kind: the CAD application answers for the
+        document the scene says, as it is now."""
+        from . import imports
+        groups = {}
+        for obj in objects:
+            key = imports.configuration_of(obj)
+            parts = groups.setdefault(key, [])
+            parts.append(obj)
+        out = []
+        for (document, configuration), parts in groups.items():
+            stems = {str(o.get(imports.TAG_FILE)) for o in parts
+                     if o.get(imports.TAG_FILE)}
+            out.append((document, configuration, stems or None, parts))
+        return out
+
     def _identities(objects):
         """(the component ids, the persistent ids) of these parts, once
         each, in the order the parts come."""
@@ -916,7 +1017,7 @@ if bpy is not None:
         _loc, _rot, scale = obj.matrix_world.decompose()
         return Matrix.LocRotScale(loc, rot, scale)
 
-    def _apply_poses(context, reply, strict=False):
+    def _apply_poses(context, reply, strict=False, stems=None):
         """Puts the CAD poses the reply carries on the parts of the scene.
         Returns how many parts moved.
 
@@ -933,14 +1034,24 @@ if bpy is not None:
         manifest, so it says where the CAD has the parts.
 
         With `strict`, a reply that moves nothing because it names no part
-        of the scene raises PosesNotApplied. Without it, that is 0."""
+        of the scene raises PosesNotApplied. Without it, that is 0.
+
+        `stems` are the imports the poses are for, None for all. The poses
+        are of one configuration, and another configuration of the
+        assembly holds parts with the same ids (imports.py). The loaded
+        manifest takes the poses only when it is of one of these imports."""
         from mathutils import Matrix
+        from . import imports
         entries = (reply or {}).get("components") or []
         manifest = _STATE.get("manifest")
+        own = imports.stem_of(manifest) if manifest is not None else None
+        if stems and own not in stems and imports.in_scene({own} - {None}):
+            manifest = None
         poses_into_manifest(manifest, entries)
 
         comps = manifest.component_by_id() if manifest is not None else {}
-        objects = [o for o in _linked_objects() if not o.get("SWMESH_prototype")]
+        objects = [o for o in imports.only(_linked_objects(), stems)
+                   if not o.get("SWMESH_prototype")]
 
         def identity(obj):
             cid = obj.get("RIG_component_id") or None
@@ -1023,7 +1134,26 @@ if bpy is not None:
         context.view_layer.update()
         return len(report.moved)
 
-    def _resend_everything(context, update=False, rig_mode=None):
+    def _add_stages(total, got):
+        """What two refreshes did, as one: the counts added up, the text
+        lines joined."""
+        if not total:
+            return dict(got)
+        out = dict(total)
+        out["objects"] = total.get("objects", 0) + got.get("objects", 0)
+        for key in ("rig", "changed"):
+            if got.get(key):
+                out[key] = "; ".join(v for v in (total.get(key), got[key]) if v)
+        known = list(total.get("limits") or [])
+        out["limits"] = known + [n for n in got.get("limits") or []
+                                 if n not in known]
+        a = total.get("defeature") or (0, 0)
+        b = got.get("defeature") or (0, 0)
+        out["defeature"] = (a[0] + b[0], a[1] + b[1])
+        return out
+
+    def _resend_everything(context, update=False, rig_mode=None,
+                           document=None, configuration=None, stems=None):
         """Asks the CAD application to export the whole assembly again.
 
         This is what catches a part added or deleted in CAD and a mate that
@@ -1042,15 +1172,22 @@ if bpy is not None:
         collections the scene holds defeatured: the CAD application is told
         which they are, and after a replace the settings are put back on
         what arrives, because a replace takes every object and collection
-        with it. An update keeps them, so it needs none of that."""
-        from . import cad_link, manifest as man_mod, defeature
+        with it. An update keeps them, so it needs none of that.
+
+        `document`, `configuration` and `stems` say which import to ask for
+        again (_by_import). None asks for the document the scene says, in
+        the configuration active in the CAD application."""
+        from . import cad_link, imports, manifest as man_mod, defeature
         from .. import bridge
         out = {}
-        held = None if update else defeature.snapshot(context.scene)
-        asked = defeature.orders(_linked_objects(), context.scene)
+        held = None if update else defeature.snapshot(context.scene, stem=stems)
+        asked = defeature.orders(imports.only(_linked_objects(), stems),
+                                 context.scene)
+        fields = dict(cad_link._of(document, configuration))
+        if asked:
+            fields["defeature"] = asked
         try:
-            reply = cad_link.request(
-                "export", mesh=True, **({"defeature": asked} if asked else {}))
+            reply = cad_link.request("export", mesh=True, **fields)
         except cad_link.CadLinkError as exc:
             return {"error": str(exc)}
         mesh = reply.get("mesh")
@@ -1066,8 +1203,15 @@ if bpy is not None:
                 _STATE["manifest"] = man_mod.load(manifest_path)
             except (OSError, ManifestError) as exc:
                 return {"error": "the new manifest could not be read: %s" % exc}
-        options = _import_options(
-            context, os.path.splitext(os.path.basename(mesh))[0])
+        stem = os.path.splitext(os.path.basename(mesh))[0]
+        options = _import_options(context, stem)
+        # A full reimport replaces the import it was asked for, also when
+        # the CAD application names it otherwise now (a renamed document):
+        # the send below replaces only an import of its own name.
+        if not update:
+            from . import native_import
+            for old in sorted((stems or set()) - {stem}):
+                native_import.remove_previous(old)
         payload = {
             "step": None, "mesh": mesh, "manifest": manifest_path,
             "steps": {"import": False, "replace": not update,
@@ -1078,6 +1222,15 @@ if bpy is not None:
         }
         if update and rig_mode:
             payload["rig_mode"] = rig_mode
+        # The parts are tagged with the document and the configuration, as
+        # a send from the CAD application tags them.
+        document = (reply.get("document_path") or document
+                    or cad_link._document_path())
+        if document:
+            payload["source_document"] = document
+        configuration = reply.get("configuration") or configuration
+        if configuration:
+            payload["configuration"] = configuration
         result = bridge._run_job(payload)
         if not result.get("ok"):
             return {"error": result.get("error") or "the import failed"}
@@ -1099,7 +1252,8 @@ if bpy is not None:
             if locked:
                 out["changed"] += ", %d kept their locked geometry" % locked
         out["defeature"] = ((0, 0) if held is None
-                            else defeature.restore(held, context.scene))
+                            else defeature.restore(held, context.scene,
+                                                   stem=stem))
         return out
 
     class CADLINK_OT_update_from_cad(bpy.types.Operator):
@@ -1198,7 +1352,6 @@ if bpy is not None:
                 self.report({"WARNING"},
                             "The geometry of every part in scope is locked")
                 return {"CANCELLED"}
-            shaped_ids, shaped_persistent = _identities(shaped)
             split = False
             for obj in shaped:
                 # A part that came in as one object per solid body. The
@@ -1208,6 +1361,10 @@ if bpy is not None:
                         str(obj.get("SWMESH_path") or "")):
                     split = True
             changed, moved, reply = [], 0, None
+            triangles = 0
+            # One request for each configuration in scope (_by_import).
+            imports_in = _by_import(covered)
+            shaped_names = {o.name for o in shaped}
             # The CAD application takes seconds to minutes to answer, and
             # Blender holds still meanwhile, so the status bar says which
             # part of the update is running.
@@ -1216,12 +1373,17 @@ if bpy is not None:
                 if self.what in ("EVERYTHING", "REFRESH"):
                     update = self.what == "REFRESH"
                     said.stage("asking the CAD application for the assembly", 0, 90)
-                    stages = _resend_everything(
-                        context, update=update,
-                        rig_mode=self.rig if update else None)
-                    if stages.get("error"):
-                        self.report({"ERROR"}, stages["error"])
-                        return {"CANCELLED"}
+                    stages = {}
+                    for document, configuration, stems, _parts in imports_in:
+                        got = _resend_everything(
+                            context, update=update,
+                            rig_mode=self.rig if update else None,
+                            document=document, configuration=configuration,
+                            stems=stems)
+                        if got.get("error"):
+                            self.report({"ERROR"}, got["error"])
+                            return {"CANCELLED"}
+                        stages = _add_stages(stages, got)
                     parts, groups = stages.get("defeature") or (0, 0)
                     kept = (", {} part(s) and {} collection(s) still defeatured"
                             .format(parts, groups)) if parts or groups else ""
@@ -1244,21 +1406,28 @@ if bpy is not None:
                     return {"FINISHED"}
                 if self.what != "POSES" and shaped:
                     said.stage("asking the CAD application for the geometry", 0, 60)
-                    # Which parts travel without their small features is
-                    # this scene's decision, so it is sent every time. A
-                    # rebuild that left it out would quietly put the holes
-                    # back.
-                    # The quality in Mesh Quality, the same settings that
-                    # rebuild a part from a file, with its distance in
-                    # meters.
-                    reply = cad_link.retessellate(
-                        shaped_ids, native_import.cad_quality(context.scene),
-                        persistent_ids=shaped_persistent,
-                        separate_solids=split or None,
-                        paths=native_import.cad_paths(shaped),
-                        defeature=defeature.orders(shaped, context.scene))
-                    said.stage("replacing the geometry", 60, 90, len(shaped_ids))
-                    changed = refine_from_reply(context, reply)
+                    for document, configuration, stems, parts in imports_in:
+                        mine = [o for o in parts if o.name in shaped_names]
+                        if not mine:
+                            continue
+                        mine_ids, mine_persistent = _identities(mine)
+                        # Which parts travel without their small features
+                        # is this scene's decision, so it is sent every
+                        # time. A rebuild that left it out would quietly
+                        # put the holes back.
+                        # The quality in Mesh Quality, the same settings
+                        # that rebuild a part from a file, with its
+                        # distance in meters.
+                        reply = cad_link.retessellate(
+                            mine_ids, native_import.cad_quality(context.scene),
+                            persistent_ids=mine_persistent,
+                            separate_solids=split or None,
+                            paths=native_import.cad_paths(mine),
+                            defeature=defeature.orders(mine, context.scene),
+                            document=document, configuration=configuration)
+                        said.stage("replacing the geometry", 60, 90, len(mine_ids))
+                        changed += refine_from_reply(context, reply, stems)
+                        triangles += int(reply.get("triangles", 0) or 0)
                     if not changed:
                         self.report({"WARNING"},
                                     "The CAD application sent geometry for parts that "
@@ -1266,9 +1435,13 @@ if bpy is not None:
                         return {"CANCELLED"}
                 if self.what != "GEOMETRY":
                     said.stage("moving the parts to where the CAD has them", 90, 100)
-                    moved = _apply_poses(
-                        context, cad_link.poses(ids, persistent_ids=persistent),
-                        strict=True)
+                    for document, configuration, stems, parts in imports_in:
+                        mine_ids, mine_persistent = _identities(parts)
+                        moved += _apply_poses(
+                            context, cad_link.poses(
+                                mine_ids, persistent_ids=mine_persistent,
+                                document=document, configuration=configuration),
+                            strict=True, stems=stems)
             except cad_link.CadLinkError as exc:
                 _STATE["error"] = str(exc)
                 self.report({"ERROR"}, str(exc))
@@ -1298,7 +1471,7 @@ if bpy is not None:
             elif self.what == "GEOMETRY":
                 self.report({"INFO"},
                             "Updated {} part(s) to {} triangles ({:.3g} m chord){}"
-                            .format(len(changed), reply.get("triangles", 0),
+                            .format(len(changed), triangles,
                                     reply.get("tolerance_m", 0.0), locked_note))
             elif reply is None:
                 self.report({"INFO"},
@@ -1307,7 +1480,7 @@ if bpy is not None:
             else:
                 self.report({"INFO"},
                             "Updated {} part(s) to {} triangles, moved {} onto the CAD poses{}"
-                            .format(len(changed), reply.get("triangles", 0), moved,
+                            .format(len(changed), triangles, moved,
                                     locked_note))
             if self.what != "GEOMETRY" and held:
                 # Last, so the status bar shows it.
@@ -1350,6 +1523,15 @@ if bpy is not None:
 
         def draw(self, context):
             layout = self.layout
+
+            # The rig the panels below work on, when the scene holds the
+            # rigs of more than one send: each configuration of an
+            # assembly has a rig of its own.
+            if len(_send_rigs(context)) > 1:
+                row = layout.row()
+                row.use_property_split = True
+                row.use_property_decorate = False
+                row.prop(context.scene.cad_link, "rig")
 
             # The lock is not drawn. A send from the CAD application asks
             # what to do with the rig that is standing, so there is nothing

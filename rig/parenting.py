@@ -106,6 +106,12 @@ def _rig_maps(arm_obj):
     still the common case.
     """
     sources = rig_sources(arm_obj)
+    # The imports this rig drives. The parts of a direct send name no
+    # manifest, and another configuration of the assembly holds parts
+    # with the same group ids: without this, relink put them on this rig
+    # too (imports.py).
+    from . import imports
+    stems = imports.in_scene(imports.rig_stems(arm_obj))
     bone_by_key = {}
     for pb in arm_obj.pose.bones:
         gid = pb.get("RIG_group")
@@ -125,6 +131,8 @@ def _rig_maps(arm_obj):
             continue    # legacy rig empties and the armature itself
         gid = obj.get("RIG_group")
         if not gid:
+            continue
+        if not imports.rig_may_take(obj, stems):
             continue
         theirs = obj.get("RIG_source") or None
         if sources and theirs and theirs not in sources:

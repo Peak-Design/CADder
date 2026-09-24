@@ -715,6 +715,15 @@ def match(manifest: Manifest, objects=None, collections=None) -> MatchReport:
     direct = [o for o in candidates if _is_direct_send(o)]
     if direct:
         candidates = [o for o in candidates if not _is_direct_send(o)]
+        # Only the parts of the import this manifest describes. Another
+        # configuration of the assembly holds parts with the same ids
+        # (imports.py). A scene that holds no part of that import keeps
+        # the old rule: its parts take the manifest by their ids.
+        from . import imports
+        stem = imports.stem_of(manifest)
+        own = [o for o in direct if o.get(imports.TAG_FILE) == stem]
+        if own:
+            direct = own
 
     # Parts of a STEP import are matched against the STEP file the manifest
     # names, so that file has to be the one it was written for.

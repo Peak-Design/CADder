@@ -32,6 +32,14 @@ if bpy is not None:
         # One entry per mechanism that offers a choice of input
         # (inputs.py); filled on manifest load, drawn as dropdowns.
         mechanisms: bpy.props.CollectionProperty(type=ui.CADLINK_MechanismChoice)
+        # The rig the panel works on, when the scene holds the rigs of
+        # several sends (ui._send_rigs). A pick loads its manifest.
+        rig: bpy.props.EnumProperty(
+            name="Rig",
+            description="Choose the rig whose mechanism inputs the panel "
+                        "shows. Each configuration sent from the CAD "
+                        "application has a rig of its own",
+            items=ui._rig_items, get=ui._rig_get, set=ui._rig_set)
 
     _classes = ((ui.CADLINK_MechanismChoice, CadLinkSettings)
                 + defeature.classes + ui.classes)

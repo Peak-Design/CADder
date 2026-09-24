@@ -259,20 +259,37 @@ def status(instance=None):
     return request("status", timeout=_TIMEOUT_PING, instance=instance)
 
 
-def poses(component_ids=None, persistent_ids=None, instance=None):
+def _of(document=None, configuration=None):
+    """The fields that name the document and the configuration a request is
+    for. The CAD application shows that configuration for the request, and
+    the one that was active again after it (CADder Bridge 1.2). Without
+    them it answers for the document the scene says, as it is now."""
+    out = {}
+    if document:
+        out["document_path"] = str(document)
+    if configuration:
+        out["configuration"] = str(configuration)
+    return out
+
+
+def poses(component_ids=None, persistent_ids=None, instance=None,
+          document=None, configuration=None):
     """Asks where those components sit now. The reply lists the component
     id, its CAD path and its world transform, in metres.
 
     Persistent ids are SolidWorks' own references: they still name the same
     occurrences after the assembly has been edited, which the manifest's
-    c001, c002 numbering does not."""
+    c001, c002 numbering does not. `document` and `configuration` say which
+    import the parts are of (_of)."""
     return request("poses", instance=instance,
                    components=list(component_ids or []),
-                   persistent_ids=list(persistent_ids or []))
+                   persistent_ids=list(persistent_ids or []),
+                   **_of(document, configuration))
 
 
 def retessellate(component_ids, quality, persistent_ids=None, instance=None,
-                 separate_solids=None, defeature=None, paths=None):
+                 separate_solids=None, defeature=None, paths=None,
+                 document=None, configuration=None):
     """Asks for those components again at `quality`. The reply names a
     .swmesh on disk. Persistent ids name the same occurrences after an edit;
     see `poses`.
@@ -294,7 +311,10 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
 
     paths name the PLACEMENTS wanted, where the scene can say. A component
     id is the rig body's, and every part of a rigid subassembly shares it,
-    so the ids alone ask for the whole branch (native_import.cad_paths)."""
+    so the ids alone ask for the whole branch (native_import.cad_paths).
+
+    `document` and `configuration` say which import the parts are of, as
+    for `poses`."""
     fields = dict(quality) if isinstance(quality, dict) else {"quality": float(quality)}
     payload = dict(components=list(component_ids),
                    persistent_ids=list(persistent_ids or []), **fields)
@@ -304,4 +324,5 @@ def retessellate(component_ids, quality, persistent_ids=None, instance=None,
         payload["defeature"] = list(defeature)
     if paths:
         payload["paths"] = list(paths)
+    payload.update(_of(document, configuration))
     return request("retessellate", instance=instance, **payload)

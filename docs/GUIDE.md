@@ -324,26 +324,74 @@ you send anything:
 CADder before 1.1.1 and CADder Bridge before 1.1.1 do not check. The newer
 one of the two still warns about the older one.
 
-A send replaces the last send of the same assembly. It does not replace a
-STEP import of that assembly. If the scene has one, the send stops before
-it changes anything, and SolidWorks tells you. Delete the STEP import, or
-open a new Blender file, and send again.
+A send replaces the last send of the same assembly in the same
+configuration. Other configurations of the assembly, and other
+assemblies, stay in the scene, each with its own rig. A send does not
+replace a STEP import of the assembly. If the scene has one, the send
+stops before it changes anything, and SolidWorks tells you. Delete the
+STEP import, or open a new Blender file, and send again.
 
-A send puts the assembly in one collection, `<assembly>_Top_Level`. In it
-are two collections side by side: the assembly collection, `<assembly>`,
-and the rig collection, `<assembly>_Rig`. The layout is the same for each
-**Tree hierarchy** option, also **Flat collection**. So the rig is easy to
-find, and one switch hides the machine and its bones together.
+A send puts the assembly in one collection, named after the assembly and
+its configuration: `<assembly>_<configuration>`, for example
+`wrench_Default`. In it are two collections side by side: the parts,
+`<assembly>_<configuration>_Parts`, and the rig,
+`<assembly>_<configuration>_Rig`. The layout is the same for each **Tree
+hierarchy** option, also **Flat collection**. So the rig is easy to find,
+and one switch hides the machine and its bones together.
 
-The next send of the same assembly uses the same `_Top_Level` collection.
-You can move it into a collection of your own, and put your own objects
-and collections in it. A send keeps them there. A send makes the assembly
-collection again, so a collection of your own inside it moves up into
-`_Top_Level`. **Refresh Model** leaves your collections where they are. It
-also puts a scene from an older version in this layout: it makes the
-`_Top_Level` collection and moves the rig collection next to the assembly.
-When Refresh Model finds the assembly under a new document name, the
-`_Top_Level` collection takes the new name too.
+The next send of the same assembly and configuration uses the same
+collection. You can move it into a collection of your own, and put your
+own objects and collections in it. A send keeps them there. A send makes
+the parts collection again, so a collection of your own inside it moves
+up one level. **Refresh Model** leaves your collections where they are.
+It also puts a scene from an older version in this layout: it makes the
+top collection and moves the rig collection next to the parts. When
+Refresh Model finds the assembly under a new document name, the
+collections and the rig take the new name too.
+
+### Configurations
+
+Each configuration of an assembly is a send of its own. It has its own
+collection, `<assembly>_<configuration>`, and its own rig. Send one
+configuration, switch to another in SolidWorks and send again: the scene
+then holds both, side by side.
+
+To send several configurations at once:
+
+1. In SolidWorks, open **Export Options**.
+2. Under **Send to Blender**, select **Multiple configurations**.
+3. Click **Send to Blender**.
+4. Select the configurations to send, and click **Send**.
+
+SolidWorks shows each configuration in turn, exports it and shows the
+configuration you had active again. Blender then builds one collection and
+one rig for each configuration. The list remembers what you selected for
+each document until SolidWorks closes.
+
+A part that two configurations hold the same way is one mesh in Blender,
+as two placements of a part in one configuration are. A change you make
+to that mesh shows in both configurations. A part with another shape, or
+with another appearance, in the other configuration has a mesh of its
+own.
+
+When the scene holds the rigs of more than one send, the **Rig** panel
+shows a **Rig** list at the top. Choose a rig to see and change the
+**Mechanism Input** of its mechanisms.
+
+**Refresh Model** asks which configurations to refresh when Blender holds
+more than one configuration of the document. The configurations Blender
+holds are selected. **Rebuild from CAD** asks SolidWorks for each
+configuration on its own, and puts each answer only on the parts of that
+configuration.
+
+The names of the parts inside the parts collections are the same in each
+configuration, so Blender puts a number on the end of the names in the
+second and later configurations, for example `arm.001`.
+
+A scene from CADder 1.1 holds one send of the assembly, in
+`<assembly>_Top_Level`. The first send from 1.2 of that assembly takes it
+over as the send of the configuration you send. Your collections, your
+objects in the top collection and your locked materials stay.
 
 The **CADder** tab holds **Mesh Quality** at the top, then the link and
 the panels that work on any part. Mesh Quality asks one question for both
@@ -626,8 +674,8 @@ Join as many as you like. Each keeps its own joints, limits and couplings.
 
 The rig is built inside the collection you imported into, so hiding that
 collection hides the machine and its bones together. For a send from
-SolidWorks, that is the `<assembly>_Top_Level` collection, and the rig
-collection is next to the assembly collection. Anything the rig has no
+SolidWorks, that is the `<assembly>_<configuration>` collection, and the
+rig collection is next to the parts collection. Anything the rig has no
 bone for (the import's own empties, a part that did not match) is hung off
 the ground bone rather than left behind, so moving the rig moves the whole
 assembly. Nothing is moved between collections: everything stays exactly
@@ -943,6 +991,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 1.2.0   | 5.1     | Configurations. Each configuration of an assembly is a send of its own, in `<assembly>_<configuration>` with its own rig, beside the others. Multiple configurations in the Export Options of CADder Bridge sends several configurations at once. A part that two configurations hold the same way is one mesh. Refresh Model asks which configurations to refresh, and Rebuild from CAD asks for each configuration on its own. A send no longer removes the other assemblies in the scene. The Rig panel offers a list of the rigs in the scene. Needs CADder Bridge 1.2 |
 | 1.1.1   | 5.1     | CADder and CADder Bridge say when their versions do not match, before anything is sent. Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |

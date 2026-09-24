@@ -122,8 +122,8 @@ def main():
     # FLAT: one collection per part name under hier, materials per part
     objs, report = native_import.build(bpy.context, path, manifest=m, hierarchy="FLAT")
     _check(len(objs) == 3, "FLAT built %d objects" % len(objs))
-    _check(bpy.data.collections.get("hier") is not None, "no hier collection")
-    groups = sorted(c.name for c in bpy.data.collections["hier"].children)
+    _check(bpy.data.collections.get("hier_Parts") is not None, "no hier_Parts collection")
+    groups = sorted(c.name for c in bpy.data.collections["hier_Parts"].children)
     _check(groups == ["base", "pin"], "FLAT groups %s" % groups)
     base = bpy.data.objects["base-1"]
     _check([mt.name for mt in base.data.materials] == ["SW red"],
@@ -144,10 +144,10 @@ def main():
     _check(named.count("hier") == 1 and "hier.001" not in named,
            "the FLAT import was not replaced: %s" % named)
     sub = bpy.data.collections.get("sub-1")
-    _check(sub is not None and sub.name in [c.name for c in bpy.data.collections["hier"].children],
+    _check(sub is not None and sub.name in [c.name for c in bpy.data.collections["hier_Parts"].children],
            "no sub-1 collection under hier")
     _check(sorted(o.name for o in sub.objects) == ["pin-1", "pin-2"], "the pins are not in sub-1")
-    _check("base-1" in [o.name for o in bpy.data.collections["hier"].objects], "the base is not at the root")
+    _check("base-1" in [o.name for o in bpy.data.collections["hier_Parts"].objects], "the base is not at the root")
 
     # EMPTIES: the pins parented under an empty at the subassembly's pose
     objs, _ = native_import.build(bpy.context, path, manifest=m, hierarchy="EMPTIES")
@@ -195,7 +195,7 @@ def main():
 
     excluded = excluded_names(bpy.context.view_layer.layer_collection)
     _check("hier.components" in excluded, "the prototype collection is not hidden")
-    _check("hier.components" in [c.name for c in bpy.data.collections["hier"].children],
+    _check("hier.components" in [c.name for c in bpy.data.collections["hier_Parts"].children],
            "the prototype collection is not inside the file's collection")
 
     # Up axis. The import always lands in one collection named after the

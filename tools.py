@@ -1181,27 +1181,40 @@ def _ask_cad_link(context, objs):
     was once only printed to the system console, so Apply Defeature failed
     with no message at all."""
     from .rig import cad_link, native_import, defeature as defeature_mod
+    from .rig import imports
 
-    ids, persistent = [], []
+    # One request for each configuration: two configurations of one
+    # assembly hold parts with the same ids, and a part can have another
+    # shape in each (rig/imports.py).
+    groups = {}
     for obj in objs:
-        component = obj.get("RIG_component_id")
-        if component and component not in ids:
-            ids.append(component)
-        found = obj.get("SWMESH_persistent_id")
-        if found and found not in persistent:
-            persistent.append(found)
-    if not ids:
-        return 0, None
+        groups.setdefault(imports.configuration_of(obj), []).append(obj)
+    done = 0
     try:
-        # In meters, as Rebuild from CAD asks: the Custom distance is held
-        # in scene units.
-        reply = cad_link.retessellate(
-            ids, native_import.cad_quality(context.scene),
-            persistent_ids=persistent,
-            paths=native_import.cad_paths(objs),
-            defeature=defeature_mod.orders(objs, context.scene))
-        from .rig import ui as rig_ui
-        return len(rig_ui.refine_from_reply(context, reply)), None
+        for (document, configuration), parts in groups.items():
+            ids, persistent = [], []
+            for obj in parts:
+                component = obj.get("RIG_component_id")
+                if component and component not in ids:
+                    ids.append(component)
+                found = obj.get("SWMESH_persistent_id")
+                if found and found not in persistent:
+                    persistent.append(found)
+            if not ids:
+                continue
+            stems = {str(o.get(imports.TAG_FILE)) for o in parts
+                     if o.get(imports.TAG_FILE)} or None
+            # In meters, as Rebuild from CAD asks: the Custom distance is
+            # held in scene units.
+            reply = cad_link.retessellate(
+                ids, native_import.cad_quality(context.scene),
+                persistent_ids=persistent,
+                paths=native_import.cad_paths(parts),
+                defeature=defeature_mod.orders(parts, context.scene),
+                document=document, configuration=configuration)
+            from .rig import ui as rig_ui
+            done += len(rig_ui.refine_from_reply(context, reply, stems))
+        return done, None
     except cad_link.CadLinkError as exc:
         return 0, _report(context, str(exc))
     except (OSError, ValueError) as exc:

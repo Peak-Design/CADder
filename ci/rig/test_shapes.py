@@ -249,38 +249,62 @@ class TurnArrowTest(unittest.TestCase):
     def test_it_is_open_at_the_back_and_its_heads_point_into_the_gap(self):
         gap = 0.7
         verts, _e, _f = shapes.turn_arrow(self.R, self.W, self.P, gap=gap)
-        # Nothing of the strip within the gap, round t = pi.
+        # Nothing within the gap, round t = pi.
         behind = [v for v in verts
-                  if abs(abs(angle_of(v)) - math.pi) < gap * 0.5 - 1e-9
-                  and math.hypot(v[0], v[2]) > 1e-9]
+                  if abs(abs(angle_of(v)) - math.pi) < gap * 0.5 - 1e-9]
         self.assertFalse(behind)
-        # The two tips sit on the middle of the strip, at the gap's edges.
-        tips = at_radius(verts, self.R)
-        angles = sorted(round(abs(angle_of(v)), 9) for v in tips)
-        self.assertEqual([round(math.pi - gap * 0.5, 9)] * len(angles), angles)
-        self.assertEqual(4, len(tips))            # two tips, each two sides
+        # Each head ends in an edge at the gap: the two tips, each across
+        # the thickness of the band, and nothing else that far round.
+        edge = [v for v in verts
+                if abs(abs(angle_of(v)) - (math.pi - gap * 0.5)) < 1e-9]
+        self.assertEqual(4, len(edge))
+        self.assertEqual({0.0}, {round(v[1], 12) for v in edge})
 
     def test_the_turn_is_centred_on_the_widget_origin(self):
         # The bone's head is drawn at the widget's origin, so a turn centered
-        # anywhere else would ORBIT the joint. The inner rim is a circle
-        # about the origin, running the same way either side of rest.
-        verts, _e, _f = shapes.turn_arrow(self.R, self.W, self.P)
-        inner = at_radius(verts, self.R * (1.0 - self.W))
+        # anywhere else would ORBIT the joint. The inside of the band is a
+        # circle about the origin, running the same way either side of rest.
+        th = 0.05
+        verts, _e, _f = shapes.turn_arrow(self.R, self.W, self.P,
+                                          thickness=th)
+        inner = at_radius(verts, self.R - th * 0.5)
+        self.assertTrue(inner)
         angles = [angle_of(v) for v in inner]
         self.assertAlmostEqual(-min(angles), max(angles), places=9)
 
-    def test_it_is_a_thin_strip_in_the_plane_of_rotation(self):
-        verts, _e, _f = shapes.turn_arrow(thickness=0.05)
-        self.assertAlmostEqual(0.025, max(abs(v[1]) for v in verts))
+    def test_it_bends_across_its_thin_side(self):
+        # Oscar, 2026-09-24: a curved arrow bends the way sheet bends. The
+        # band is thin out from the axis and wide along it, so it is a
+        # band round the axis and not a washer.
+        th, w, heads = 0.05, 0.15, 0.33
+        verts, _e, _f = shapes.turn_arrow(self.R, w, pointer=0.0,
+                                          heads=heads, thickness=th)
+        radii = [math.hypot(v[0], v[2]) for v in verts]
+        self.assertAlmostEqual(self.R - th * 0.5, min(radii), places=6)
+        self.assertLess(max(radii), self.R + th * 0.5 + 1e-9)
+        self.assertAlmostEqual(self.R * heads, max(abs(v[1]) for v in verts),
+                               places=9)
+        self.assertGreater(self.R * w, th * 0.5)
+
+    def test_a_ball_has_bands_that_bend_the_same_way(self):
+        th = 0.03
+        verts, _e, _f = shapes.ball_rings(radius=0.35, width=0.1,
+                                          thickness=th, stub=1.0)
+        for axis in (0, 1, 2):
+            others = [i for i in (0, 1, 2) if i != axis]
+            band = [v for v in verts if abs(v[axis]) <= 0.035 + 1e-9
+                    and abs(math.hypot(v[others[0]], v[others[1]]) - 0.35)
+                    <= th * 0.5 + 1e-9]
+            self.assertTrue(band, "no band round axis %d" % axis)
 
 
 class SlideArrowTest(unittest.TestCase):
-    def test_two_strips_at_right_angles_so_it_reads_from_every_side(self):
+    def test_one_flat_arrow(self):
+        # Oscar, 2026-09-24: one arrow for a slide, not two crossed.
+        th = 0.05
         verts, _e, _f = shapes.slide_arrow(1.0, 0.07, heads=0.2,
-                                           thickness=0.05)
-        # The head of each strip reaches 0.2 across, on X for one and on Z
-        # for the other.
-        self.assertAlmostEqual(0.2, max(abs(v[0]) for v in verts))
+                                           thickness=th)
+        self.assertAlmostEqual(th * 0.5, max(abs(v[0]) for v in verts))
         self.assertAlmostEqual(0.2, max(abs(v[2]) for v in verts))
 
     def test_the_tips_are_on_the_axis(self):
@@ -313,13 +337,6 @@ class OtherMarksTest(unittest.TestCase):
     def test_a_ball_has_three_rings_and_a_stud(self):
         verts, _e, _f = shapes.ball_rings(radius=0.35, stub=1.0)
         self.assertAlmostEqual(1.0, max(v[1] for v in verts), places=12)
-        # a ring round each axis: points far out on each of the three
-        # planes
-        for axis in (0, 1, 2):
-            others = [i for i in (0, 1, 2) if i != axis]
-            ring = [v for v in verts if abs(v[axis]) < 0.02
-                    and math.hypot(v[others[0]], v[others[1]]) > 0.35]
-            self.assertTrue(ring, "no ring round axis %d" % axis)
 
 
 class LimitArcTest(unittest.TestCase):
@@ -458,6 +475,18 @@ class ScrewArrowTest(unittest.TestCase):
         turns = abs(total) / (2.0 * math.pi)
         self.assertGreater(turns, 2.7)
         self.assertLess(turns, 3.0)
+
+    def test_the_heads_follow_the_helix(self):
+        # Oscar, 2026-09-24: the heads looked kinked. They narrow along the
+        # helix, so every vertex stays on the cylinder the strip lies on.
+        r, th, w, heads = 0.22, 0.04, 0.1, 0.14
+        verts, _e, _f = shapes.screw_arrow(1.0, r, 2.0, width=w,
+                                           thickness=th, heads=heads)
+        slack = heads ** 2 / (2.0 * r)        # a flat width on a curve
+        for v in verts:
+            d = math.hypot(v[0], v[2])
+            self.assertGreater(d, r - th * 0.5 - 1e-9)
+            self.assertLess(d, r + th * 0.5 + slack)
 
 
 if __name__ == "__main__":

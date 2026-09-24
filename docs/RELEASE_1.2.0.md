@@ -55,14 +55,15 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   configuration, so Blender puts a number on the end of the names in the
   second and later configurations.
 - **The bone widgets show the motion.** A control shows the freedoms of its
-  joint and nothing else: a curved double arrow for a turn and a straight
-  double arrow for a slide, drawn as flat strips. A slider was a box and a
-  cylindrical joint a cylinder. Now a slider is an arrow, and a cylindrical
-  joint is a turn and an arrow. A planar joint is two crossed arrows and a
-  turn, a pin in a slot a turn and an arrow along the slot, and a ball three
-  rings and a stud. The pointer of a turn still marks where the joint
-  rests, and the yellow limits are as before. Build a rig again to get the
-  new widgets. The build removes the old ones.
+  joint and nothing else: a curved double arrow for a turn, a band bent
+  round the axis, and a straight double arrow for a slide, one flat strip.
+  A slider was a box and a cylindrical joint a cylinder. Now a slider is an
+  arrow, and a cylindrical joint is a turn and an arrow. A planar joint is
+  two crossed arrows and a turn, a pin in a slot a turn and an arrow along
+  the slot, a screw an arrow wound round its axis, and a ball three bands
+  and a stud. The pointer of a turn still marks where the joint rests, and
+  the yellow limits are as before. Build a rig again to get the new
+  widgets. The build replaces the old ones.
 
 ## Bug fixes
 

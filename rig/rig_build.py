@@ -470,8 +470,8 @@ _RAIL_HALF_WIDTH = 0.05
 _MARK_THICKNESS = 0.05
 # A planar contact slides in its plane and turns about its normal: two
 # crossed arrows in the plane, and a small turn in the middle.
-_PLANAR_REACH = 0.5
-_PLANAR_RADIUS = 0.28
+_PLANAR_REACH = 0.56
+_PLANAR_RADIUS = 0.2
 # A ball, its stud, and the screw.
 _BALL_RADIUS = 0.35
 _BALL_STUB = 1.0
@@ -514,8 +514,7 @@ def _control_geometry(bone_plan):
         return "SWW_plane", shapes_mod.plane_arrows(
             _PLANAR_REACH, _PLANAR_RADIUS, pointer=_DIAL_POINTER, thickness=th)
     if kind == "pin_slot":
-        return "SWW_pin_slot", shapes_mod.pin_slot_arrows(
-            _DIAL_RADIUS, width=_DIAL_WIDTH, thickness=th)
+        return "SWW_pin_slot", shapes_mod.pin_slot_arrows(thickness=th)
     if kind == "ball":
         return "SWW_ball_rings", shapes_mod.ball_rings(_BALL_RADIUS,
                                                        stub=_BALL_STUB)

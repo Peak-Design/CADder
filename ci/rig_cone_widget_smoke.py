@@ -129,7 +129,23 @@ def stale_widget_goes():
     stale["CADLINK_widget"] = True
     col.objects.link(stale)
     col.objects.link(bpy.data.objects.new("Not a widget", None))
+    # a widget of this version's name, with the shape of an older one
+    ball = next(o for o in col.objects if o.name.startswith("SWW_ball"))
+    ball.data = bpy.data.meshes.new("an older ball")
+    ball["CADLINK_widget_shape"] = "an older shape"
     result = rig_build.build(bpy.context, m, graph.build(m))
+    check(len(ball.data.vertices) > 0,
+          "the ball widget kept the shape of an older version")
+    # shaded by angle: smooth faces, and the edges of the flats sharp
+    me = ball.data
+    sharp = me.attributes.get("sharp_edge")
+    flags = [False] * len(me.edges)
+    if sharp is not None:
+        sharp.data.foreach_get("value", flags)
+    check(all(p.use_smooth for p in me.polygons) and any(flags)
+          and not all(flags),
+          "the widget is not shaded by angle: %d of %d edges sharp"
+          % (sum(flags), len(flags)))
     check("SWW_dial" not in bpy.data.objects,
           "the old dial stayed after a build")
     check("SWW_dial" not in bpy.data.meshes, "the old dial left its mesh")

@@ -670,7 +670,7 @@ when the rig is built:
   one arrow. A cylindrical joint is a turn and an arrow along its axis, and
   a screw an arrow wound round its axis. A planar joint is two crossed
   arrows in its plane and a turn. A pin in a slot is a turn and an arrow
-  along the slot. A ball is three rings and a stud. A point on a curve or a
+  along the slot. A ball is three bands and a stud. A point on a curve or a
   face is a diamond. A control is red, also when it drives a closed chain,
   as the input of a four-bar does. A ground you can move, with its whole
   mechanism, is gray.
@@ -687,10 +687,10 @@ when the rig is built:
   it, gray for a fixed root.
 - **`SW_helpers`** (blue, hidden): scaffolding the closures need.
 
-The widgets you take hold of are flat strips with a little thickness, so
-they read from anywhere around the machine. The ones that annotate
-geometry (the swing cone and the ground) stay wire so they do not hide
-what they point at.
+The widgets you take hold of are strips with a little thickness and flat
+arrowheads. A turn is a band bent round its axis, and a slide is one flat
+arrow. The ones that annotate geometry (the swing cone and the ground)
+stay wire so they do not hide what they point at.
 
 Switch `SW_mechanism` on in the armature's Bone Collections panel to see the
 parts that follow rather than lead.

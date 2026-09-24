@@ -73,14 +73,21 @@ def enclosed_volume(verts, faces):
     return total / 6.0
 
 
-ALL_WIDGETS = (shapes.ring_with_pointer(), shapes.limit_arc(-0.5, 0.5),
-               shapes.cylinder(), shapes.cuboid(),
-               shapes.stroke_bar(-0.1, 0.2), shapes.stroke_bar(-0.1, 0.2,
-                                                               round_section=True),
-               shapes.helix(), shapes.helix(thread=0.05),
-               shapes.ball_with_stub(), shapes.swing_cone(0.4),
-               shapes.disc_with_pointer(), shapes.slot(), shapes.diamond(),
-               shapes.ground_cross())
+MARKS = {
+    "turn": shapes.turn_arrow(),
+    "slide": shapes.slide_arrow(),
+    "turn and slide": shapes.turn_and_slide(),
+    "screw": shapes.screw_arrow(),
+    "ball rings": shapes.ball_rings(),
+    "plane": shapes.plane_arrows(),
+    "pin in slot": shapes.pin_slot_arrows(),
+}
+
+ALL_WIDGETS = tuple(MARKS.values()) + (
+    shapes.limit_arc(-0.5, 0.5), shapes.cylinder(), shapes.cuboid(),
+    shapes.stroke_bar(-0.1, 0.2), shapes.stroke_bar(-0.1, 0.2,
+                                                    round_section=True),
+    shapes.swing_cone(0.4), shapes.diamond(), shapes.ground_cross())
 
 
 class FrameConventionTest(unittest.TestCase):
@@ -129,13 +136,11 @@ class FrameConventionTest(unittest.TestCase):
                 self.assertNotIn((min(a, b), max(a, b)), owned)
 
     def test_the_widgets_you_grab_are_solid_and_the_rest_are_wire(self):
-        # A dial, an arc, a slide bar and its rail stand IN FOR a part you
-        # take hold of, so they read as surfaces...
-        for geom in (shapes.ring_with_pointer(), shapes.limit_arc(-0.5, 0.5),
-                     shapes.cylinder(), shapes.cuboid(),
-                     shapes.stroke_bar(-0.1, 0.2), shapes.ball_with_stub(),
-                     shapes.disc_with_pointer(), shapes.diamond(),
-                     shapes.helix(thread=0.05)):
+        # A motion mark, an arc and a rail stand IN FOR a part you take
+        # hold of, so they read as surfaces...
+        for geom in tuple(MARKS.values()) + (
+                shapes.limit_arc(-0.5, 0.5), shapes.stroke_bar(-0.1, 0.2),
+                shapes.diamond()):
             self.assertTrue(geom[2], "should be solid")
         # ...while these ANNOTATE geometry, and filled would hide it: the
         # swing cone has the stud it limits inside it, and the ground cross
@@ -153,18 +158,15 @@ class NormalsTest(unittest.TestCase):
         # Not "away from the center": an annulus's inner wall faces its own
         # axis, which IS outward for that solid. The test that holds for any
         # shape is that the mesh closes up and encloses a positive volume.
-        cases = {
+        cases = dict(MARKS)
+        cases.update({
             "cuboid": shapes.cuboid(2.0, 0.4),
             "cylinder": shapes.cylinder(2.0, 0.4),
             "rail": shapes.stroke_bar(-0.3, 0.2, 0.05, pad=0.1),
             "round rail": shapes.stroke_bar(-0.3, 0.2, 0.05, pad=0.1,
                                             round_section=True),
-            "sphere": (shapes._sphere(0.5)[0], [], shapes._sphere(0.5)[1]),
             "diamond": shapes.diamond(0.4),
-            "planar disc": shapes.disc_with_pointer(),
-            "screw": shapes.helix(thread=0.05),
-            "ball and stud": shapes.ball_with_stub(),
-        }
+        })
         for name, (verts, _edges, faces) in sorted(cases.items()):
             bad, lonely = edge_pairing(faces)
             self.assertFalse(bad, "%s: %d edge(s) used twice the same way"
@@ -177,8 +179,8 @@ class NormalsTest(unittest.TestCase):
     def test_a_flat_widget_is_drawn_from_both_sides(self):
         # A one-sided dial vanishes when the view crosses its plane, and a
         # dial you can read from only one side of the machine is half a dial.
-        for geom in (shapes.ring_with_pointer(), shapes.limit_arc(-0.5, 0.5),
-                     shapes.slot()):
+        # A motion mark is a closed solid, so both sides come with it.
+        for geom in (shapes.limit_arc(-0.5, 0.5), shapes.turn_arrow()):
             verts, _edges, faces = geom
             up = sum(1 for f in faces if normal_of(verts, f)[1] > 0.0)
             down = sum(1 for f in faces if normal_of(verts, f)[1] < 0.0)
@@ -188,7 +190,7 @@ class NormalsTest(unittest.TestCase):
     def test_the_back_of_a_flat_widget_is_its_own_copy(self):
         # Two faces built on ONE set of vertices are a duplicate face, and
         # Blender's mesh validation deletes duplicate faces.
-        _verts, _edges, faces = shapes.ring_with_pointer()
+        _verts, _edges, faces = shapes.limit_arc(-0.5, 0.5)
         seen = set()
         for face in faces:
             key = frozenset(face)
@@ -202,72 +204,122 @@ class SlideLengthTest(unittest.TestCase):
     would leave the rail short at both stops."""
 
     def test_each_slide_widget_is_its_nominal_length(self):
-        for name, geom in (("cuboid", shapes.cuboid(1.0, 0.225)),
-                           ("cylinder", shapes.cylinder(1.0, 0.225)),
-                           ("screw", shapes.helix(1.0, 0.22, 2.0, thread=0.055))):
+        for name, geom in (("slide", shapes.slide_arrow(1.0, 0.07)),
+                           ("turn and slide", shapes.turn_and_slide()),
+                           ("screw", shapes.screw_arrow(1.0, 0.22, 2.0))):
             low, high = bounds(geom[0], 1)
             self.assertAlmostEqual(1.0, high - low, places=9, msg=name)
             self.assertAlmostEqual(0.0, high + low, places=9,
                                    msg=name + " is not centered on its origin")
 
 
-class RevoluteDialTest(unittest.TestCase):
+class TurnArrowTest(unittest.TestCase):
+    """A turn is a curved double arrow round +Y, open at the back, with a
+    pointer at rest. Oscar, 2026-09-24: one mark for each freedom."""
+
+    R, W, P = 0.45, 0.15, 0.35      # the revolute widget of rig_build
+
     def test_the_pointer_marks_the_rest_angle(self):
-        verts, _edges, _faces = shapes.ring_with_pointer(radius=1.0,
-                                                         pointer=0.35)
+        verts, _edges, _faces = shapes.turn_arrow(self.R, self.W, self.P)
         # The tip is the farthest vertex, it sits outside the rim, and it
         # must be at t = 0 (+Z), which is where the joint rests.
         tip = max(verts, key=lambda v: v[0] ** 2 + v[2] ** 2)
         self.assertAlmostEqual(0.0, angle_of(tip), places=12)
-        self.assertAlmostEqual(1.35, math.hypot(tip[0], tip[2]), places=12)
-
-    def test_the_point_is_the_rim_pulled_out_not_a_triangle_on_top(self):
-        # Drawn out of the ring itself: the quads either side of the rest
-        # vertex stretch into it, so there is no seam and no stray face.
-        plain = shapes._band(0.0, 2.0 * math.pi, 1.0, 0.15, 48, closed=True)
-        verts, _edges, faces = shapes.ring_with_pointer(radius=1.0,
-                                                        segments=48)
-        self.assertEqual(2 * len(plain[0]), len(verts))   # both sides, no more
-        self.assertEqual(2 * len(plain[1]), len(faces))
-        self.assertFalse([f for f in faces if len(f) != 4])
+        self.assertAlmostEqual(self.R * (1.0 + self.P),
+                               math.hypot(tip[0], tip[2]), places=12)
 
     def test_a_vertex_lands_exactly_on_rest(self):
-        # The whole trick depends on it: half a segment out and the dial
-        # would point a few degrees away from where the joint sits.
-        for segments in (12, 32, 48):
-            verts, _e, _f = shapes.ring_with_pointer(segments=segments)
+        # Half a segment out and the pointer would sit a few degrees away
+        # from where the joint rests.
+        for segments in (12, 32, 48, 64):
+            verts, _e, _f = shapes.turn_arrow(segments=segments)
             on_rest = [v for v in verts
                        if abs(angle_of(v)) < 1e-12 and v[2] > 0.0]
             self.assertTrue(on_rest, "%d segments: nothing at t=0" % segments)
 
-    def test_the_ring_is_centred_on_the_widget_origin(self):
-        # The bone's head is drawn at the widget's origin, so a ring centered
-        # anywhere else would ORBIT the joint instead of turning about it.
-        # The pointer is deliberately not part of this: it is a mark on the
-        # rim, and the rim is what has to be concentric.
-        r, w = 0.45, 0.15
-        verts, _edges, _faces = shapes.ring_with_pointer(radius=r, width=w)
-        # The inner rim is a whole circle and nothing touches it, so its
-        # centroid IS the origin.
-        inner = at_radius(verts, r * (1.0 - w))
-        self.assertEqual(2 * 48, len(inner))
+    def test_nothing_reaches_the_limit_band(self):
+        # The limit arc of rig_build starts at 0.61 in the same plane. The
+        # heads, the pointer and every other mark that turns stay inside it.
+        band = 0.70 - 0.09
+        for name in ("turn", "turn and slide", "plane", "pin in slot"):
+            verts = MARKS[name][0]
+            reach = max(math.hypot(v[0], v[2]) for v in verts)
+            self.assertLess(reach, band, name)
+
+    def test_it_is_open_at_the_back_and_its_heads_point_into_the_gap(self):
+        gap = 0.7
+        verts, _e, _f = shapes.turn_arrow(self.R, self.W, self.P, gap=gap)
+        # Nothing of the strip within the gap, round t = pi.
+        behind = [v for v in verts
+                  if abs(abs(angle_of(v)) - math.pi) < gap * 0.5 - 1e-9
+                  and math.hypot(v[0], v[2]) > 1e-9]
+        self.assertFalse(behind)
+        # The two tips sit on the middle of the strip, at the gap's edges.
+        tips = at_radius(verts, self.R)
+        angles = sorted(round(abs(angle_of(v)), 9) for v in tips)
+        self.assertEqual([round(math.pi - gap * 0.5, 9)] * len(angles), angles)
+        self.assertEqual(4, len(tips))            # two tips, each two sides
+
+    def test_the_turn_is_centred_on_the_widget_origin(self):
+        # The bone's head is drawn at the widget's origin, so a turn centered
+        # anywhere else would ORBIT the joint. The inner rim is a circle
+        # about the origin, running the same way either side of rest.
+        verts, _e, _f = shapes.turn_arrow(self.R, self.W, self.P)
+        inner = at_radius(verts, self.R * (1.0 - self.W))
+        angles = [angle_of(v) for v in inner]
+        self.assertAlmostEqual(-min(angles), max(angles), places=9)
+
+    def test_it_is_a_thin_strip_in_the_plane_of_rotation(self):
+        verts, _e, _f = shapes.turn_arrow(thickness=0.05)
+        self.assertAlmostEqual(0.025, max(abs(v[1]) for v in verts))
+
+
+class SlideArrowTest(unittest.TestCase):
+    def test_two_strips_at_right_angles_so_it_reads_from_every_side(self):
+        verts, _e, _f = shapes.slide_arrow(1.0, 0.07, heads=0.2,
+                                           thickness=0.05)
+        # The head of each strip reaches 0.2 across, on X for one and on Z
+        # for the other.
+        self.assertAlmostEqual(0.2, max(abs(v[0]) for v in verts))
+        self.assertAlmostEqual(0.2, max(abs(v[2]) for v in verts))
+
+    def test_the_tips_are_on_the_axis(self):
+        verts, _e, _f = shapes.slide_arrow(1.0)
+        top = [v for v in verts if abs(v[1] - 0.5) < 1e-12]
+        self.assertTrue(top)
+        for v in top:
+            self.assertLess(math.hypot(v[0], v[2]), 0.05)
+
+
+class OtherMarksTest(unittest.TestCase):
+    def test_a_plane_slides_on_the_diagonals_and_keeps_rest_clear(self):
+        verts, _e, _f = shapes.plane_arrows(reach=0.5, radius=0.28,
+                                            pointer=0.35)
+        far = [v for v in verts if math.hypot(v[0], v[2]) > 0.49]
+        self.assertTrue(far)
+        for v in far:
+            a = abs(angle_of(v)) % (math.pi / 2.0)
+            self.assertAlmostEqual(math.pi / 4.0, a, places=9)
+        # the pointer of the turn is the only thing on +Z past the turn
+        tip = [v for v in verts if abs(angle_of(v)) < 1e-12 and v[2] > 0.3]
+        self.assertAlmostEqual(0.28 * 1.35, max(v[2] for v in tip), places=12)
+
+    def test_a_pin_in_a_slot_slides_along_z(self):
+        verts, _e, _f = shapes.pin_slot_arrows(length=1.2)
+        self.assertAlmostEqual(0.6, max(v[2] for v in verts), places=12)
+        self.assertAlmostEqual(-0.6, min(v[2] for v in verts), places=12)
+        self.assertLess(max(abs(v[0]) for v in verts), 0.6)
+
+    def test_a_ball_has_three_rings_and_a_stud(self):
+        verts, _e, _f = shapes.ball_rings(radius=0.35, stub=1.0)
+        self.assertAlmostEqual(1.0, max(v[1] for v in verts), places=12)
+        # a ring round each axis: points far out on each of the three
+        # planes
         for axis in (0, 1, 2):
-            self.assertAlmostEqual(0.0, sum(v[axis] for v in inner) / len(inner),
-                                   places=12)
-        # And the outer rim is concentric with it: every vertex on it is the
-        # same distance out, bar the two that are the point.
-        outer = at_radius(verts, r * (1.0 + w))
-        self.assertEqual(len(verts) - len(inner) - 2, len(outer))
-
-    def test_the_ring_is_flat_in_the_plane_of_rotation(self):
-        verts, _edges, _faces = shapes.ring_with_pointer()
-        self.assertAlmostEqual(0.0, max(abs(v[1]) for v in verts))
-
-    def test_the_rim_is_a_band_around_the_radius_asked_for(self):
-        r, w = 0.45, 0.15
-        verts, _edges, _faces = shapes.ring_with_pointer(radius=r, width=w)
-        self.assertTrue(at_radius(verts, r * (1.0 - w)), "no inner rim")
-        self.assertTrue(at_radius(verts, r * (1.0 + w)), "no outer rim")
+            others = [i for i in (0, 1, 2) if i != axis]
+            ring = [v for v in verts if abs(v[axis]) < 0.02
+                    and math.hypot(v[others[0]], v[others[1]]) > 0.35]
+            self.assertTrue(ring, "no ring round axis %d" % axis)
 
 
 class LimitArcTest(unittest.TestCase):
@@ -381,16 +433,20 @@ class SwingConeTest(unittest.TestCase):
                                 for v in verts))
 
 
-class HelixTest(unittest.TestCase):
+class ScrewArrowTest(unittest.TestCase):
     def test_a_screw_turns_as_it_travels(self):
-        verts, _e, _f = shapes.helix(length=2.0, radius=0.5, turns=3.0)
+        verts, _e, _f = shapes.screw_arrow(length=2.0, radius=0.5, turns=3.0,
+                                           segments=120)
         low, high = bounds(verts, 1)
         self.assertAlmostEqual(-1.0, low)
         self.assertAlmostEqual(1.0, high)
-        # Three turns means the angle unwraps through 3 full circles.
+        # The strip is laid down four vertices at a time, along the helix:
+        # its angle unwraps through nearly three full circles, less the
+        # heads.
+        body = verts[:4 * 121:4]
         total = 0.0
-        prev = angle_of(verts[0])
-        for v in verts[1:]:
+        prev = angle_of(body[0])
+        for v in body[1:]:
             cur = angle_of(v)
             d = cur - prev
             while d > math.pi:
@@ -399,7 +455,9 @@ class HelixTest(unittest.TestCase):
                 d += 2.0 * math.pi
             total += d
             prev = cur
-        self.assertAlmostEqual(3.0, abs(total) / (2.0 * math.pi), places=3)
+        turns = abs(total) / (2.0 * math.pi)
+        self.assertGreater(turns, 2.7)
+        self.assertLess(turns, 3.0)
 
 
 if __name__ == "__main__":

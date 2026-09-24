@@ -17,13 +17,18 @@ a limit arc drawn over [delta_min, delta_max] lines up exactly with the
 pointer on the dial: the pointer sits at t = 0 when the joint is at rest, and
 Blender's own rotation channel is measured the same way.
 
+A control shows its freedoms and nothing else (Oscar, 2026-09-24): a curved
+double arrow for each turn, a straight double arrow for each slide, and no
+mark for a locked direction. Each mark is a flat strip with a little
+thickness and flat arrowheads, the same marks the joint models of CADder
+Rigging draw, so the control you grab looks like the joint it moves.
+
 SOLID or WIRE, by what the widget is for. A widget that stands for a part you
-take hold of (a dial, its limit arc, a slide bar, its rail, a ball and its
-stud, a screw's wire, a point marker) is a real surface. It reads at a
-glance, from any angle, without having to hunt for a line against the model
-behind it. The two that stay WIRE are the ones something has to be visible
-INSIDE: a swing cone with the stud it limits standing in it, and the ground
-cross, which is the world rather than a part.
+take hold of (a motion mark, a limit arc, a rail, a point marker) is a real
+surface. It reads at a glance, from any angle, without having to hunt for a
+line against the model behind it. The two that stay WIRE are the ones
+something has to be visible INSIDE: a swing cone with the stud it limits
+standing in it, and the ground cross, which is the world rather than a part.
 
 The geometry functions are pure: they take numbers and return
 (verts, edges, faces), so they can be checked without Blender. `edges` holds
@@ -84,35 +89,6 @@ def _both_sides(verts, faces):
     n = len(verts)
     return (list(verts) + list(verts),
             list(faces) + [tuple(n + i for i in reversed(f)) for f in faces])
-
-
-def ring_with_pointer(radius=1.0, segments=48, pointer=0.35, width=0.15):
-    """A revolute: a solid ring in the plane of rotation, with the rim drawn
-    out to a point at rest so which way it turned is visible at a glance. A
-    bare ring looks identical at every angle.
-
-    The point is ONE VERTEX OF THE RIM pulled outward, not a triangle laid
-    on top: the two quads either side of it stretch into the spike, so it is
-    the ring rather than something stuck to it, and there is no seam where
-    the two meet.
-
-    That only works because a vertex lands exactly on t = 0. `_band` steps
-    from t0, so index 0 is at t0 = 0, which is rest: the angle Blender's
-    own rotation channel reads zero at. Off by half a segment and the dial
-    would point a few degrees away from where the joint actually sits.
-
-    The ring is centered on the widget's own origin, which is where the
-    bone's head is drawn, so it turns about its center rather than around
-    it. `pointer` is how far past the rim the spike reaches, as a fraction
-    of the radius.
-    """
-    verts, faces = _band(0.0, 2.0 * math.pi, radius, width, segments,
-                         closed=True)
-    # _band lays each step down as (inner, outer): index 1 is the outer rim
-    # at t = 0.
-    verts[1] = _ring_point(0.0, radius * (1.0 + pointer))
-    verts, faces = _both_sides(verts, faces)
-    return verts, [], faces
 
 
 def limit_arc(delta_min, delta_max, radius=1.0, segments=64, width=0.15):
@@ -180,139 +156,6 @@ def stroke_bar(delta_min, delta_max, half_width=0.25, pad=0.0,
     return [(x, y + mid, z) for x, y, z in verts], edges, faces
 
 
-def helix(length=1.0, radius=0.5, turns=2.0, segments=48, thread=0.0):
-    """A screw: a slide and a turn that are ONE motion, which is exactly what
-    a helix draws. `thread` is the section radius of the wire: 0 leaves it
-    a bare line."""
-    half = length * 0.5
-    path = []
-    for i in range(segments + 1):
-        f = i / segments
-        x, _y, z = _ring_point(2.0 * math.pi * turns * f, radius)
-        path.append((x, -half + length * f, z))
-    if thread <= 0.0:
-        return path, _chain(path), []
-    verts, faces = _tube(path, thread, sides=8)
-    # The wire's own section bulges past the ends of the path it was swept
-    # along, and a slide widget has to be EXACTLY one bone length: the rail
-    # behind it is padded by half of that, so a widget that overhangs would
-    # leave the rail short at both stops. Squeezed back to the nominal
-    # length, which costs a fraction of a percent of the section.
-    lo = min(v[1] for v in verts)
-    hi = max(v[1] for v in verts)
-    if hi - lo > 1e-12:
-        k = length / (hi - lo)
-        mid = (hi + lo) * 0.5
-        verts = [(x, (y - mid) * k, z) for x, y, z in verts]
-    return verts, [], faces
-
-
-def _sphere(radius, rings=8, segments=16, centre=(0.0, 0.0, 0.0)):
-    """A solid ball about +Y, wound outward."""
-    n = max(3, int(segments))
-    r_count = max(2, int(rings))
-    cx, cy, cz = centre
-    verts, faces = [], []
-    top = len(verts)
-    verts.append((cx, cy + radius, cz))
-    for i in range(1, r_count):
-        lat = math.pi * i / r_count
-        y, rr = math.cos(lat) * radius, math.sin(lat) * radius
-        for j in range(n):
-            x, _y, z = _ring_point(2.0 * math.pi * j / n, rr)
-            verts.append((cx + x, cy + y, cz + z))
-    bottom = len(verts)
-    verts.append((cx, cy - radius, cz))
-
-    def ring(i, j):
-        return 1 + (i - 1) * n + (j % n)
-
-    for j in range(n):
-        faces.append((top, ring(1, j), ring(1, j + 1)))
-    for i in range(1, r_count - 1):
-        for j in range(n):
-            faces.append((ring(i, j), ring(i + 1, j),
-                          ring(i + 1, j + 1), ring(i, j + 1)))
-    for j in range(n):
-        faces.append((bottom, ring(r_count - 1, j + 1), ring(r_count - 1, j)))
-    return verts, faces
-
-
-def _tube(path, radius, sides=8, cap=True):
-    """A solid tube swept along a run of points, wound outward.
-
-    The section frame is carried along by parallel transport: rotate the
-    previous frame by the smallest rotation taking the old tangent to the
-    new one, so the tube does not twist or flip where the path turns.
-    """
-    n = max(3, int(sides))
-    pts = [tuple(p) for p in path]
-    if len(pts) < 2:
-        return [], []
-
-    def sub(a, b):
-        return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
-
-    def cross(a, b):
-        return (a[1] * b[2] - a[2] * b[1],
-                a[2] * b[0] - a[0] * b[2],
-                a[0] * b[1] - a[1] * b[0])
-
-    def dot(a, b):
-        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-
-    def unit(v):
-        m = math.sqrt(dot(v, v))
-        return (v[0] / m, v[1] / m, v[2] / m) if m > 1e-12 else (0.0, 1.0, 0.0)
-
-    tangents = []
-    for i, p in enumerate(pts):
-        if i == 0:
-            tangents.append(unit(sub(pts[1], p)))
-        elif i == len(pts) - 1:
-            tangents.append(unit(sub(p, pts[-2])))
-        else:
-            tangents.append(unit(sub(pts[i + 1], pts[i - 1])))
-
-    seed = (1.0, 0.0, 0.0)
-    if abs(dot(seed, tangents[0])) > 0.9:
-        seed = (0.0, 0.0, 1.0)
-    normal = unit(sub(seed, tuple(c * dot(seed, tangents[0]) for c in tangents[0])))
-
-    verts, faces = [], []
-    for i, p in enumerate(pts):
-        if i > 0:
-            axis = cross(tangents[i - 1], tangents[i])
-            s = math.sqrt(dot(axis, axis))
-            if s > 1e-12:
-                axis = unit(axis)
-                angle = math.atan2(s, dot(tangents[i - 1], tangents[i]))
-                ca, sa = math.cos(angle), math.sin(angle)
-                cr = cross(axis, normal)
-                d = dot(axis, normal) * (1.0 - ca)
-                normal = unit((normal[0] * ca + cr[0] * sa + axis[0] * d,
-                               normal[1] * ca + cr[1] * sa + axis[1] * d,
-                               normal[2] * ca + cr[2] * sa + axis[2] * d))
-        binormal = unit(cross(tangents[i], normal))
-        for j in range(n):
-            a = 2.0 * math.pi * j / n
-            ca, sa = math.cos(a), math.sin(a)
-            verts.append((p[0] + (normal[0] * ca + binormal[0] * sa) * radius,
-                          p[1] + (normal[1] * ca + binormal[1] * sa) * radius,
-                          p[2] + (normal[2] * ca + binormal[2] * sa) * radius))
-    for i in range(len(pts) - 1):
-        a, b = i * n, (i + 1) * n
-        for j in range(n):
-            k = (j + 1) % n
-            faces.append((a + j, a + k, b + k, b + j))
-    if cap:
-        # The side quads run j -> j+1 on the first ring and j+1 -> j on the
-        # last, so the caps close them the other way round.
-        faces.append(tuple(range(n - 1, -1, -1)))
-        faces.append(tuple(range(len(verts) - n, len(verts))))
-    return verts, faces
-
-
 def _merge(*parts):
     """Several solids into one mesh, indices rebased."""
     verts, faces = [], []
@@ -321,17 +164,6 @@ def _merge(*parts):
         verts.extend(pv)
         faces.extend(tuple(base + i for i in f) for f in pf)
     return verts, faces
-
-
-def ball_with_stub(radius=0.35, stub=1.0, rings=8, segments=16):
-    """A ball joint: the ball itself, with the stud standing out of the
-    socket along the child's own direction. `stub` is where the stud ends,
-    in the same units as the radius."""
-    verts, faces = _merge(
-        _sphere(radius, rings, segments),
-        _tube([(0.0, 0.0, 0.0), (0.0, max(stub, radius * 1.5), 0.0)],
-              radius * 0.42, segments))
-    return verts, [], faces
 
 
 def swing_cone(half_angle, length=1.0, segments=24, meridians=8):
@@ -350,59 +182,6 @@ def swing_cone(half_angle, length=1.0, segments=24, meridians=8):
     step = max(1, segments // meridians)
     edges += [(apex, i) for i in range(0, segments, step)]
     return verts, edges, []
-
-
-def disc_with_pointer(radius=1.0, thickness=0.25, segments=48, pointer=0.35,
-                      width=0.15):
-    """A planar contact: the revolute's dial given thickness.
-
-    A plane joint slides in its plane AND spins about the plane's normal, so
-    the dial is exactly the right marker: extruded, it also reads as the
-    disc lying on the face, which is what the contact is. Local +Y is the
-    plane normal, so the disc lies flat in the plane by construction.
-    """
-    n = max(3, int(segments))
-    inner = radius * (1.0 - width)
-    outer = radius * (1.0 + width)
-    half = thickness * 0.5
-    verts, faces = [], []
-    for j in range(n):
-        t = 2.0 * math.pi * j / n
-        out = radius * (1.0 + pointer) if j == 0 else outer
-        for y in (-half, half):
-            x, _y, z = _ring_point(t, inner)
-            verts.append((x, y, z))
-            x, _y, z = _ring_point(t, out)
-            verts.append((x, y, z))
-
-    def v(j, top, rim):
-        return ((j % n) * 4) + (2 if top else 0) + (1 if rim else 0)
-
-    for j in range(n):
-        k = j + 1
-        # top and bottom rings
-        faces.append((v(j, True, False), v(j, True, True),
-                      v(k, True, True), v(k, True, False)))
-        faces.append((v(j, False, False), v(k, False, False),
-                      v(k, False, True), v(j, False, True)))
-        # outer and inner walls
-        faces.append((v(j, False, True), v(k, False, True),
-                      v(k, True, True), v(j, True, True)))
-        faces.append((v(j, False, False), v(j, True, False),
-                      v(k, True, False), v(k, False, False)))
-    return verts, [], faces
-
-
-def slot(length=1.0, radius=0.35, segments=16):
-    """A pin in a slot: the solid ring is the pin's turn, the rails beside it
-    are its travel."""
-    verts, edges, faces = ring_with_pointer(radius=radius, segments=segments)
-    base = len(verts)
-    half = length * 0.5
-    verts = list(verts) + [(radius * 0.6, 0.0, -half), (radius * 0.6, 0.0, half),
-                           (-radius * 0.6, 0.0, -half), (-radius * 0.6, 0.0, half)]
-    edges = list(edges) + [(base, base + 1), (base + 2, base + 3)]
-    return verts, edges, faces
 
 
 def diamond(size=1.0):
@@ -426,6 +205,305 @@ def ground_cross(size=1.0):
     edges = [(0, 1), (2, 3), (4, 5),
              (6, 7), (7, 8), (8, 9), (9, 6)]
     return verts, edges, []
+
+
+# ── motion marks ────────────────────────────────────────────────────────────
+#
+# One mark for each freedom, and no mark for a locked direction (Oscar,
+# 2026-09-24): a curved double arrow turns about +Y, and a straight double
+# arrow slides along its line. Each mark is a flat strip with a little
+# thickness and flat arrowheads. Each one is a closed solid, so it reads from
+# both sides of its plane with no back copy, and every face points out.
+
+def _v_add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _v_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _v_mul(a, k):
+    return (a[0] * k, a[1] * k, a[2] * k)
+
+
+def _v_cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def _v_unit(a):
+    m = math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+    return (a[0] / m, a[1] / m, a[2] / m) if m > 1e-12 else (0.0, 1.0, 0.0)
+
+
+def _volume(verts, faces):
+    """Signed volume by the divergence theorem: positive when the faces
+    point out."""
+    total = 0.0
+    for f in faces:
+        a = verts[f[0]]
+        for i in range(1, len(f) - 1):
+            b, c = verts[f[i]], verts[f[i + 1]]
+            total += (a[0] * (b[1] * c[2] - b[2] * c[1])
+                      - a[1] * (b[0] * c[2] - b[2] * c[0])
+                      + a[2] * (b[0] * c[1] - b[1] * c[0]))
+    return total / 6.0
+
+
+def _outward(verts, faces):
+    """A closed solid with every face turned to point out."""
+    if _volume(verts, faces) < 0.0:
+        faces = [tuple(reversed(f)) for f in faces]
+    return verts, faces
+
+
+def _prism(outline, normal, thickness):
+    """A flat solid: a closed outline in the plane of `normal`, extruded
+    `thickness` along it and centered on the plane."""
+    n = _v_unit(normal)
+    h = thickness * 0.5
+    k = len(outline)
+    verts = ([_v_sub(p, _v_mul(n, h)) for p in outline]
+             + [_v_add(p, _v_mul(n, h)) for p in outline])
+    faces = [tuple(range(k - 1, -1, -1)), tuple(range(k, 2 * k))]
+    faces += [(i, (i + 1) % k, k + (i + 1) % k, k + i) for i in range(k)]
+    return _outward(verts, faces)
+
+
+def _arrow_outline(a, b, across, half_width, head_half, head_length):
+    """A straight double arrow from tip a to tip b, flat, `across` the unit
+    vector across it in its plane."""
+    d = _v_unit(_v_sub(b, a))
+    s = _v_unit(across)
+
+    def at(base, along, side):
+        return _v_add(_v_add(base, _v_mul(d, along)), _v_mul(s, side))
+
+    return [b,
+            at(b, -head_length, -head_half), at(b, -head_length, -half_width),
+            at(a, head_length, -half_width), at(a, head_length, -head_half),
+            a,
+            at(a, head_length, head_half), at(a, head_length, half_width),
+            at(b, -head_length, half_width), at(b, -head_length, head_half)]
+
+
+def _flat_arrow(a, b, normal, half_width, head_half, head_length, thickness):
+    """A straight double arrow lying flat in the plane of `normal`."""
+    across = _v_cross(normal, _v_sub(b, a))
+    return _prism(_arrow_outline(a, b, across, half_width, head_half,
+                                 head_length), normal, thickness)
+
+
+def _angles(t0, t1, step, rest=None):
+    """Angles from t0 to t1 about `step` apart, with one exactly on `rest`
+    when it falls inside."""
+    n = max(1, int(math.ceil(abs(t1 - t0) / step)))
+    ts = [t0 + (t1 - t0) * i / n for i in range(n + 1)]
+    if rest is not None and t0 < rest < t1:
+        ts = sorted([t for t in ts if abs(t - rest) > step * 0.25] + [rest])
+    return ts
+
+
+def turn_arrow(radius=0.45, width=0.15, pointer=0.35, heads=0.33,
+               head_length=0.45, gap=0.7, gap_at=math.pi, thickness=0.05,
+               segments=48):
+    """A turn about +Y: a curved double arrow round the axis, in the plane
+    +Y is normal to, open at angle `gap_at`. The heads point into the gap,
+    so it reads as "turns both ways".
+
+    `width` and `heads` are half widths, as fractions of `radius`, and so
+    is `head_length`, along the arc. With `pointer`, the rim is drawn out to
+    a point at t = 0, where the joint rests, as the old dial had: the point
+    is one vertex of the rim pulled outward, so it is part of the strip and
+    not a second solid lying on it. The point reaches radius * (1 +
+    pointer), and nothing else reaches that far.
+    """
+    r = radius
+    inner, outer = r * (1.0 - width), r * (1.0 + width)
+    head_in, head_out = r * (1.0 - heads), r * (1.0 + heads)
+    h = head_length
+    t0 = gap_at + gap * 0.5
+    t1 = gap_at + 2.0 * math.pi - gap * 0.5
+    s0, s1 = t0 + h, t1 - h
+    rest = 2.0 * math.pi * round((s0 + s1) / (4.0 * math.pi))
+    step = 2.0 * math.pi / max(8, int(segments))
+    ts = _angles(s0, s1, step, rest if pointer else None)
+    rim = [_ring_point(t, r * (1.0 + pointer) if pointer and t == rest
+                       else outer) for t in ts]
+    outline = (rim
+               + [_ring_point(s1, head_out), _ring_point(t1, r),
+                  _ring_point(s1, head_in)]
+               + [_ring_point(t, inner) for t in reversed(ts)]
+               + [_ring_point(s0, head_in), _ring_point(t0, r),
+                  _ring_point(s0, head_out)])
+    verts, faces = _prism(outline, (0.0, 1.0, 0.0), thickness)
+    return verts, [], faces
+
+
+def slide_arrow(length=1.0, half_width=0.07, heads=0.2, head_length=0.22,
+                thickness=0.05):
+    """A slide along +Y: a straight double arrow, exactly `length` from tip
+    to tip and centered on the origin. Two strips at right angles, so it
+    reads from every side."""
+    a, b = (0.0, -length * 0.5, 0.0), (0.0, length * 0.5, 0.0)
+    verts, faces = _merge(
+        _flat_arrow(a, b, (0.0, 0.0, 1.0), half_width, heads, head_length,
+                    thickness),
+        _flat_arrow(a, b, (1.0, 0.0, 0.0), half_width, heads, head_length,
+                    thickness))
+    return verts, [], faces
+
+
+def turn_and_slide(radius=0.45, width=0.15, pointer=0.35, length=1.0,
+                   half_width=0.07, thickness=0.05):
+    """A cylindrical joint: it turns about +Y and slides along it."""
+    tv, _te, tf = turn_arrow(radius, width, pointer, thickness=thickness)
+    sv, _se, sf = slide_arrow(length, half_width, thickness=thickness)
+    verts, faces = _merge((tv, tf), (sv, sf))
+    return verts, [], faces
+
+
+def screw_arrow(length=1.0, radius=0.22, turns=2.0, width=0.1,
+                thickness=0.04, heads=0.14, head_length=0.18, segments=96):
+    """A screw: a turn and a slide that are one motion, so one strip wound
+    round +Y, flat on the cylinder it lies on, with a flat head at each end.
+    Exactly `length` long, as every slide widget is: the rail behind it is
+    padded by half of that."""
+    half = length * 0.5
+
+    def point(f):
+        x, _y, z = _ring_point(2.0 * math.pi * turns * f, radius)
+        return (x, -half + length * f, z)
+
+    def frame(f):
+        p = point(f)
+        out = _v_unit((p[0], 0.0, p[2]))
+        df = 1e-4
+        tan = _v_unit(_v_sub(point(min(1.0, f + df)), point(max(0.0, f - df))))
+        return p, out, _v_unit(_v_cross(out, tan)), tan
+
+    # the strip stops where the heads start
+    total = math.sqrt((2.0 * math.pi * turns * radius) ** 2 + length ** 2)
+    f0 = head_length / total
+    f1 = 1.0 - f0
+    n = max(8, int(segments))
+    verts, faces = [], []
+    for i in range(n + 1):
+        p, out, side, _tan = frame(f0 + (f1 - f0) * i / n)
+        for sx, ox in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            verts.append(_v_add(_v_add(p, _v_mul(side, sx * width * 0.5)),
+                                _v_mul(out, ox * thickness * 0.5)))
+    for i in range(n):
+        a, b = 4 * i, 4 * (i + 1)
+        for j in range(4):
+            k = (j + 1) % 4
+            faces.append((a + j, b + j, b + k, a + k))
+    faces.append((0, 1, 2, 3))
+    faces.append((4 * n + 3, 4 * n + 2, 4 * n + 1, 4 * n))
+    body = _outward(verts, faces)
+    parts = [body]
+    for f_base, f_tip in ((f1, 1.0), (f0, 0.0)):
+        p, out, side, _tan = frame(f_base)
+        tip = point(f_tip)
+        parts.append(_prism([_v_sub(p, _v_mul(side, heads)), tip,
+                             _v_add(p, _v_mul(side, heads))], out, thickness))
+    verts, faces = _merge(*parts)
+    # A head may lean past the ends of the path, and a slide widget has to
+    # be exactly `length`: squeezed back, which costs a fraction of a
+    # percent along the axis.
+    lo = min(v[1] for v in verts)
+    hi = max(v[1] for v in verts)
+    if hi - lo > 1e-12:
+        k = length / (hi - lo)
+        mid = (hi + lo) * 0.5
+        verts = [(x, (y - mid) * k, z) for x, y, z in verts]
+    return verts, [], faces
+
+
+def _ring_solid(radius, half_width, thickness, axis, segments=48):
+    """A closed flat ring about one of the axes (0, 1 or 2): a turn with
+    no ends."""
+    n = max(8, int(segments))
+    verts = []
+    for rr in (radius - half_width, radius + half_width):
+        for side in (-0.5, 0.5):
+            for i in range(n):
+                t = 2.0 * math.pi * i / n
+                c, s = math.cos(t) * rr, math.sin(t) * rr
+                p = [0.0, 0.0, 0.0]
+                p[axis] = side * thickness
+                p[(axis + 1) % 3], p[(axis + 2) % 3] = c, s
+                verts.append(tuple(p))
+
+    def v(ring, i):
+        return ring * n + (i % n)
+
+    faces = []
+    for i in range(n):
+        j = i + 1
+        faces.append((v(0, i), v(0, j), v(2, j), v(2, i)))    # one side
+        faces.append((v(1, i), v(3, i), v(3, j), v(1, j)))    # the other
+        faces.append((v(2, i), v(2, j), v(3, j), v(3, i)))    # outer wall
+        faces.append((v(0, i), v(1, i), v(1, j), v(0, j)))    # inner wall
+    return _outward(verts, faces)
+
+
+def ball_rings(radius=0.35, width=0.08, thickness=0.03, stub=1.0,
+               stub_width=0.05):
+    """A ball joint: it turns every way, so three rings at right angles, as
+    the rotate gizmo has. A stud stands out along +Y, the child's own
+    direction, so the turn shows and a swing cone has something to hold."""
+    parts = [_ring_solid(radius, radius * width, thickness, axis)
+             for axis in (0, 1, 2)]
+    a, b = (0.0, radius * 0.8, 0.0), (0.0, max(stub, radius * 1.5), 0.0)
+    for normal in ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)):
+        across = _v_cross(normal, (0.0, 1.0, 0.0))
+        outline = [_v_add(a, _v_mul(across, -stub_width)),
+                   _v_add(b, _v_mul(across, -stub_width)),
+                   _v_add(b, _v_mul(across, stub_width)),
+                   _v_add(a, _v_mul(across, stub_width))]
+        parts.append(_prism(outline, normal, thickness))
+    verts, faces = _merge(*parts)
+    return verts, [], faces
+
+
+def plane_arrows(reach=0.5, radius=0.28, width=0.16, pointer=0.35,
+                 half_width=0.05, heads=0.15, head_length=0.16,
+                 thickness=0.05):
+    """A planar joint: it slides anywhere in the plane +Y is normal to and
+    turns about +Y. Two crossed arrows lie flat in the plane, on the
+    diagonals so the pointer of the turn at t = 0 stays clear of them.
+
+    The three strips are a little thinner one after the other: where two
+    flat strips cross, faces in one plane would fight over the same pixels.
+    """
+    tv, _te, tf = turn_arrow(radius, width, pointer, thickness=thickness)
+    parts = [(tv, tf)]
+    for k, (dx, dz) in enumerate(((1.0, 1.0), (1.0, -1.0))):
+        d = _v_unit((dx, 0.0, dz))
+        parts.append(_flat_arrow(_v_mul(d, -reach), _v_mul(d, reach),
+                                 (0.0, 1.0, 0.0), half_width, heads,
+                                 head_length, thickness * (0.8 - 0.1 * k)))
+    verts, faces = _merge(*parts)
+    return verts, [], faces
+
+
+def pin_slot_arrows(radius=0.45, width=0.15, length=1.2, half_width=0.06,
+                    heads=0.17, head_length=0.18, thickness=0.05):
+    """A pin in a slot: it turns about the pin, +Y, and slides along the
+    slot, +Z. The slide arrow turns with the pin, so it shows the angle
+    itself, and the turn needs no pointer. The turn is open at +X, the
+    slide runs across it, and the slide is a little thinner so the two
+    strips do not share a plane."""
+    tv, _te, tf = turn_arrow(radius, width, pointer=0.0, gap_at=math.pi / 2.0,
+                             thickness=thickness)
+    arrow = _flat_arrow((0.0, 0.0, -length * 0.5), (0.0, 0.0, length * 0.5),
+                        (0.0, 1.0, 0.0), half_width, heads, head_length,
+                        thickness * 0.8)
+    verts, faces = _merge((tv, tf), arrow)
+    return verts, [], faces
 
 
 # ── the bpy layer ───────────────────────────────────────────────────────────
@@ -505,3 +583,22 @@ def widget(collection, name, geometry, cache):
     collection.objects.link(obj)
     cache[name] = obj
     return obj
+
+
+def prune(collection):
+    """Removes the widgets that no bone wears any more, as the old dials
+    after a rebuild with the motion marks (2026-09-24). Only the objects
+    this module made, and only when no armature in the file wears them:
+    every rig of the file shares the one widget collection."""
+    used = {pb.custom_shape.name for ob in bpy.data.objects
+            if ob.type == "ARMATURE" and ob.pose is not None
+            for pb in ob.pose.bones if pb.custom_shape is not None}
+    removed = 0
+    for obj in list(collection.objects):
+        if obj.get("CADLINK_widget") and obj.name not in used:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if data is not None and data.users == 0:
+                bpy.data.meshes.remove(data)
+            removed += 1
+    return removed

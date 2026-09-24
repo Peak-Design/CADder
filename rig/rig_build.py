@@ -460,56 +460,65 @@ _DIAL_WIDTH = 0.0675 / _DIAL_RADIUS
 _DIAL_POINTER = 0.35
 _ARC_RADIUS = 0.70
 _ARC_WIDTH = 0.09 / _ARC_RADIUS
-# A slide bar is one bone length, centered on the bone's own origin, so its
-# rail runs half a bone length past each stop. The rail is slimmer than the
-# bar so it still reads when the bar is sitting on it.
+# A slide arrow is one bone length from tip to tip, centered on the bone's
+# own origin, so its rail runs half a bone length past each stop. The rail
+# is a slim bar the arrow's two crossed strips stand on.
 _SLIDE_LENGTH = 1.0
-_SLIDE_HALF_WIDTH = 0.225
-_RAIL_HALF_WIDTH = 0.10
-# A planar contact wears the dial with thickness: it spins about the plane
-# normal exactly as a revolute does, and extruded it also reads as the disc
-# lying on the face.
-_PLANAR_RADIUS = 0.5
-_PLANAR_THICKNESS = 0.14
-# A ball, its stud, and the screw's wire.
+_SLIDE_HALF_WIDTH = 0.07
+_RAIL_HALF_WIDTH = 0.05
+# The thickness of a flat mark.
+_MARK_THICKNESS = 0.05
+# A planar contact slides in its plane and turns about its normal: two
+# crossed arrows in the plane, and a small turn in the middle.
+_PLANAR_REACH = 0.5
+_PLANAR_RADIUS = 0.28
+# A ball, its stud, and the screw.
 _BALL_RADIUS = 0.35
 _BALL_STUB = 1.0
 _SCREW_RADIUS = 0.22
-_SCREW_THREAD = 0.055
 _POINT_SIZE = 0.4
 
 
 def _control_geometry(bone_plan):
     """The widget for a control bone, as (cache key, geometry). Unit sized:
     the bone's own length scales it, so one mesh serves every joint of a
-    kind and a big part gets a big dial."""
+    kind and a big part gets a big widget.
+
+    A widget shows the freedoms of its joint and nothing else: a curved
+    double arrow for a turn, a straight double arrow for a slide (Oscar,
+    2026-09-24). The names are new with these shapes: a rebuild reuses a
+    widget object by name, so an old name would bring back the old shape.
+    """
     if bone_plan.root:
         return "SWW_ground", shapes_mod.ground_cross(1.0)
 
     kind = _widget_kind(bone_plan)
+    th = _MARK_THICKNESS
 
     if kind == "revolute":
-        return "SWW_dial", shapes_mod.ring_with_pointer(
-            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=_DIAL_POINTER)
+        return "SWW_turn", shapes_mod.turn_arrow(
+            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=_DIAL_POINTER,
+            thickness=th)
     if kind == "cylindrical":
-        # Round section: it slides AND turns about the same axis.
-        return "SWW_cylinder", shapes_mod.cylinder(_SLIDE_LENGTH,
-                                                   _SLIDE_HALF_WIDTH)
+        # It slides AND turns about the same axis.
+        return "SWW_turn_slide", shapes_mod.turn_and_slide(
+            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=_DIAL_POINTER,
+            length=_SLIDE_LENGTH, half_width=_SLIDE_HALF_WIDTH, thickness=th)
     if kind == "prismatic":
-        # Square section: a corner would show a spin, and there is none.
-        return "SWW_slider", shapes_mod.cuboid(_SLIDE_LENGTH,
-                                               _SLIDE_HALF_WIDTH)
+        return "SWW_slide", shapes_mod.slide_arrow(
+            _SLIDE_LENGTH, _SLIDE_HALF_WIDTH, thickness=th)
     if kind == "screw":
-        return "SWW_screw", shapes_mod.helix(
-            _SLIDE_LENGTH, _SCREW_RADIUS, 2.0, thread=_SCREW_THREAD)
+        return "SWW_screw_arrow", shapes_mod.screw_arrow(
+            _SLIDE_LENGTH, _SCREW_RADIUS, 2.0)
     if kind == "planar":
-        return "SWW_planar", shapes_mod.disc_with_pointer(
-            _PLANAR_RADIUS, _PLANAR_THICKNESS, pointer=_DIAL_POINTER,
-            width=_DIAL_WIDTH)
+        return "SWW_plane", shapes_mod.plane_arrows(
+            _PLANAR_REACH, _PLANAR_RADIUS, pointer=_DIAL_POINTER, thickness=th)
     if kind == "pin_slot":
-        return "SWW_pinslot", shapes_mod.slot(_SLIDE_LENGTH, _DIAL_RADIUS)
+        return "SWW_pin_slot", shapes_mod.pin_slot_arrows(
+            _DIAL_RADIUS, width=_DIAL_WIDTH, thickness=th)
     if kind == "ball":
-        return "SWW_ball", shapes_mod.ball_with_stub(_BALL_RADIUS, _BALL_STUB)
+        return "SWW_ball_rings", shapes_mod.ball_rings(_BALL_RADIUS,
+                                                       stub=_BALL_STUB)
     if kind in ("point", "path", "surface", "free"):
         return "SWW_point", shapes_mod.diamond(_POINT_SIZE)
     return None, None
@@ -673,6 +682,7 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
     controls_coll.is_visible = True
     limits_coll.is_visible = True
     shapes_mod.exclude_widgets(context.view_layer)
+    shapes_mod.prune(widgets)
     return styled
 
 

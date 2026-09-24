@@ -664,18 +664,22 @@ Bones are sorted into four bone collections, and only two of them are visible
 when the rig is built:
 
 - **`SW_controls`**: everything with a degree of freedom you can pose.
-  Each wears a widget that says what it does: a dial with a pointer for a
-  rotation, a round bar for something that slides and turns, a square bar for
-  something that only slides, a helix for a screw, a ball and stud for a ball
-  joint. A control is red, also when it drives a closed chain, as the
-  input of a four-bar does. A ground you can move, with its whole
+  Each wears a widget that shows its freedoms and nothing else: a curved
+  double arrow for each turn, and a straight double arrow for each slide.
+  A revolute is one turn, with a pointer where the joint rests. A slider is
+  one arrow. A cylindrical joint is a turn and an arrow along its axis, and
+  a screw an arrow wound round its axis. A planar joint is two crossed
+  arrows in its plane and a turn. A pin in a slot is a turn and an arrow
+  along the slot. A ball is three rings and a stud. A point on a curve or a
+  face is a diamond. A control is red, also when it drives a closed chain,
+  as the input of a four-bar does. A ground you can move, with its whole
   mechanism, is gray.
-- **`SW_limits`** (yellow): a fixed dial or rail beside each control that has
-  a limit, drawn to the real numbers: the arc spans the angle the joint may
-  turn through, the rail is as long as the travel plus half a slide bar at
-  each end (so the bar's end meets the rail's end when it is hard against the
-  stop), the cone opens to the swing angle. The arc rings the dial it belongs
-  to, so the dial's pointer reads against it.
+- **`SW_limits`** (yellow): a fixed arc or rail beside each control that
+  has a limit, drawn to the real numbers: the arc spans the angle the joint
+  may turn through, the rail is as long as the travel plus half a slide
+  arrow at each end (so the arrow's tip meets the rail's end when it is
+  hard against the stop), the cone opens to the swing angle. The arc rings
+  the turn it belongs to, so the pointer of the turn reads against it.
 - **`SW_mechanism`** (hidden): bones that move but that you do not
   drive: the driven half of a symmetry or gear coupling, the halves of a
   hydraulic ram closed by aiming, anything welded solid. Each one takes the
@@ -683,10 +687,10 @@ when the rig is built:
   it, gray for a fixed root.
 - **`SW_helpers`** (blue, hidden): scaffolding the closures need.
 
-The widgets you take hold of are solid, and drawn from both sides so they
-read from anywhere around the machine. The ones that annotate geometry (the
-ball cage, the swing cone, the plane) stay wire so they do not hide what
-they point at.
+The widgets you take hold of are flat strips with a little thickness, so
+they read from anywhere around the machine. The ones that annotate
+geometry (the swing cone and the ground) stay wire so they do not hide
+what they point at.
 
 Switch `SW_mechanism` on in the armature's Bone Collections panel to see the
 parts that follow rather than lead.

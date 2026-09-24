@@ -116,7 +116,34 @@ def cone_of(rest_tilt):
     return axis, half, moved
 
 
+def stale_widget_goes():
+    """A build removes a widget no bone wears any more, as the old dial of a
+    file built before the motion marks (2026-09-24), and keeps the ones in
+    use and any object it did not make."""
+    from CADder.rig import shapes
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    m = man_mod.parse(manifest(0.0))
+    rig_build.build(bpy.context, m, graph.build(m))
+    col = bpy.data.collections[shapes.WIDGET_COLLECTION]
+    stale = bpy.data.objects.new("SWW_dial", bpy.data.meshes.new("SWW_dial"))
+    stale["CADLINK_widget"] = True
+    col.objects.link(stale)
+    col.objects.link(bpy.data.objects.new("Not a widget", None))
+    result = rig_build.build(bpy.context, m, graph.build(m))
+    check("SWW_dial" not in bpy.data.objects,
+          "the old dial stayed after a build")
+    check("SWW_dial" not in bpy.data.meshes, "the old dial left its mesh")
+    check("Not a widget" in bpy.data.objects,
+          "the build removed an object it did not make")
+    handle = result.armature_object.pose.bones[result.ball_ctrl_names["g001"]]
+    check(handle.custom_shape is not None
+          and handle.custom_shape.name in col.objects,
+          "the build removed the widget the handle wears")
+
+
 def main():
+    print("-- a widget no bone wears goes")
+    stale_widget_goes()
     for tilt in (0.0, math.radians(30.0)):
         print("-- a stud resting %.0f degrees off the cone axis"
               % math.degrees(tilt))

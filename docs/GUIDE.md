@@ -325,7 +325,8 @@ CADder before 1.1.1 and CADder Bridge before 1.1.1 do not check. The newer
 one of the two still warns about the older one.
 
 A send replaces the last send of the same assembly in the same
-configuration. Other configurations of the assembly, and other
+configuration, unless **Append as a new copy** is on (see
+[Copies](#copies)). Other configurations of the assembly, and other
 assemblies, stay in the scene, each with its own rig. A send does not
 replace a STEP import of the assembly. If the scene has one, the send
 stops before it changes anything, and SolidWorks tells you. Delete the
@@ -368,11 +369,8 @@ configuration you had active again. Blender then builds one collection and
 one rig for each configuration. The list remembers what you selected for
 each document until SolidWorks closes.
 
-A part that two configurations hold the same way is one mesh in Blender,
-as two placements of a part in one configuration are. A change you make
-to that mesh shows in both configurations. A part with another shape, or
-with another appearance, in the other configuration has a mesh of its
-own.
+A part that two configurations hold the same way is one mesh in Blender
+(see [Linked parts](#linked-parts)).
 
 When the scene holds the rigs of more than one send, the **Rig** panel
 shows a **Rig** list at the top. Choose a rig to see and change the
@@ -392,6 +390,49 @@ A scene from CADder 1.1 holds one send of the assembly, in
 `<assembly>_Top_Level`. The first send from 1.2 of that assembly takes it
 over as the send of the configuration you send. Your collections, your
 objects in the top collection and your locked materials stay.
+
+### Linked parts
+
+A part that is already in the scene is not made again. When a send holds
+a part with the same shape and the same appearance as a part of any send
+in the scene, the new part uses the mesh that is there: another
+configuration of the assembly, a copy of it, or another assembly. The
+parts are linked, as two placements of a part in one assembly are, and a
+change you make to that mesh shows in all of them.
+
+A part is not linked when:
+
+- its appearance is not the same, also when only one face differs,
+- its mesh quality or its defeature settings are not the same, so its
+  shape is not the same either,
+- **Triangles to Quads** or the unwrap of compound faces was set another
+  way for the send that made the other mesh,
+- the geometry of the other part is locked (**Lock Geometry**),
+- **Link identical parts** is off in the Export Options of CADder Bridge.
+
+When you remove a send, a mesh that another send also uses stays.
+**Rebuild from CAD** and **Defeature** give new geometry only to the parts
+of the documents you asked about. A part of another assembly keeps the
+mesh it has, and the link between the two ends.
+
+### Copies
+
+To put an assembly in the scene again, beside the send that is there:
+
+1. In SolidWorks, open **Export Options**.
+2. Under **Send to Blender**, select **Append as a new copy**.
+3. Click **Send to Blender**.
+
+The copy is `<assembly>_<configuration>.001`, with its own parts
+collection and its own rig. The next copy is `.002`. Its parts are linked
+to the parts of the send it copies. Move the copy with its rig, or with
+its collection when it has no rig.
+
+A send with the option off replaces the send and leaves its copies.
+**Refresh Model** brings the send and all its copies up to date, and a
+copy stays where you put it. **Rebuild from CAD** of the parts of a copy
+builds the copy again, as a copy. The **Rig** list offers the rig of each
+copy.
 
 The **CADder** tab holds **Mesh Quality** at the top, then the link and
 the panels that work on any part. Mesh Quality asks one question for both
@@ -991,7 +1032,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
-| 1.2.0   | 5.1     | Configurations. Each configuration of an assembly is a send of its own, in `<assembly>_<configuration>` with its own rig, beside the others. Multiple configurations in the Export Options of CADder Bridge sends several configurations at once. A part that two configurations hold the same way is one mesh. Refresh Model asks which configurations to refresh, and Rebuild from CAD asks for each configuration on its own. A send no longer removes the other assemblies in the scene. The Rig panel offers a list of the rigs in the scene. Needs CADder Bridge 1.2 |
+| 1.2.0   | 5.1     | Configurations. Each configuration of an assembly is a send of its own, in `<assembly>_<configuration>` with its own rig, beside the others. Multiple configurations in the Export Options of CADder Bridge sends several configurations at once. A part that is already in the scene, from any send, is linked to it and not made again. Append as a new copy puts an assembly in the scene again, as a copy with its own rig. Refresh Model asks which configurations to refresh, and brings copies up to date too. Rebuild from CAD asks for each configuration on its own. A send no longer removes the other assemblies in the scene. The Rig panel offers a list of the rigs in the scene. Needs CADder Bridge 1.2 |
 | 1.1.1   | 5.1     | CADder and CADder Bridge say when their versions do not match, before anything is sent. Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |
 | 1.0.0   | 5.1     | The first CADder release, and the live link to SolidWorks. One button in SolidWorks sends the open assembly into the scene: geometry, appearances, the tree and a rig built from the mates. Refresh Model brings the scene up to date part by part and keeps what you did to the parts that did not change. Rebuild from CAD asks for the geometry again at another quality, for the poses, or for the whole assembly. One Mesh Quality panel now serves both routes, with Triangles to Quads, Defeature and Clean Up Meshes. CAD Surfaces (Smart) hands the faces one scale cannot flatten to Blender's own unwrap, so a compound surface no longer arrives as a long thin ribbon. Match the Blender view turns the viewport to the angle the CAD view is at. Before this release the addon was STEPper NEXT, up to 2.5.0 |

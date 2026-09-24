@@ -276,6 +276,12 @@ _PARTS_SUFFIX = "_Parts"
 _LEGACY_TOP_SUFFIX = "_Top_Level"
 _TAG_DOCUMENT = imports_mod.TAG_DOCUMENT
 _TAG_CONFIGURATION = imports_mod.TAG_CONFIGURATION
+_TAG_COPY_OF = imports_mod.TAG_COPY_OF
+# What was done to a mesh after it was built (tris to quads, the unwrap of
+# compound faces). A part links only to a mesh made the same way.
+_TAG_POST = "SWMESH_post"
+# The part a collection of the flat mode is for.
+_TAG_GROUP_KEY = "SWMESH_group"
 # Blender cuts a longer name at this many bytes.
 _NAME_BYTES = 63
 
@@ -425,14 +431,57 @@ def _is_default(name, stem, top):
     return False
 
 
-def _mark(col, document, configuration):
+def _mark(col, document, configuration, copy_of=None):
     """Writes on a collection of an import which document and which
-    configuration it holds. An older add-in says neither, and the
+    configuration it holds, and for a copy, the import it is a copy of. An
+    older add-in says neither document nor configuration, and the
     collection keeps what it has."""
     if document:
         col[_TAG_DOCUMENT] = str(document)
     if configuration:
         col[_TAG_CONFIGURATION] = str(configuration)
+    if copy_of:
+        col[_TAG_COPY_OF] = str(copy_of)
+
+
+def copy_name(stem, scope):
+    """The name of a new copy of the import `stem`: "<stem>.001", or the
+    first number no import and no collection of the file has.
+
+    A send with Append as a New Copy (CADder Bridge 1.2) puts a second
+    import of an assembly beside the first, with its own collections and
+    its own rig (Oscar, 2026-09-24). Its name is its identity, as the
+    stem is the identity of the first one."""
+    used = set()
+    for coll in bpy.data.collections:
+        used.add(coll.name)
+        tag = coll.get(_TAG_FILE)
+        if tag:
+            used.add(str(tag))
+    for obj in bpy.data.objects:
+        tag = obj.get(_TAG_FILE)
+        if tag:
+            used.add(str(tag))
+    n = 1
+    while True:
+        name = "%s.%03d" % (_short_name(stem), n)
+        if name not in used and _parts_name(name) not in used \
+                and name + "_Rig" not in used:
+            return name
+        n += 1
+
+
+def copies_of(stem, scope):
+    """The names of the copies of the import `stem` in the scene."""
+    out = []
+    for coll in scope.collections:
+        try:
+            if coll.get(_TAG_ROLE) == _ROLE_TOP \
+                    and coll.get(_TAG_COPY_OF) == stem and coll.get(_TAG_FILE):
+                out.append(str(coll[_TAG_FILE]))
+        except ReferenceError:
+            continue
+    return sorted(set(out))
 
 
 def _tops(scope):
@@ -455,7 +504,7 @@ def _new_top(stem):
 
 
 def _top_collection(stem, scope, destination, document=None,
-                    configuration=None):
+                    configuration=None, copy_of=None):
     """The top collection for a send of `stem`. The scene's own is used
     again, where it is and with what is in it: the user can have moved it
     into a collection of their own, or put work of their own in it.
@@ -464,7 +513,7 @@ def _top_collection(stem, scope, destination, document=None,
     if top is None:
         top = _new_top(stem)
         destination.children.link(top)
-    _mark(top, document, configuration)
+    _mark(top, document, configuration, copy_of)
     return top
 
 
@@ -525,6 +574,14 @@ def _renamed(root, stem, scope):
     for obj in scope.objects + scope.aside:
         if obj.get(_TAG_FILE) == was:
             obj[_TAG_FILE] = stem
+    # The copies of the import are copies of it under its new name, so a
+    # Refresh Model of the new name still brings them up to date.
+    for item in list(scope.collections) + scope.objects + scope.aside:
+        try:
+            if item.get(_TAG_COPY_OF) == was:
+                item[_TAG_COPY_OF] = stem
+        except ReferenceError:
+            continue
     _rename_rigs(was, stem, scope)
     print("[CADLink native] the import %s is now %s" % (was, stem))
 
@@ -604,9 +661,12 @@ def standing(stem, scene, scope, configuration=None):
     for coll in roots:
         if coll.get(_TAG_FILE) == stem:
             return coll
+    # Nor a copy: it is an import of its own, and a Refresh Model brings
+    # it up to date under its own name.
     roots = [c for c in roots
-             if not c.get(_TAG_CONFIGURATION)
-             or c.get(_TAG_CONFIGURATION) == configuration]
+             if (not c.get(_TAG_CONFIGURATION)
+                 or c.get(_TAG_CONFIGURATION) == configuration)
+             and not c.get(_TAG_COPY_OF)]
 
     known = {i.path for i in scene.instances if i.path}
     tag = _TAG_PATH
@@ -820,13 +880,14 @@ def _collection(name, stem, role, parent):
     return col
 
 
-def _root_collection(stem, role, parent, document=None, configuration=None):
+def _root_collection(stem, role, parent, document=None, configuration=None,
+                     copy_of=None):
     """The collection that holds the parts of the import `stem`,
     "<stem>_Parts"."""
     col = bpy.data.collections.new(_parts_name(stem))
     col[_TAG_FILE] = stem
     col["SWMESH_role"] = role
-    _mark(col, document, configuration)
+    _mark(col, document, configuration, copy_of)
     parent.children.link(col)
     return col
 
@@ -910,7 +971,7 @@ class _Placer:
 
     def __init__(self, context, scene, manifest, stem, root, frame,
                  unit_scale, hierarchy, material_prefix, document=None,
-                 configuration=None):
+                 configuration=None, link=True, copy_of=None):
         self.context = context
         self.scene = scene
         self.manifest = manifest
@@ -922,9 +983,12 @@ class _Placer:
         self.material_prefix = material_prefix
         self.document = document
         self.configuration = configuration
-        # geometry hash -> a mesh another configuration of this document
-        # already has, read when the first mesh is needed.
+        self.link = link
+        self.copy_of = copy_of
+        # geometry hash -> a mesh another import in the scene already has,
+        # read when the first mesh is needed.
         self._shared = None
+        self.post = _post_key(context.scene)
 
         self.group_of = _group_of(manifest)
         self.persistent_of = _persistent_of(manifest)
@@ -970,35 +1034,43 @@ class _Placer:
             if me is None:
                 me = _build_mesh(definition, self.materials, self.unit_scale)
                 me[_TAG_GEOMETRY] = signature
+                me[_TAG_POST] = self.post
         self._meshes[definition_id] = me
         return me
 
     def shared_meshes(self):
-        """geometry hash -> the mesh of a part that another configuration
-        of this document has in the scene.
+        """geometry hash -> the mesh of a part that another import in the
+        scene has: another configuration of this assembly, a copy of it,
+        or another assembly (Oscar, 2026-09-24).
 
-        A part that two configurations hold the same way is one mesh in
-        Blender, as two placements of it in one configuration are (Oscar,
-        2026-09-24). The hash covers the triangles, the materials of each
-        triangle and the Unit Scale, so a part with another appearance in
-        the other configuration, or another shape, gets a mesh of its own.
-        The mesh says which geometry it was built from. Rebuild from CAD
-        makes new meshes that say nothing, and so did a send before 1.2,
-        so neither is taken."""
+        A part that two imports hold the same way is one mesh in Blender,
+        as two placements of it in one import are. The hash covers the
+        triangles, the materials of each triangle and the Unit Scale, so a
+        part with another appearance, or another shape, gets a mesh of its
+        own. The mesh says which geometry it was built from, and how it
+        was made after: a mesh with triangles made into quads is not taken
+        by a send that keeps triangles. Rebuild from CAD makes new meshes
+        that say nothing, and so did a send before 1.2, so neither is
+        taken. Nor is a mesh whose geometry is locked: it is the user's.
+
+        Nothing is linked when the send asks for no links (Link Identical
+        Parts off in CADder Bridge)."""
         if self._shared is not None:
             return self._shared
         self._shared = {}
-        if not self.document:
+        if not self.link:
             return self._shared
+        held = {m.as_pointer() for m in geometry_lock.locked_meshes()}
         for obj in _Scope(self.context.scene).objects:
             try:
-                if obj.get(_TAG_FILE) in (None, self.stem) \
-                        or obj.get(_TAG_DOCUMENT) != self.document:
+                if obj.get(_TAG_FILE) in (None, self.stem):
                     continue
                 for holder in _mesh_holders(obj):
                     me = holder.data
-                    signature = me.get(_TAG_GEOMETRY) if me is not None else None
-                    if signature:
+                    if me is None or me.as_pointer() in held:
+                        continue
+                    signature = me.get(_TAG_GEOMETRY)
+                    if signature and me.get(_TAG_POST) == self.post:
                         self._shared.setdefault(signature, me)
             except (ReferenceError, AttributeError):
                 continue
@@ -1107,7 +1179,7 @@ class _Placer:
             if col.get("SWMESH_role") == "node" and path is not None:
                 self.tree_cols[path] = col
             elif col.get("SWMESH_role") == "group":
-                self.flat_groups[col.name] = col
+                self.flat_groups[col.get(_TAG_GROUP_KEY) or col.name] = col
             elif col.get("SWMESH_role") == "components":
                 self.components_collection = col
             elif col.get("SWMESH_role") == "part":
@@ -1190,6 +1262,10 @@ class _Placer:
             obj[_TAG_DOCUMENT] = str(self.document)
         if self.configuration:
             obj[_TAG_CONFIGURATION] = str(self.configuration)
+        if self.copy_of:
+            obj[_TAG_COPY_OF] = str(self.copy_of)
+        elif _TAG_COPY_OF in obj.keys():
+            del obj[_TAG_COPY_OF]
         obj[_TAG_COMPONENT] = inst.component_id
         gid = self.group_of.get(inst.component_id)
         if gid is not None:
@@ -1265,11 +1341,20 @@ class _Placer:
         """Into the collection, or under the empty, the mode calls for."""
         parent_path = sw_path.rpartition("/")[0]
         if self.hierarchy == "FLAT":
-            key = obj.data.name if obj.data is not None else (obj.name or "part")
+            # One collection for each part of this import, named after the
+            # part. Not after the mesh: a mesh taken from another import
+            # (shared_meshes) has the name that import gave it. The key is
+            # on the collection, so an update finds it again when Blender
+            # put a number on its name.
+            definition = self.definitions.get(obj.get(_TAG_DEFINITION))
+            key = (definition.name if definition is not None and definition.name
+                   else obj.data.name if obj.data is not None
+                   else obj.name or "part")
             col = self.flat_groups.get(key)
             if col is None:
                 col = self.flat_groups[key] = _collection(
                     key, self.stem, "group", self.root)
+                col[_TAG_GROUP_KEY] = key
             col.objects.link(obj)
         elif self.hierarchy == "TREE":
             self.node_col(parent_path).objects.link(obj)
@@ -1376,7 +1461,7 @@ def _legacy_definition_hash(definition):
 def build(context, path, manifest=None, collection_name=None,
           unit_scale=None, material_prefix="SW ", up_as="ZPOS",
           hierarchy="FLAT", report_to=None, document=None,
-          configuration=None):
+          configuration=None, import_name=None, link=True, copy_of=None):
     """Reads a .swmesh and builds the scene. Returns (objects, MatchReport).
 
     The report is what ties this into the existing pipeline: every entry is
@@ -1397,6 +1482,11 @@ def build(context, path, manifest=None, collection_name=None,
     configuration the file holds, as the send says them. Both go on the
     parts, so a request back to the CAD application names them.
 
+    `import_name` is the name of the import, the name of the file by
+    default. A copy (Append as a New Copy) has a name of its own, and
+    `copy_of` names the import it copies. `link` False keeps the parts off
+    the meshes of the other imports (Placer.shared_meshes).
+
     unit_scale is Blender units per meter. None takes the scene's
     (scene_unit_scale), which is what every caller wants.
 
@@ -1406,13 +1496,14 @@ def build(context, path, manifest=None, collection_name=None,
         unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     frame_rows = up_frame(up_as)
-    stem = os.path.splitext(os.path.basename(path))[0]
+    stem = import_name or os.path.splitext(os.path.basename(path))[0]
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
 
     # An import from before 1.2 of this document becomes this one, so it is
-    # replaced below and not left standing beside it.
-    adopt_legacy(stem, document, configuration, _Scope(context.scene))
+    # replaced below and not left standing beside it. A copy is new.
+    if not copy_of:
+        adopt_legacy(stem, document, configuration, _Scope(context.scene))
     # A send replaces every object of its import. A locked part is found
     # again by its place in the assembly: the new object is locked and
     # gets the materials back. A part that keeps its geometry gets its old
@@ -1427,17 +1518,19 @@ def build(context, path, manifest=None, collection_name=None,
     # re-send uses the one it made before, in the place it has now.
     destination = _top_collection(stem, _Scope(context.scene),
                                   context.scene.collection,
-                                  document, configuration)
+                                  document, configuration, copy_of)
     # One collection for the parts. The shape of what is inside it is the
     # hierarchy option's business, not the name's (Oscar, 2026-09-16: a
     # send should simply put the assembly in a collection of its own).
     role = {"FLAT": "flat", "TREE": "hierarchy", "EMPTIES": "hierarchy",
             "COLLECTION_INSTANCES": "hierarchy"}[hierarchy]
-    root = _root_collection(stem, role, destination, document, configuration)
+    root = _root_collection(stem, role, destination, document, configuration,
+                            copy_of)
 
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
-                     hierarchy, material_prefix, document, configuration)
+                     hierarchy, material_prefix, document, configuration,
+                     link, copy_of)
     placer.build_prototypes()
 
     objects = []
@@ -1465,8 +1558,7 @@ def build(context, path, manifest=None, collection_name=None,
 
     # The geometry first: the old mesh carries the old materials, and the
     # materials of a locked part then go back on the mesh it has now.
-    if geometry_lock.restore(shapes, among=objects) and hierarchy == "FLAT":
-        _rename_flat_groups(placer)
+    geometry_lock.restore(shapes, among=objects)
     material_lock.restore(locks, among=objects)
     # Every instance was placed through the frame, so every one anchors
     # it. The Build Rig operator trusts a frame only when something agreed
@@ -1482,27 +1574,6 @@ def build(context, path, manifest=None, collection_name=None,
     context.view_layer.update()
     _fit_empties(placer, objects)
     return objects, report
-
-
-def _rename_flat_groups(placer):
-    """Names each collection of the flat tree after the mesh its parts
-    use now.
-
-    The flat tree has one collection per mesh, named after it. A part that
-    keeps its geometry gets its old mesh back after the send placed it, in
-    the collection of the new mesh. The old mesh was still in the file
-    when the new one was named, so the new one, and its collection, had a
-    ".001" name."""
-    for col in list(placer.flat_groups.values()):
-        try:
-            names = {o.data.name for o in col.objects if o.data is not None}
-        except ReferenceError:
-            continue
-        if len(names) != 1:
-            continue
-        want = _short_name(names.pop())
-        if col.name != want and bpy.data.collections.get(want) is None:
-            col.name = want
 
 
 @dataclass
@@ -1533,7 +1604,7 @@ class UpdateReport:
 def update(context, path, manifest=None, unit_scale=None,
            material_prefix="SW ", up_as="ZPOS", hierarchy="FLAT",
            report_to=None, before_changes=None, document=None,
-           configuration=None):
+           configuration=None, import_name=None, link=True, copy_of=None):
     """Brings the scene up to date with a new export, changing only what
     changed. Returns (objects, MatchReport, UpdateReport).
 
@@ -1557,18 +1628,20 @@ def update(context, path, manifest=None, unit_scale=None,
     The rig is not touched here. What to do with it is a separate question
     and a separate answer: see rig_update.py.
 
-    unit_scale, `document` and `configuration` are as for build()."""
+    unit_scale, `document`, `configuration`, `import_name`, `link` and
+    `copy_of` are as for build()."""
     if unit_scale is None:
         unit_scale = scene_unit_scale(context)
     scene = swmesh.load(path)
     frame_rows = up_frame(up_as)
-    stem = os.path.splitext(os.path.basename(path))[0]
+    stem = import_name or os.path.splitext(os.path.basename(path))[0]
     if hierarchy not in HIERARCHIES:
         hierarchy = "FLAT"
     said = report_to or progress.NONE
 
     scope = _Scope(context.scene)
-    adopt_legacy(stem, document, configuration, scope)
+    if not copy_of:
+        adopt_legacy(stem, document, configuration, scope)
     root = standing(stem, scene, scope, configuration)
     if root is None:
         # Nothing of this assembly is in the scene: an update of nothing is
@@ -1577,20 +1650,22 @@ def update(context, path, manifest=None, unit_scale=None,
             context, path, manifest=manifest, unit_scale=unit_scale,
             material_prefix=material_prefix, up_as=up_as, hierarchy=hierarchy,
             report_to=report_to, document=document,
-            configuration=configuration)
+            configuration=configuration, import_name=import_name,
+            link=link, copy_of=copy_of)
         out = UpdateReport(added=[o.name for o in objects], structural=True)
         return objects, report, out
     # A scene from before the top collection gets one around its
     # assembly. Nothing else about the layout changes.
     _wrap(root, stem, scope, context.scene.collection)
-    _mark(root, document, configuration)
+    _mark(root, document, configuration, copy_of)
     top = _tops(_Scope(context.scene)).get(stem)
     if top is not None:
-        _mark(top, document, configuration)
+        _mark(top, document, configuration, copy_of)
 
     placer = _Placer(context, scene, manifest, stem, root,
                      Matrix([tuple(r) for r in frame_rows]), unit_scale,
-                     hierarchy, material_prefix, document, configuration)
+                     hierarchy, material_prefix, document, configuration,
+                     link, copy_of)
     # A copy made in Blender is the user's object from here on. It keeps
     # its place, its mesh and its parent, and loses the tags that made it
     # a second identity for the part. This is done before the rig lets go
@@ -1758,7 +1833,7 @@ def _reshape(obj, placer, inst):
 _OCCURRENCE_TAGS = (_TAG_FILE, _TAG_PATH, _TAG_PERSISTENT, _TAG_COMPONENT,
                     _TAG_GROUP, _TAG_DEFINITION, _TAG_TOLERANCE, _TAG_LOCAL,
                     _TAG_GEOMETRY, _TAG_TRANSFORM, _TAG_DOCUMENT,
-                    _TAG_CONFIGURATION, "RIG_parent_mode")
+                    _TAG_CONFIGURATION, _TAG_COPY_OF, "RIG_parent_mode")
 
 
 def _disown(obj):
@@ -1876,6 +1951,48 @@ def _exclude(context, collection):
     lc = find(context.view_layer.layer_collection)
     if lc is not None:
         lc.exclude = True
+
+
+def _post_key(scene):
+    """How a send makes its meshes after it builds them, as the scene says
+    it: triangles into quads, and the unwrap of compound faces. Two meshes
+    made from one triangle list are one mesh only when they were made the
+    same way."""
+    prg = getattr(scene, "stepper", None)
+    if prg is None:
+        return "q0u0"
+    return "q%du%d" % (bool(getattr(prg, "tris_to_quads", False)),
+                       bool(getattr(prg, "uv_unwrap_compound", False)))
+
+
+def to_finish(objects, stem, context=None):
+    """The parts of `objects` whose meshes still need the work a send does
+    after the build: triangles into quads and the unwrap of compound
+    faces. A mesh this import took from another import (Placer.
+    shared_meshes) had that work already, made the same way, and doing it
+    again would change a mesh the other import holds too."""
+    context = context or bpy.context
+    post = _post_key(context.scene)
+    others = set()
+    for obj in _Scope(context.scene).objects:
+        try:
+            if obj.get(_TAG_FILE) not in (None, stem):
+                for holder in _mesh_holders(obj):
+                    if holder.data is not None:
+                        others.add(holder.data.as_pointer())
+        except ReferenceError:
+            continue
+    out = []
+    for obj in objects:
+        try:
+            meshes = [h.data for h in _mesh_holders(obj) if h.data is not None]
+        except ReferenceError:
+            continue
+        if meshes and all(m.as_pointer() in others and m.get(_TAG_POST) == post
+                          for m in meshes):
+            continue
+        out.append(obj)
+    return out
 
 
 def _mesh_holders(obj):

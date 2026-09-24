@@ -765,6 +765,41 @@ def _ask_again_without_small_features(asked, opts, separate_solids,
 
 
 def _run_job(payload: dict) -> dict:
+    """Runs one job, and for a Refresh Model, the same refresh of every
+    copy of the import (Append as a New Copy). The copies are of the same
+    document and configuration, so they are brought up to date with it.
+    Their results are in "copies". A job that names its import
+    ("import_name") is for that import alone."""
+    result = _run_one(payload)
+    steps = payload.get("steps") or {}
+    mesh_path = payload.get("mesh") or ""
+    if (not result.get("ok") or not mesh_path or not steps.get("update")
+            or payload.get("import_name") or payload.get("append")):
+        return result
+    from .rig import native_import
+    stem = os.path.splitext(os.path.basename(mesh_path))[0]
+    names = native_import.copies_of(
+        stem, native_import._Scope(bpy.context.scene))
+    rows = []
+    for name in names:
+        sub = _run_one(dict(payload, import_name=name))
+        rows.append({"import": name, "ok": bool(sub.get("ok")),
+                     "error": sub.get("error"),
+                     "stages": sub.get("stages") or {}})
+        result.setdefault("log", []).append(
+            "copy %s: %s" % (name, "up to date" if sub.get("ok")
+                             else sub.get("error") or "failed"))
+    if rows:
+        result["copies"] = rows
+        failed = [r for r in rows if not r["ok"]]
+        if failed:
+            result["ok"] = False
+            result["error"] = "the copy %s was not brought up to date: %s" % (
+                failed[0]["import"], failed[0]["error"])
+    return result
+
+
+def _run_one(payload: dict) -> dict:
     from .rig import progress as rig_progress
 
     stages = {}
@@ -866,11 +901,17 @@ def _rig_for(manifest, stem=None):
     source = getattr(manifest, "source_path", None)
     if not source:
         return None
-    from .rig import parenting
+    from .rig import imports, parenting
+    stem = stem or imports.stem_of(manifest)
     for obj in bpy.context.scene.objects:
         if (obj.type == "ARMATURE" and obj.get("RIG_rig")
                 and any(_same_file(s, source)
                         for s in parenting.rig_sources(obj))):
+            # A copy of an import is built from the same manifest file as
+            # the import, and the rig of one is not the rig of the other.
+            stems = imports.rig_stems(obj)
+            if stem and stems and stem not in stems:
+                continue
             return obj
     return None
 
@@ -1013,6 +1054,28 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
         # The direct link's import, by the name its parts carry.
         stem = (os.path.splitext(os.path.basename(mesh_path))[0]
                 if mesh_path else None)
+        # A copy of the import has a name of its own (Append as a New
+        # Copy). The first send of an assembly with the option on is the
+        # import itself, and so is a send when the scene holds none of it.
+        # Everything below works on the import by that name, and the
+        # manifest is renamed to it in memory, so the rig takes it too.
+        copy_of = None
+        if stem:
+            from .rig import imports, native_import
+            name = payload.get("import_name") or None
+            if not name and payload.get("append") and not updating:
+                scope = native_import._Scope(scene)
+                held = any(c.get("SWMESH_file") == stem
+                           for c in scope.collections) \
+                    or any(o.get("SWMESH_file") == stem for o in scope.objects)
+                if held:
+                    name = native_import.copy_name(stem, scope)
+            if name and name != stem:
+                copy_of = stem
+                stem = name
+                imports.rename(manifest, stem)
+                log.append("a copy: %s" % stem)
+        link = payload.get("link_parts", True) is not False
 
         # The DIRECT link. Geometry the add-in tessellated itself, already
         # tagged with the component ids the manifest uses, so it replaces
@@ -1043,7 +1106,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # scene, and before a part moves. The rig is the one that
                 # holds this assembly's parts, not merely the first one.
                 rig = _rig_of(stem)
-                rig_hold["rig"] = rig or _rig_for(manifest)
+                rig_hold["rig"] = rig or _rig_for(manifest, stem)
                 if rig_hold["rig"] is None:
                     return
                 # The parts of this import only: another configuration of
@@ -1084,7 +1147,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
                         report_to=said, before_changes=before_changes,
-                        document=document, configuration=configuration)
+                        document=document, configuration=configuration,
+                        import_name=stem, link=link, copy_of=copy_of)
                     for obj, gid in groups.items():
                         try:
                             if obj.get("RIG_group") is None:
@@ -1108,7 +1172,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                         up_as=opts.get("up_as") or "ZPOS",
                         hierarchy=opts.get("hierarchy_types") or "FLAT",
                         report_to=said, document=document,
-                        configuration=configuration)
+                        configuration=configuration, import_name=stem,
+                        link=link, copy_of=copy_of)
             except Exception as exc:
                 return {"ok": False, "error": "native import failed: %s" % exc,
                         "stages": stages}
@@ -1155,7 +1220,9 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # leave it out.
             from . import geometry_lock
             shaped = geometry_lock.split(objects)[0]
-            made = native_import.quads(shaped)
+            # Not a mesh taken from another import: it had this work there.
+            finish = native_import.to_finish(shaped, stem)
+            made = native_import.quads(finish)
             if made:
                 log.append("tris to quads: %d mesh(es)" % made)
             # A compound surface has no chart one scale can hold, and the
@@ -1163,7 +1230,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # it runs here, on what just arrived.
             if prg is None or prg.uv_unwrap_compound:
                 from . import main as main_mod
-                faces, islands = main_mod._unwrap_compound_objects(shaped)
+                faces, islands = main_mod._unwrap_compound_objects(finish)
                 if faces:
                     log.append("unwrapped %d compound face(s) into %d "
                                "island(s)" % (faces, islands))

@@ -21,10 +21,17 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   CADder Bridge. **Send to Blender** then asks which configurations to
   send. SolidWorks shows each one in turn, and shows the configuration you
   had active again at the end.
-- **One mesh for a part that does not change.** A part that two
-  configurations hold the same way is one mesh in Blender. A part with
-  another shape, or with another appearance, in the other configuration
-  has a mesh of its own.
+- **Linked parts.** A part that is already in the scene is not made
+  again. A part with the same shape and the same appearance as a part of
+  any send in the scene, another configuration or another assembly, uses
+  the mesh that is there. A part with another shape or another appearance
+  gets a mesh of its own. **Link identical parts** in the Export Options of
+  CADder Bridge turns it off.
+- **Copies.** Select **Append as a new copy** in the Export Options of
+  CADder Bridge, and a send puts the assembly in the scene again, beside
+  the send that is there: `<assembly>_<configuration>.001`, with its own
+  collection and rig, linked to the parts of the first. **Refresh Model**
+  brings the send and its copies up to date.
 - **A send replaces only its own configuration.** Other configurations,
   and other assemblies, stay in the scene with their rigs. Up to 1.1 a
   send removed every other send in the scene.

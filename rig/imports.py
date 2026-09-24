@@ -20,6 +20,10 @@ TAG_DOCUMENT = "SWMESH_document"
 TAG_CONFIGURATION = "SWMESH_configuration"
 # On the armature of a send: the stem of the import it drives.
 TAG_IMPORT = "RIG_import"
+# On a copy of an import (Append as a New Copy): the import it is a copy
+# of. The copy has a name of its own, "<stem>.001", and the files it came
+# from are those of the import it copies.
+TAG_COPY_OF = "SWMESH_copy_of"
 
 _MANIFEST_SUFFIXES = (".rig.json", ".json")
 
@@ -36,6 +40,19 @@ def stem_of(manifest):
     if step:
         return os.path.splitext(os.path.basename(step))[0] or None
     return stem_of_path(getattr(manifest, "source_path", None))
+
+
+def rename(manifest, name):
+    """Makes a loaded manifest describe the import `name`, in memory only.
+
+    A copy of an import is built from the files of the import it copies,
+    and everything that finds the parts and the rig of a manifest goes by
+    the name of its STEP file (stem_of). The file on disk is not changed.
+    """
+    if manifest is None or not name or stem_of(manifest) == name:
+        return manifest
+    manifest.step_file = name + ".step"
+    return manifest
 
 
 def stem_of_path(path):

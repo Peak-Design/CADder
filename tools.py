@@ -92,12 +92,19 @@ def linked_parts(context, objects):
     shared.discard(None)
     if not shared:
         return list(objects)
+    # Only parts of the documents asked about. From CADder 1.2 a part can
+    # share its mesh with the same part of another assembly, and asking for
+    # that one asks the CAD application for a document it may not have
+    # open. That part keeps the mesh it has.
+    documents = {o.get("SWMESH_document") for o in objects}
     found = list(objects)
     seen = {o.name for o in objects}
     for obj in context.scene.objects:
         if obj.name in seen or _geometry_of(obj) not in shared:
             continue
         if not (from_step(obj) or from_cad_link(obj)):
+            continue
+        if obj.get("SWMESH_document") not in documents:
             continue
         seen.add(obj.name)
         found.append(obj)

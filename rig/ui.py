@@ -415,9 +415,17 @@ def _rig_set(self, value):
     rigs = _send_rigs(bpy.context)
     if not 0 <= value < len(rigs):
         return
-    path = rigs[value].get("RIG_source")
+    arm = rigs[value]
+    path = arm.get("RIG_source")
     self.manifest_path = str(path)
-    _load_manifest(bpy.context, bpy.path.abspath(str(path)))
+    if _load_manifest(bpy.context, bpy.path.abspath(str(path)))[0]:
+        # A copy of an import has the manifest of the import it copies,
+        # under a name of its own (imports.rename), so the panel works on
+        # the rig of the copy.
+        from . import imports
+        name = arm.get(imports.TAG_IMPORT)
+        if name:
+            imports.rename(_STATE["manifest"], str(name))
 
 
 def _load_manifest(context, path):
@@ -1205,13 +1213,23 @@ if bpy is not None:
                 return {"error": "the new manifest could not be read: %s" % exc}
         stem = os.path.splitext(os.path.basename(mesh))[0]
         options = _import_options(context, stem)
-        # A full reimport replaces the import it was asked for, also when
-        # the CAD application names it otherwise now (a renamed document):
-        # the send below replaces only an import of its own name.
+        # The imports asked for: the one of this file, and the copies of it
+        # in scope (Append as a New Copy), each under its own name. Another
+        # import in scope is this one under an older name (a renamed
+        # document): a full reimport replaces it, and a refresh finds it by
+        # its parts (native_import.standing).
+        from . import native_import
+        scope = native_import._Scope(context.scene)
+        tops = native_import._tops(scope)
+        copies = sorted(t for t in (stems or set())
+                        if tops.get(t) is not None
+                        and tops[t].get(imports.TAG_COPY_OF))
+        plain = sorted((stems or set()) - set(copies))
         if not update:
-            from . import native_import
-            for old in sorted((stems or set()) - {stem}):
-                native_import.remove_previous(old)
+            for old in plain:
+                if old != stem:
+                    native_import.remove_previous(old)
+        names = ([stem] if plain or not copies else []) + copies
         payload = {
             "step": None, "mesh": mesh, "manifest": manifest_path,
             "steps": {"import": False, "replace": not update,
@@ -1231,29 +1249,35 @@ if bpy is not None:
         configuration = reply.get("configuration") or configuration
         if configuration:
             payload["configuration"] = configuration
-        result = bridge._run_job(payload)
-        if not result.get("ok"):
-            return {"error": result.get("error") or "the import failed"}
-        stages = result.get("stages") or {}
-        out["objects"] = (stages.get("mesh") or {}).get("objects", 0)
-        rig = stages.get("rig")
-        out["rig"] = ("%d bone(s)" % rig["bones"]) if rig and "bones" in rig \
-            else (rig.get("mode", "no rig") if rig else "no rig")
-        changed = stages.get("update")
-        if changed:
-            out["changed"] = ("%d part(s) added, %d removed, %d moved, "
-                              "%d re-tessellated, %d unchanged"
-                              % (len(changed.get("added") or []),
-                                 len(changed.get("removed") or []),
-                                 len(changed.get("moved") or []),
-                                 len(changed.get("reshaped") or []),
-                                 changed.get("kept", 0)))
-            locked = len(changed.get("locked") or [])
-            if locked:
-                out["changed"] += ", %d kept their locked geometry" % locked
-        out["defeature"] = ((0, 0) if held is None
-                            else defeature.restore(held, context.scene,
-                                                   stem=stem))
+        # One job for each import, each named, so a refresh of the import
+        # alone does not also refresh the copies outside the scope.
+        total = {}
+        for name in names:
+            result = bridge._run_job(dict(payload, import_name=name))
+            if not result.get("ok"):
+                return {"error": result.get("error") or "the import failed"}
+            stages = result.get("stages") or {}
+            got = {"objects": (stages.get("mesh") or {}).get("objects", 0)}
+            rig = stages.get("rig")
+            got["rig"] = ("%d bone(s)" % rig["bones"]) if rig and "bones" in rig \
+                else (rig.get("mode", "no rig") if rig else "no rig")
+            changed = stages.get("update")
+            if changed:
+                got["changed"] = ("%d part(s) added, %d removed, %d moved, "
+                                  "%d re-tessellated, %d unchanged"
+                                  % (len(changed.get("added") or []),
+                                     len(changed.get("removed") or []),
+                                     len(changed.get("moved") or []),
+                                     len(changed.get("reshaped") or []),
+                                     changed.get("kept", 0)))
+                locked = len(changed.get("locked") or [])
+                if locked:
+                    got["changed"] += ", %d kept their locked geometry" % locked
+            got["defeature"] = ((0, 0) if held is None
+                                else defeature.restore(held, context.scene,
+                                                       stem=name))
+            total = _add_stages(total, got)
+        out.update(total)
         return out
 
     class CADLINK_OT_update_from_cad(bpy.types.Operator):

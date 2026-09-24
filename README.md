@@ -70,9 +70,11 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
 - **Send several configurations at once**: select **Multiple
   configurations** in the Export Options of CADder Bridge, and pick the
   configurations at each send.
-- **One mesh for a part that does not change**: a part that two
-  configurations hold the same way shares its mesh. A part with another
-  shape or appearance gets its own.
+- **Linked parts**: a part that is already in the scene, from any send,
+  uses the mesh that is there. A part with another shape or appearance
+  gets its own.
+- **Copies**: **Append as a new copy** puts an assembly in the scene again,
+  with its own collection and rig, linked to the parts of the first.
 - **Refresh Model and Rebuild from CAD know the configuration**: Refresh
   Model asks which configurations to refresh, and Rebuild from CAD asks
   for each configuration on its own.

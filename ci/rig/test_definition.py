@@ -106,5 +106,41 @@ class OfManifest(unittest.TestCase):
                                     "j003": D.DEFINED, "j004": D.FREE})
 
 
+class ControlColour(unittest.TestCase):
+    """The color the rig paints each control bone (rig_build.py)."""
+
+    def colours(self, data):
+        from CADder.rig import graph, rig_build
+        m = manifest.parse(data)
+        plan = graph.build(m)
+        status = D.of_manifest(m)
+        children = {j.child_group for j in m.joints}
+        return {bp.group.id: rig_build._control_colour(bp, status, children)
+                for bp in plan.bones}
+
+    def test_the_input_of_a_four_bar_is_blue(self):
+        got = self.colours(four_bar_manifest())
+        self.assertEqual(got["g001"], "THEME04")
+        self.assertEqual(got["g002"], "THEME04")
+
+    def test_a_hinge_is_red(self):
+        self.assertEqual(self.colours(hinge_manifest())["g001"], "THEME01")
+
+    def test_a_root_that_no_joint_ends_on_is_a_gray_ground(self):
+        # a ground of the Joints module: a root the user can pose
+        data = hinge_manifest()
+        data["rigid_groups"][0]["grounded"] = False
+        self.assertEqual(self.colours(data)["g000"], "THEME13")
+
+    def test_an_under_mated_part_is_red(self):
+        data = hinge_manifest()
+        data["rigid_groups"].append(
+            {"id": "g002", "name": "loose", "components": [], "grounded": False,
+             "frame": None, "bbox_diag": 0.1})
+        data["joints"].append({"id": "j002", "type": "free",
+                               "parent_group": "g000", "child_group": "g002"})
+        self.assertEqual(self.colours(data)["g002"], "THEME01")
+
+
 if __name__ == "__main__":
     unittest.main()

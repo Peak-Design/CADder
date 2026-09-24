@@ -504,10 +504,11 @@ def _control_geometry(bone_plan):
 
 
 def _control_colour(bone_plan, status, children):
-    """The color of a control bone. A root the user can pose is a ground
-    that moves its whole mechanism, unless a joint of the manifest ends on
-    it: a free joint, an under-mated part, which is free."""
-    if bone_plan.root:
+    """The color of a control bone. A bone with no parent is a root. One
+    the user can pose is a ground that moves its whole mechanism (a ground
+    of the Joints module), unless a joint of the manifest ends on it: a
+    free joint, an under-mated part, which is free."""
+    if bone_plan.parent_group_id is None:
         return (_COLOUR_CONTROL if bone_plan.group.id in children
                 else _COLOUR_GROUND)
     joint = bone_plan.joint

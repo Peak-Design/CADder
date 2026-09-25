@@ -369,7 +369,7 @@ def resend(mode):
     send("hinge", mode)
     top = top_of("hinge")
     top["smoke_mark"] = mode
-    pointer = top.as_pointer()
+    pointer = top.session_uid
     scene_root = bpy.context.scene.collection
     # The user moves the top collection into a collection of their own,
     # and puts an object and a collection of their own in it.
@@ -388,7 +388,7 @@ def resend(mode):
 
     send("hinge", mode)
     top = top_of("hinge")
-    check(top is not None and top.as_pointer() == pointer
+    check(top is not None and top.session_uid == pointer
           and top.get("smoke_mark") == mode, where,
           "the send made a new top collection")
     check(parents_of(top) == ["My scenes"], where,
@@ -427,9 +427,9 @@ def old_update(mode, rig_mode, into_group=False):
     send("hinge", mode)
     old_layout(into=bpy.data.collections["base"] if into_group else None)
     arm = the_rig()
-    arm_pointer = arm.as_pointer()
+    arm_pointer = arm.session_uid
     bones = sorted(b.name for b in arm.data.bones)
-    parts = {path: obj.as_pointer() for path, obj in parts_of("hinge").items()}
+    parts = {path: obj.session_uid for path, obj in parts_of("hinge").items()}
     # A collection of the user's own inside the assembly stays where it is.
     holder = "sub-1" if mode == "TREE" else "hinge" + PARTS
     user_collection("arm_Rig", bpy.data.collections[holder], "arm handle")
@@ -440,10 +440,10 @@ def old_update(mode, rig_mode, into_group=False):
     check(parents_of(bpy.data.collections["arm_Rig"]) == [holder], where,
           "the user's collection moved to %s"
           % parents_of(bpy.data.collections["arm_Rig"]))
-    now = {path: obj.as_pointer() for path, obj in parts_of("hinge").items()}
+    now = {path: obj.session_uid for path, obj in parts_of("hinge").items()}
     check(now == parts, where, "the update replaced parts")
     if rig_mode in ("KEEP", "APPEND"):
-        check(the_rig().as_pointer() == arm_pointer, where,
+        check(the_rig().session_uid == arm_pointer, where,
               "the rig was replaced")
         check(sorted(b.name for b in the_rig().data.bones) == bones, where,
               "the bones changed")
@@ -463,11 +463,11 @@ def old_resend(mode, locked):
     arm = the_rig()
     if locked:
         arm[rig_build.LOCK_TAG] = True
-    pointer = arm.as_pointer()
+    pointer = arm.session_uid
     send("hinge", mode)
     check_top(where, mode)
     if locked:
-        check(the_rig().as_pointer() == pointer, where,
+        check(the_rig().session_uid == pointer, where,
               "the locked rig was replaced")
 
 
@@ -488,11 +488,11 @@ def renamed(mode):
     where = "%s renamed assembly" % mode
     fresh()
     send("hinge", mode)
-    pointer = top_of("hinge").as_pointer()
+    pointer = top_of("hinge").session_uid
     send("hinge2", mode, update=True, rig_mode="KEEP")
     check(top_of("hinge") is None, where, "a top collection keeps the old tag")
     top = top_of("hinge2")
-    check(top is not None and top.as_pointer() == pointer, where,
+    check(top is not None and top.session_uid == pointer, where,
           "the renamed assembly has another top collection")
     # KEEP keeps the rig itself, and it takes the new name with the rest.
     arm = the_rig()
@@ -507,8 +507,8 @@ def other_assembly(mode):
     where = "%s different assembly" % mode
     fresh()
     send("hinge", mode)
-    hinge_top = top_of("hinge").as_pointer()
-    hinge_parts = {p: o.as_pointer() for p, o in parts_of("hinge").items()}
+    hinge_top = top_of("hinge").session_uid
+    hinge_parts = {p: o.session_uid for p, o in parts_of("hinge").items()}
     send("gizmo", mode, parts=GIZMO, joints=GIZMO_JOINTS)
     check(sorted(c.name for c in tops()) == ["gizmo", "hinge"], where,
           "top collections: %s" % [c.name for c in tops()])
@@ -517,8 +517,8 @@ def other_assembly(mode):
           "the top collection holds %s" % names(top))
     check(top.name in root_names(), where, "not at the scene root")
     check(not numbered(), where, "numbered copies: %s" % numbered())
-    check(top_of("hinge").as_pointer() == hinge_top
-          and {p: o.as_pointer() for p, o in parts_of("hinge").items()}
+    check(top_of("hinge").session_uid == hinge_top
+          and {p: o.session_uid for p, o in parts_of("hinge").items()}
           == hinge_parts, where, "the send of gizmo changed hinge")
     check_top(where, mode, others=True)
     gizmo = the_rig("gizmo")
@@ -527,9 +527,9 @@ def other_assembly(mode):
         check(rides(obj, gizmo), where, "%s does not ride gizmo_Rig" % obj.name)
 
     # A send of hinge again replaces hinge only.
-    gizmo_parts = {p: o.as_pointer() for p, o in parts_of("gizmo").items()}
+    gizmo_parts = {p: o.session_uid for p, o in parts_of("gizmo").items()}
     send("hinge", mode)
-    check({p: o.as_pointer() for p, o in parts_of("gizmo").items()}
+    check({p: o.session_uid for p, o in parts_of("gizmo").items()}
           == gizmo_parts, where, "the send of hinge changed gizmo")
     check(len([o for o in bpy.data.objects if o.type == "ARMATURE"]) == 2,
           where, "the rigs are %s" % [o.name for o in bpy.data.objects
@@ -540,13 +540,15 @@ def other_assembly(mode):
     # send of gizmo leaves the locked rig as it is.
     locked = the_rig("hinge")
     locked[rig_build.LOCK_TAG] = True
-    pointer = locked.as_pointer()
-    old_gizmo = the_rig("gizmo").as_pointer()
+    pointer = locked.session_uid
+    # session_uid, not as_pointer: Blender can give the new rig the memory
+    # the old one had, and the two then look like one (1 run in 17 failed)
+    old_gizmo = the_rig("gizmo").session_uid
     send("gizmo", mode, parts=GIZMO, joints=GIZMO_JOINTS)
-    check(the_rig("hinge").as_pointer() == pointer, where,
+    check(the_rig("hinge").session_uid == pointer, where,
           "the locked rig was replaced")
     check(the_rig("gizmo") is not None
-          and the_rig("gizmo").as_pointer() != old_gizmo, where,
+          and the_rig("gizmo").session_uid != old_gizmo, where,
           "gizmo was not built again beside a locked rig")
     check(names(top_of("gizmo")) == ["gizmo" + PARTS, "gizmo_Rig"], where,
           "the new top collection holds %s" % names(top_of("gizmo")))

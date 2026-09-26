@@ -428,6 +428,14 @@ def _limit_widget_wanted(bone_plan):
     return joint.rotation_limit is not None or joint.translation_limit is not None
 
 
+def _has_angle_dial(bone_plan):
+    """Whether the control gets a limit arc of angles: a limit bone of its
+    own that draws a turn's limit (_style_bones), and not a ball's cone."""
+    return (_limit_widget_wanted(bone_plan) and not bone_plan.slide_name
+            and not bone_plan.ball_def_name
+            and bone_plan.joint.rotation_limit is not None)
+
+
 def _ik_driven_groups(plan):
     """Groups whose bones are placed by a loop closure rather than by hand.
 
@@ -504,11 +512,16 @@ _DIAL_POINTER = 0.35
 _ARC_RADIUS = 0.70
 _ARC_WIDTH = 0.09 / _ARC_RADIUS
 # A slide arrow is one bone length from tip to tip, centered on the bone's
-# own origin, so its rail runs half a bone length past each stop. The rail
-# is a slim bar the arrow's two crossed strips stand on.
+# own origin, so the stops of its travel limit stand half a bone length past
+# each limit. The rail between them is thinner than the arrow's own
+# thickness, so the arrow hides it where they meet. Each stop is wider than
+# the arrow's shaft and narrower than its heads, and half as thick as a
+# mark (Oscar, 2026-09-26: half the first size, and thinner).
 _SLIDE_LENGTH = 1.0
 _SLIDE_HALF_WIDTH = 0.07
-_RAIL_HALF_WIDTH = 0.05
+_RAIL_HALF_WIDTH = 0.02
+_STOP_HALF_WIDTH = 0.125
+_STOP_THICKNESS = 0.025
 # The thickness of a flat mark.
 _MARK_THICKNESS = 0.05
 # A planar contact slides in its plane and turns about its normal: two
@@ -537,15 +550,19 @@ def _control_geometry(bone_plan):
 
     kind = _widget_kind(bone_plan)
     th = _MARK_THICKNESS
+    # The rest mark points along the limit arc, so a turn with no arc has
+    # none (Oscar, 2026-09-26).
+    rest = _has_angle_dial(bone_plan)
+    pointer = _DIAL_POINTER if rest else 0.0
+    tag = "" if rest else "_free"
 
     if kind == "revolute":
-        return "SWW_turn", shapes_mod.turn_arrow(
-            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=_DIAL_POINTER,
-            thickness=th)
+        return "SWW_turn" + tag, shapes_mod.turn_arrow(
+            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=pointer, thickness=th)
     if kind == "cylindrical":
         # It slides AND turns about the same axis.
-        return "SWW_turn_slide", shapes_mod.turn_and_slide(
-            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=_DIAL_POINTER,
+        return "SWW_turn_slide" + tag, shapes_mod.turn_and_slide(
+            _DIAL_RADIUS, width=_DIAL_WIDTH, pointer=pointer,
             length=_SLIDE_LENGTH, half_width=_SLIDE_HALF_WIDTH, thickness=th)
     if kind == "prismatic":
         return "SWW_slide", shapes_mod.slide_arrow(
@@ -554,8 +571,8 @@ def _control_geometry(bone_plan):
         return "SWW_screw_arrow", shapes_mod.screw_arrow(
             _SLIDE_LENGTH, _SCREW_RADIUS, 2.0)
     if kind == "planar":
-        return "SWW_plane", shapes_mod.plane_arrows(
-            _PLANAR_REACH, _PLANAR_RADIUS, pointer=_DIAL_POINTER, thickness=th)
+        return "SWW_plane" + tag, shapes_mod.plane_arrows(
+            _PLANAR_REACH, _PLANAR_RADIUS, pointer=pointer, thickness=th)
     if kind == "pin_slot":
         return "SWW_pin_slot", shapes_mod.pin_slot_arrows(thickness=th)
     if kind == "ball":
@@ -684,25 +701,26 @@ def _style_bones(context, arm_obj, plan, result, unit_scale,
         elif joint.translation_limit is not None:
             lo = joint.translation_limit.delta_min * unit_scale
             hi = joint.translation_limit.delta_max * unit_scale
-            # The limit is a limit on the slide's ORIGIN, and the slide bar
-            # is centered on that origin, so the rail runs half a bar past
-            # each end. Otherwise the bar hangs half off the rail exactly
-            # when it is hard against the stop, which is the one moment the
-            # rail has to be right.
+            # The limit is a limit on the slide's ORIGIN, and the slide
+            # arrow is centered on that origin, so each stop stands half an
+            # arrow past its limit: the arrow's tip meets the stop exactly
+            # when the slide is hard against it.
             span = _bone_length(bp.group, unit_scale)
             pad = span * _SLIDE_LENGTH * 0.5
             round_section = _widget_kind(bp) in ("cylindrical", "screw",
                                                  "pin_slot")
-            key = "SWW_stroke_%.6f_%.6f_%.6f%s" % (
+            key = "SWW_travel_%.6f_%.6f_%.6f%s" % (
                 lo, hi, pad, "_r" if round_section else "")
             # TRUE length, so bone-size scaling is switched off: this rail
             # is a measurement, and a rail that is not the stroke's length
             # is worse than no rail.
             lb.custom_shape = shapes_mod.widget(
                 widgets, key,
-                shapes_mod.stroke_bar(lo, hi,
-                                      max(1e-4, span * _RAIL_HALF_WIDTH),
-                                      pad=pad, round_section=round_section),
+                shapes_mod.travel_limit(
+                    lo, hi, rail_half=max(1e-4, span * _RAIL_HALF_WIDTH),
+                    stop_half=max(1e-4, span * _STOP_HALF_WIDTH),
+                    stop_thickness=max(1e-4, span * _STOP_THICKNESS),
+                    pad=pad, round_section=round_section),
                 cache)
             lb.use_custom_shape_bone_size = False
 

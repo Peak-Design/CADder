@@ -59,7 +59,7 @@ version: what it is, how to install it, and what is new.
 - Fixed, revolute, prismatic, cylindrical, ball, planar, pin slot, screw,
   path, surface and free joints.
 - Mate limits become constraints, drawn to the real numbers: a dial spans
-  the angle a joint may turn, a rail is as long as the travel.
+  the angle a joint may turn, and two stops mark the ends of a travel.
 - Gears, rack and pinion, screws, symmetry, cams and universal joints are
   carried as couplings, so driving one half moves the other.
 - A mechanism with more than one way to drive it offers the choice, and
@@ -666,8 +666,9 @@ when the rig is built:
 - **`SW_controls`**: everything with a degree of freedom you can pose.
   Each wears a widget that shows its freedoms and nothing else: a curved
   double arrow for each turn, and a straight double arrow for each slide.
-  A revolute is one turn, with a pointer where the joint rests. A slider is
-  one arrow. A cylindrical joint is a turn and an arrow along its axis, and
+  A revolute is one turn. When the turn has a limit, a mark as tall as the
+  turn shows where the joint rests. A turn with no limit has no mark. A
+  slider is one arrow. A cylindrical joint is a turn and an arrow along its axis, and
   a screw an arrow wound round its axis. A planar joint is two crossed
   arrows in its plane and a turn. A pin in a slot is a turn and an arrow
   along the slot. A ball is three bands and a stud. A point on a curve or a
@@ -676,10 +677,10 @@ when the rig is built:
   mechanism, is gray.
 - **`SW_limits`** (yellow): a fixed arc or rail beside each control that
   has a limit, drawn to the real numbers: the arc spans the angle the joint
-  may turn through, the rail is as long as the travel plus half a slide
-  arrow at each end (so the arrow's tip meets the rail's end when it is
-  hard against the stop), the cone opens to the swing angle. The arc rings
-  the turn it belongs to, so the pointer of the turn reads against it.
+  may turn through, the cone opens to the swing angle, and the limit of a
+  slide is a thin rail with a flat stop across each end. The tip of the
+  arrow touches a stop when the slide is against that limit. The arc rings
+  the turn it belongs to, and the rest mark of the turn points at it.
 - **`SW_mechanism`** (hidden): bones that move but that you do not
   drive: the driven half of a symmetry or gear coupling, the halves of a
   hydraulic ram closed by aiming, anything welded solid. Each one takes the

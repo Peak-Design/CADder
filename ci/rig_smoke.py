@@ -721,6 +721,27 @@ def run():
         _check(tuple(pb.custom_shape_translation) == (0.0, 0.0, 0.0),
                "{}: its widget is offset from the bone".format(pb.name))
 
+    # A turn shows its rest wedge only with a limit arc to point along
+    # (Oscar, 2026-09-26): a free turn has no rest to mark.
+    turns = 0
+    for bp in plan.bones:
+        if rig_build._widget_kind(bp) not in ("revolute", "cylindrical"):
+            continue
+        handle = arm_obj.pose.bones.get(
+            result.ball_ctrl_names.get(bp.group.id, result.bone_names[bp.group.id]))
+        shape = handle.custom_shape if handle is not None else None
+        if shape is None or not shape.name.startswith("SWW_turn"):
+            continue
+        turns += 1
+        dial = rig_build._has_angle_dial(bp)
+        _check(dial == (bp.group.id in result.limit_names
+                        and bp.joint.rotation_limit is not None),
+               "{}: a rest wedge and a limit arc disagree".format(handle.name))
+        _check(shape.name.endswith("_free") != dial,
+               "{}: {} {} a limit arc".format(
+                   handle.name, shape.name, "with" if dial else "without"))
+    _check(turns > 0, "no turn control to check the rest wedge on")
+
     # Every limit dial is fixed, colored as a limit, and carries a widget
     # built from the joint's own numbers.
     for gid, lname in result.limit_names.items():
@@ -758,14 +779,25 @@ def run():
             _check(half_slide > 1e-9, "{}: the slide widget is flat"
                    .format(lname))
 
+            # A thin rail with a flat stop across each end (Oscar,
+            # 2026-09-26). The inner face of each stop is where the tip of
+            # the slide is when the slide is hard against that limit.
+            wide = sorted({round(v.co[1], 7)
+                           for v in lb.custom_shape.data.vertices
+                           if max(abs(v.co[0]), abs(v.co[2]))
+                           > 0.15 * half_slide})
+            _check(len(wide) == 4, "{}: {} stop face(s), not 4".format(
+                lname, len(wide)))
             want = span + 2.0 * half_slide
-            _check(abs((max(ys) - min(ys)) - want) < 1e-6,
-                   "{}: rail is {:.4f} long, travel + slide is {:.4f}".format(
-                       lname, max(ys) - min(ys), want))
+            _check(abs((wide[2] - wide[1]) - want) < 1e-6,
+                   "{}: the stops are {:.4f} apart, travel + slide is {:.4f}"
+                   .format(lname, wide[2] - wide[1], want))
             at_stop = joint.translation_limit.delta_min - half_slide
-            _check(abs(min(ys) - at_stop) < 1e-6,
-                   "{}: rail ends at {:.4f}, the slide reaches {:.4f}".format(
-                       lname, min(ys), at_stop))
+            _check(abs(wide[1] - at_stop) < 1e-6,
+                   "{}: a stop is at {:.4f}, the slide reaches {:.4f}".format(
+                       lname, wide[1], at_stop))
+            _check(max(ys) - min(ys) > want,
+                   "{}: the stops lie inside the travel".format(lname))
 
     # 5) Loop closures: helper and effector out of sight, IK on the
     # effector aiming its HEAD (the closure point) at the helper.

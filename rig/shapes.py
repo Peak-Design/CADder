@@ -136,24 +136,38 @@ def cuboid(length=1.0, half_width=0.4):
     return verts, [], faces
 
 
-def stroke_bar(delta_min, delta_max, half_width=0.25, pad=0.0,
-               round_section=False, segments=16):
-    """A translation limit: the same bar as the slide it stands behind, only
-    thinner, running the travel's REAL length along the slide axis.
+def travel_limit(delta_min, delta_max, rail_half=0.02, stop_half=0.125,
+                 stop_thickness=0.025, pad=0.0, round_section=False,
+                 segments=16):
+    """A translation limit: a thin rail over the travel's REAL length, and
+    a flat square stop across each end of it (Oscar, 2026-09-26), as the
+    joint models of CADder Rigging draw the limits of a slide.
 
-    `pad` extends it past each limit by half the slide widget's own length.
-    Without that the rail stops at the limit VALUE, which is where the
-    slide's center gets to, so at either end of the stroke the slide hangs
-    half its length off the rail. Padded, the ends line up.
+    The limit holds the slide's ORIGIN, and the slide arrow reaches `pad`
+    past it, half the arrow's own length. So each stop stands `pad` past
+    its limit, and the arrow's tip meets the inner face of the stop exactly
+    when the slide is hard against the limit. The rail runs from stop to
+    stop. It is thin, a line for the arrow to run along and not a second
+    slide, and round when the slide may also turn.
     """
     lo = min(delta_min, delta_max) - pad
     hi = max(delta_min, delta_max) + pad
-    mid = (lo + hi) * 0.5
+    t = stop_thickness
+    # The rail runs into the middle of each stop, so its ends are inside
+    # the stops and no face of it lies on a face of a stop.
+    length = hi - lo + t
     if round_section:
-        verts, edges, faces = cylinder(hi - lo, half_width, segments)
+        rv, _re, rf = cylinder(length, rail_half, segments)
     else:
-        verts, edges, faces = cuboid(hi - lo, half_width)
-    return [(x, y + mid, z) for x, y, z in verts], edges, faces
+        rv, _re, rf = cuboid(length, rail_half)
+    mid = (lo + hi) * 0.5
+    parts = [([(x, y + mid, z) for x, y, z in rv], rf)]
+    s = stop_half
+    for y in (lo - t * 0.5, hi + t * 0.5):
+        parts.append(_prism([(-s, y, -s), (s, y, -s), (s, y, s), (-s, y, s)],
+                            (0.0, 1.0, 0.0), t))
+    verts, faces = _merge(*parts)
+    return verts, [], faces
 
 
 def _merge(*parts):
@@ -347,6 +361,10 @@ def _arc_frames(radius, ts):
              (0.0, 1.0, 0.0)) for t in ts]
 
 
+# The height of the rest wedge of a turn, as a fraction of the band's width.
+POINTER_HEIGHT = 0.98
+
+
 def _steps(t0, t1, step):
     n = max(2, int(math.ceil(abs(t1 - t0) / step)))
     return [t0 + (t1 - t0) * i / n for i in range(n + 1)]
@@ -366,8 +384,12 @@ def turn_arrow(radius=0.45, width=0.15, pointer=0.35, heads=0.33,
 
     `width` and `heads` are half widths along +Y, as fractions of `radius`.
     `head_length` is the angle a head takes, in radians. With `pointer`, a
-    flat point stands out from the band at t = 0, where the joint rests,
-    and reaches radius * (1 + pointer): nothing else reaches that far.
+    wedge stands out from the band at t = 0, where the joint rests, and
+    reaches radius * (1 + pointer): nothing else reaches that far. The wedge
+    is as tall as the band, so it reads as part of the band and not as a
+    fin on its side (Oscar, 2026-09-26). It is a hair lower than the band,
+    so no face of it lies on a face of the band. A control shows it only
+    with a limit arc to point along.
     """
     r = radius
     step = 2.0 * math.pi / max(8, int(segments))
@@ -390,7 +412,7 @@ def turn_arrow(radius=0.45, width=0.15, pointer=0.35, heads=0.33,
         parts.append(_prism([_ring_point(rest - step, r),
                              _ring_point(rest, r * (1.0 + pointer)),
                              _ring_point(rest + step, r)],
-                            (0.0, 1.0, 0.0), thickness))
+                            (0.0, 1.0, 0.0), 2.0 * r * width * POINTER_HEIGHT))
     verts, faces = _merge(*parts)
     return verts, [], faces
 

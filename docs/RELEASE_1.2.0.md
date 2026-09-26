@@ -61,9 +61,11 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   arrow, and a cylindrical joint is a turn and an arrow. A planar joint is
   two crossed arrows and a turn, a pin in a slot a turn and an arrow along
   the slot, a screw an arrow wound round its axis, and a ball three bands
-  and a stud. The pointer of a turn still marks where the joint rests, and
-  the yellow limits are as before. Build a rig again to get the new
-  widgets. The build replaces the old ones.
+  and a stud. A turn with a limit has a mark where the joint rests, as tall
+  as the turn. A turn with no limit has no mark. The yellow limit of a slide
+  is a thin rail with a flat stop at each end, and the tip of the arrow
+  touches a stop at the limit. Build a rig again to get the new widgets.
+  The build replaces the old ones.
 
 ## Bug fixes
 

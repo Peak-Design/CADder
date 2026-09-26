@@ -85,8 +85,8 @@ MARKS = {
 
 ALL_WIDGETS = tuple(MARKS.values()) + (
     shapes.limit_arc(-0.5, 0.5), shapes.cylinder(), shapes.cuboid(),
-    shapes.stroke_bar(-0.1, 0.2), shapes.stroke_bar(-0.1, 0.2,
-                                                    round_section=True),
+    shapes.travel_limit(-0.1, 0.2), shapes.travel_limit(-0.1, 0.2,
+                                                        round_section=True),
     shapes.swing_cone(0.4), shapes.diamond(), shapes.ground_cross())
 
 
@@ -139,7 +139,7 @@ class FrameConventionTest(unittest.TestCase):
         # A motion mark, an arc and a rail stand IN FOR a part you take
         # hold of, so they read as surfaces...
         for geom in tuple(MARKS.values()) + (
-                shapes.limit_arc(-0.5, 0.5), shapes.stroke_bar(-0.1, 0.2),
+                shapes.limit_arc(-0.5, 0.5), shapes.travel_limit(-0.1, 0.2),
                 shapes.diamond()):
             self.assertTrue(geom[2], "should be solid")
         # ...while these ANNOTATE geometry, and filled would hide it: the
@@ -162,9 +162,9 @@ class NormalsTest(unittest.TestCase):
         cases.update({
             "cuboid": shapes.cuboid(2.0, 0.4),
             "cylinder": shapes.cylinder(2.0, 0.4),
-            "rail": shapes.stroke_bar(-0.3, 0.2, 0.05, pad=0.1),
-            "round rail": shapes.stroke_bar(-0.3, 0.2, 0.05, pad=0.1,
-                                            round_section=True),
+            "travel limit": shapes.travel_limit(-0.3, 0.2, 0.05, pad=0.1),
+            "round travel limit": shapes.travel_limit(-0.3, 0.2, 0.05, pad=0.1,
+                                                      round_section=True),
             "diamond": shapes.diamond(0.4),
         })
         for name, (verts, _edges, faces) in sorted(cases.items()):
@@ -227,6 +227,24 @@ class TurnArrowTest(unittest.TestCase):
         self.assertAlmostEqual(0.0, angle_of(tip), places=12)
         self.assertAlmostEqual(self.R * (1.0 + self.P),
                                math.hypot(tip[0], tip[2]), places=12)
+
+    def test_the_pointer_is_as_tall_as_the_band(self):
+        # Oscar, 2026-09-26: a thin fin on the side of the band looked
+        # stuck on. A hair lower than the band, so no faces coincide.
+        verts, _edges, _faces = shapes.turn_arrow(self.R, self.W, self.P)
+        tip = [v for v in verts
+               if math.hypot(v[0], v[2]) > self.R * (1.0 + self.P) - 1e-9]
+        self.assertEqual(2, len(tip))
+        self.assertAlmostEqual(self.R * self.W * shapes.POINTER_HEIGHT,
+                               max(abs(v[1]) for v in tip), places=12)
+        self.assertLess(max(abs(v[1]) for v in tip), self.R * self.W)
+
+    def test_no_pointer_leaves_only_the_band_and_its_heads(self):
+        th = 0.05
+        verts, _e, _f = shapes.turn_arrow(self.R, self.W, pointer=0.0,
+                                          thickness=th)
+        self.assertLess(max(math.hypot(v[0], v[2]) for v in verts),
+                        self.R + th * 0.5 + 1e-9)
 
     def test_a_vertex_lands_exactly_on_rest(self):
         # Half a segment out and the pointer would sit a few degrees away
@@ -368,44 +386,74 @@ class LimitArcTest(unittest.TestCase):
         self.assertGreater(wide, narrow)
 
 
-class StrokeBarTest(unittest.TestCase):
-    def test_the_bar_is_the_travel_and_rest_sits_inside_it(self):
-        lo, hi = -0.30, 0.05          # a ram mostly retracted
-        verts, _edges, _faces = shapes.stroke_bar(lo, hi)
-        low, high = bounds(verts, 1)
-        self.assertAlmostEqual(lo, low, places=9)
-        self.assertAlmostEqual(hi, high, places=9)
-        # ...and rest is at 0, which is NOT the middle of an uneven stroke.
-        self.assertLess(low, 0.0)
-        self.assertGreater(high, 0.0)
+class TravelLimitTest(unittest.TestCase):
+    """A slide's limit: a thin rail over the travel and a flat stop across
+    each end (Oscar, 2026-09-26)."""
 
-    def test_the_pad_carries_the_rail_past_each_stop(self):
-        # The slide widget is 2 bone-lengths long about its own origin, and
-        # the limit clamps that origin. Padded by half the widget, the rail's
-        # end meets the slide's end when the slide is hard against the stop.
-        lo, hi, pad = -0.85, 0.0, 0.12
-        verts, _edges, _faces = shapes.stroke_bar(lo, hi, 0.02, pad=pad)
-        low, high = bounds(verts, 1)
-        self.assertAlmostEqual(lo - pad, low, places=9)
-        self.assertAlmostEqual(hi + pad, high, places=9)
-        slide_end_at_stop = lo + pad          # slide origin at lo, +half up
-        self.assertAlmostEqual(low + 2.0 * pad, slide_end_at_stop, places=9)
+    TH = 0.05
+
+    def stops(self, verts):
+        # The stops are the widest part: everything more than the rail's
+        # width off the axis.
+        return [v for v in verts if max(abs(v[0]), abs(v[2])) > 0.1]
+
+    def test_the_stops_stand_at_the_limits(self):
+        lo, hi = -0.30, 0.05          # a ram mostly retracted
+        verts, _e, _f = shapes.travel_limit(lo, hi, 0.02, 0.25, self.TH)
+        ys = sorted({round(v[1], 9) for v in self.stops(verts)})
+        # each stop's inner face is on its limit, the plate lies outside it
+        self.assertEqual([round(lo - self.TH, 9), round(lo, 9),
+                          round(hi, 9), round(hi + self.TH, 9)], ys)
+        # ...and rest is at 0, which is NOT the middle of an uneven stroke.
+        self.assertLess(lo, 0.0)
+        self.assertGreater(hi, 0.0)
+
+    def test_the_tip_of_the_arrow_meets_a_stop_at_the_limit(self):
+        # The slide arrow is one bone long about its own origin, and the
+        # limit clamps that origin. Padded by half the arrow, the stop's
+        # inner face is where the tip is when the slide is at the limit.
+        lo, hi, pad = -0.85, 0.0, 0.5
+        verts, _e, _f = shapes.travel_limit(lo, hi, 0.02, 0.25, self.TH,
+                                            pad=pad)
+        inner = sorted({round(v[1], 9) for v in self.stops(verts)})[1:3]
+        tip = shapes.slide_arrow(2.0 * pad)[0]
+        reach = max(v[1] for v in tip)
+        self.assertAlmostEqual(lo - reach, inner[0], places=9)
+        self.assertAlmostEqual(hi + reach, inner[1], places=9)
+
+    def test_the_rail_is_thinner_than_the_arrow_it_guides(self):
+        verts, _e, _f = shapes.travel_limit(0.0, 1.0, 0.02, 0.25, self.TH)
+        rail = [v for v in verts if max(abs(v[0]), abs(v[2])) <= 0.1]
+        self.assertAlmostEqual(0.02, max(abs(v[0]) for v in rail), places=9)
+        arrow = shapes.slide_arrow(1.0, thickness=self.TH)[0]
+        self.assertLess(0.02, max(abs(v[0]) for v in arrow))
+
+    def test_the_stops_are_wider_than_the_arrow_shaft(self):
+        # Oscar, 2026-09-26: the stops at half their first size, narrower
+        # than the arrowheads, still wide enough to read as stops.
+        verts, _e, _f = shapes.travel_limit(0.0, 1.0, 0.02, 0.125, self.TH)
+        self.assertAlmostEqual(0.125, max(abs(v[2]) for v in verts), places=9)
+        self.assertGreater(0.125, 0.07)          # the shaft of rig_build
+
+    def test_the_rail_ends_inside_the_stops(self):
+        # a rail end on the face of a stop would be two faces in one place
+        verts, _e, _f = shapes.travel_limit(0.0, 1.0, 0.02, 0.25, self.TH)
+        rail = [v for v in verts if max(abs(v[0]), abs(v[2])) <= 0.1]
+        self.assertAlmostEqual(-self.TH * 0.5, min(v[1] for v in rail), places=9)
+        self.assertAlmostEqual(1.0 + self.TH * 0.5, max(v[1] for v in rail),
+                               places=9)
 
     def test_a_round_rail_is_round_and_a_square_one_is_not(self):
-        # Same distinction the slide bar itself draws: round may spin.
-        round_v = shapes.stroke_bar(0.0, 1.0, 0.1, round_section=True)[0]
-        self.assertEqual({0.1}, {round(math.hypot(v[0], v[2]), 9)
-                                 for v in round_v})
-        square_v = shapes.stroke_bar(0.0, 1.0, 0.1)[0]
-        self.assertNotIn(0.1, {round(math.hypot(v[0], v[2]), 9)
-                               for v in square_v})
-
-    def test_it_reads_as_a_bar_along_the_slide_axis(self):
-        verts, _edges, _faces = shapes.stroke_bar(0.0, 1.0, 0.05)
-        low, high = bounds(verts, 1)
-        across = max(max(abs(v[0]) for v in verts),
-                     max(abs(v[2]) for v in verts))
-        self.assertGreater((high - low) / (2.0 * across), 1.5)
+        # Same distinction the slide itself draws: round may spin.
+        def rail(v):
+            return [p for p in v if max(abs(p[0]), abs(p[2])) <= 0.1]
+        round_v = rail(shapes.travel_limit(0.0, 1.0, 0.05,
+                                           round_section=True)[0])
+        self.assertEqual({0.05}, {round(math.hypot(v[0], v[2]), 9)
+                                  for v in round_v})
+        square_v = rail(shapes.travel_limit(0.0, 1.0, 0.05)[0])
+        self.assertNotIn(0.05, {round(math.hypot(v[0], v[2]), 9)
+                                for v in square_v})
 
 
 class SlideShapeTest(unittest.TestCase):

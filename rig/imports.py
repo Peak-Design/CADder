@@ -202,6 +202,136 @@ def held(scene):
     return out
 
 
+def reveal(context, stem):
+    """Makes the import `stem` and its rig reachable in the view layer for
+    one job, and returns what to give to restore() after it.
+
+    An update changes the rig of an import: it removes the constraints and
+    the drivers, and builds them again in Edit mode. Blender does neither
+    for an object that is not in the view layer. Live CutterRig
+    (2026-09-26): with two of three configurations excluded, a Refresh
+    Model with "Add and Remove Bones" took every limit, IK and driver off
+    their rigs, then failed. "Build a New Rig" left them with no bones.
+
+    So the job takes the exclude and hide flags off the collections on the
+    way down to the top collection of the import and to the collections of
+    its rig, and off the rig itself. It leaves the collections below those
+    alone: the add-on excludes some of them on purpose (the prototypes of
+    the instancing mode, the widgets). What changed is kept by NAME, because
+    the job can replace a collection, and a layer collection has no check
+    for that: a write to one that is gone stops Blender.
+    """
+    import bpy
+    view_layer = context.view_layer
+    chains = {}
+    stack = [(view_layer.layer_collection, [])]
+    while stack:
+        lc, chain = stack.pop()
+        chain = chain + [lc]
+        chains[lc.collection.name] = chain
+        stack.extend((child, chain) for child in lc.children)
+
+    wanted = []
+    for coll in bpy.data.collections:
+        try:
+            if coll.get("SWMESH_role") == "top" and coll.get(TAG_FILE) == stem:
+                wanted.append(coll.name)
+        except ReferenceError:
+            continue
+    rigs = []
+    for obj in bpy.data.objects:
+        try:
+            if obj.type == "ARMATURE" and obj.get("RIG_rig")                     and obj.get(TAG_IMPORT) == stem:
+                rigs.append(obj)
+                wanted.extend(c.name for c in obj.users_collection)
+        except ReferenceError:
+            continue
+
+    names, seen = [], set()
+    for name in wanted:
+        # The first entry is the scene's own collection: it has no flags.
+        for lc in chains.get(name, [])[1:]:
+            if lc.collection.name not in seen:
+                seen.add(lc.collection.name)
+                names.append(lc.collection.name)
+    # Parents first: a child's own flag only counts once its parent shows.
+    names.sort(key=lambda name: len(chains[name]))
+    undo = []
+    for name in names:
+        # Found again each time: showing a parent can build the layer
+        # collections below it again.
+        lc = _layer_collection(view_layer, name)
+        if lc is None:
+            continue
+        if lc.exclude:
+            undo.append(("layer", name, "exclude"))
+            lc.exclude = False
+        if lc.hide_viewport:
+            undo.append(("layer", name, "hide_viewport"))
+            lc.hide_viewport = False
+        if lc.collection.hide_viewport:
+            undo.append(("collection", name, "hide_viewport"))
+            lc.collection.hide_viewport = False
+    if undo:
+        view_layer.update()
+    for arm in rigs:
+        if arm.hide_viewport:
+            undo.append(("object", arm.name, "hide_viewport"))
+            arm.hide_viewport = False
+        if arm.name in view_layer.objects and arm.hide_get():
+            undo.append(("object", arm.name, "hide"))
+            arm.hide_set(False)
+    if undo:
+        view_layer.update()
+    return undo
+
+
+def restore(context, undo):
+    """Puts back each flag that reveal() took off, the last first. Each
+    target is found again by name. One that the job removed is skipped."""
+    if not undo:
+        return
+    import bpy
+    view_layer = context.view_layer
+    for kind, name, attr in reversed(undo):
+        try:
+            if kind == "layer":
+                lc = _layer_collection(view_layer, name)
+                if lc is not None:
+                    setattr(lc, attr, True)
+            elif kind == "collection":
+                coll = bpy.data.collections.get(name)
+                if coll is not None:
+                    coll.hide_viewport = True
+            else:
+                obj = bpy.data.objects.get(name)
+                if obj is None:
+                    continue
+                if attr == "hide":
+                    if obj.name in view_layer.objects:
+                        obj.hide_set(True)
+                else:
+                    obj.hide_viewport = True
+        except (ReferenceError, RuntimeError, AttributeError):
+            continue
+    try:
+        view_layer.update()
+    except (ReferenceError, RuntimeError):
+        pass
+
+
+def _layer_collection(view_layer, name):
+    """The layer collection of the collection `name` in `view_layer`, found
+    now, or None."""
+    stack = [view_layer.layer_collection]
+    while stack:
+        lc = stack.pop()
+        if lc.collection.name == name:
+            return lc
+        stack.extend(lc.children)
+    return None
+
+
 def _collections_of(scene):
     out, seen, stack = [], set(), [scene.collection]
     while stack:

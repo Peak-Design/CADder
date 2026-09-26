@@ -70,3 +70,10 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
 - The bone widgets no longer show in the scene when it holds two rigs.
 - A lock on one rig no longer stops the build of the rig of another
   assembly.
+- Refresh Model keeps the rigs of hidden configurations. A refresh of a
+  configuration that was excluded or hidden in the view layer took the
+  limits and the other constraints off its rig with "Add and Remove Bones",
+  and "Build a New Rig" left the rig with no bones. The refresh now shows
+  the configuration for its work and hides it again after. A rig build
+  that cannot reach its rig stops before it changes anything, and says
+  which collection to show.

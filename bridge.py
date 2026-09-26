@@ -822,6 +822,12 @@ def _run_one(payload: dict) -> dict:
     # in SolidWorks.
     said = rig_progress.JobProgress(bpy.context)
     rig_hold = {}
+    # An import the user excluded or hid in the view layer is still brought
+    # up to date, rig and all, and then hidden again (imports.reveal).
+    from .rig import imports
+    stem = payload.get("import_name") or os.path.splitext(
+        os.path.basename(mesh_path or step_path))[0]
+    shown = imports.reveal(bpy.context, stem) if stem else []
     try:
         return _run_stages(payload, stages, log, manifest_path, step_path,
                            mesh_path, want, have_manifest, said, rig_hold)
@@ -838,6 +844,7 @@ def _run_one(payload: dict) -> dict:
                     print("[CADLink] could not put the parts back on the "
                           "rig:", exc)
             released.finish()
+        imports.restore(bpy.context, shown)
         said.close()
 
 

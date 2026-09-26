@@ -87,6 +87,49 @@ class RigLocked(Exception):
     """Raised instead of replacing a rig the user locked."""
 
 
+class RigHidden(Exception):
+    """Raised before a build changes anything, when the rig is out of reach
+    in the view layer: Blender builds no bones and no constraints there."""
+
+
+def _out_of_reach(context, collection, arm_obj=None):
+    """The name of what keeps a rig in `collection` out of reach in the view
+    layer, or None when a build can work there.
+
+    Edit mode and the constraint passes need the rig in the view layer and
+    drawn. Live CutterRig (2026-09-26): an update of an excluded configuration
+    removed every constraint of its rig and then failed at Edit mode, and a
+    new rig for it was left with no bones. So the build checks first and
+    changes nothing when it cannot finish.
+    """
+    chain, stack = None, [(context.view_layer.layer_collection, [])]
+    while stack:
+        lc, parents = stack.pop()
+        path = parents + [lc]
+        if lc.collection == collection:
+            chain = path
+            break
+        stack.extend((child, path) for child in lc.children)
+    if chain is None:
+        return collection.name
+    for lc in chain:
+        if lc.exclude or lc.hide_viewport \
+                or getattr(lc.collection, "hide_viewport", False):
+            return lc.collection.name
+    if arm_obj is not None and (arm_obj.hide_viewport
+                                or arm_obj.name not in context.view_layer.objects):
+        return arm_obj.name
+    return None
+
+
+def _refuse_out_of_reach(context, collection, arm_obj=None):
+    hidden = _out_of_reach(context, collection, arm_obj)
+    if hidden is not None:
+        raise RigHidden(
+            "Cannot build the rig: %s is hidden or excluded in the view layer. "
+            "Show it, then build the rig again." % hidden)
+
+
 def is_locked(arm_obj):
     return bool(arm_obj is not None and arm_obj.get(LOCK_TAG))
 
@@ -1454,10 +1497,12 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
         collection = settle_collection(context, manifest, arm_obj) \
             or _rig_collection_of(arm_obj) \
             or _place_rig_collection(context, manifest, rig_name)
+        _refuse_out_of_reach(context, collection, arm_obj)
         orphans = _clear_generated(context, arm_obj, collection,
                                    manifest.source_path or "")
     else:
         collection = _place_rig_collection(context, manifest, rig_name)
+        _refuse_out_of_reach(context, collection)
         _remove_previous_rig(collection)
 
         # ops.armature_add would depend on cursor, context overrides and the

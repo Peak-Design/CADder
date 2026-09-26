@@ -782,6 +782,9 @@ if bpy is not None:
                 # Not an error: the user asked for this rig to stay.
                 self.report({"INFO"}, str(exc))
                 return {"CANCELLED"}
+            except rig_build.RigHidden as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
             except ManifestError as exc:
                 _STATE["error"] = str(exc)
                 self.report({"ERROR"}, str(exc))

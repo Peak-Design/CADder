@@ -412,6 +412,98 @@ def run_moved_rig(tmp, mode, new_part=False):
     return where
 
 
+def rig_signature(arm_obj):
+    """The bones, their constraints and the drivers of a rig: what an
+    update of a hidden import took off the rig."""
+    bones = {}
+    for pb in arm_obj.pose.bones:
+        bones[pb.name] = [(c.type, c.name, getattr(c, "subtarget", ""))
+                          for c in pb.constraints]
+    anim = arm_obj.animation_data
+    drivers = sorted(fc.data_path for fc in anim.drivers) if anim else []
+    return bones, drivers
+
+
+def _layer_of(collection):
+    stack = [bpy.context.view_layer.layer_collection]
+    while stack:
+        lc = stack.pop()
+        if lc.collection == collection:
+            return lc
+        stack.extend(lc.children)
+    return None
+
+
+def run_hidden(tmp, mode, how):
+    """Found 2026-09-26: a Refresh with "Add and Remove Bones" took every
+    constraint and driver off the rigs of the configurations the user had
+    excluded in the view layer, and "Build a New Rig" left them with no
+    bones. The job shows the import for its own work and hides it again."""
+    where = "hidden (%s): %s" % (how, mode)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    frame = Matrix([tuple(r) for r in native_import.up_frame("ZPOS")])
+    mesh, man = export(tmp, BEFORE, 0.4)
+    if not send(mesh, man, "FLAT", "ZPOS").get("ok"):
+        fail(where, "the first send failed")
+    arm_obj = rig_object()
+    before = rig_signature(arm_obj)
+    if not any(c for cs in before[0].values() for c in cs):
+        fail(where, "the rig has no constraint to lose")
+
+    top = next(c for c in bpy.data.collections
+               if c.get("SWMESH_role") == "top" and c.get("SWMESH_file") == "app")
+    held = [top] + [c for c in arm_obj.users_collection if c is not top]
+    if how == "exclude":
+        for coll in held:
+            _layer_of(coll).exclude = True
+    elif how == "monitor":
+        for coll in held:
+            coll.hide_viewport = True
+    else:
+        arm_obj.hide_viewport = True
+    bpy.context.view_layer.update()
+
+    mesh, man = export(tmp, AFTER, 0.45)
+    result = send(mesh, man, "FLAT", "ZPOS", update=True, rig_mode=mode)
+    if not result.get("ok"):
+        fail(where, "the refresh failed: %s" % result.get("error"))
+    arm_obj = rig_object()
+    if arm_obj is None:
+        fail(where, "the rig is gone")
+
+    # The user's view comes back as it was...
+    if how == "exclude":
+        if not all(_layer_of(c) is None or _layer_of(c).exclude for c in held):
+            fail(where, "the import is no longer excluded")
+        for coll in held:
+            if _layer_of(coll) is not None:
+                _layer_of(coll).exclude = False
+    elif how == "monitor":
+        if not all(c.hide_viewport for c in held):
+            fail(where, "the import is no longer hidden")
+        for coll in held:
+            coll.hide_viewport = False
+    else:
+        if mode != "REGENERATE" and not arm_obj.hide_viewport:
+            fail(where, "the rig is no longer hidden")
+        arm_obj.hide_viewport = False
+    bpy.context.view_layer.update()
+
+    # ...and the rig in it is whole: every bone, constraint and driver, the
+    # parts on their SolidWorks poses and on their bones.
+    after = rig_signature(arm_obj)
+    if after != before:
+        lost = sorted(set(before[0]) - set(after[0]))
+        fail(where, "the rig changed: %d bone(s) lost %s, constraints %s, "
+             "drivers %d -> %d" % (len(lost), lost[:4],
+                                   "differ" if before[0] != after[0] else "same",
+                                   len(before[1]), len(after[1])))
+    check_on_sw_pose(where, frame)
+    on_rig(where, arm_obj)
+    check_carried(where, arm_obj, frame)
+    return where
+
+
 def run_other_assembly(tmp, mode):
     """Found 2026-09-23: a refresh of an assembly that is no longer in the
     scene released the rig of the one that is. The update then built the
@@ -501,6 +593,8 @@ def main():
         done.append(run_moved_rig(tmp, mode))
         done.append(run_moved_rig(tmp, mode, new_part=True))
         done.append(run_other_assembly(tmp, mode))
+        for how in ("exclude", "monitor", "rig"):
+            done.append(run_hidden(tmp, mode, how))
     done.append(run_nla_tweak(tmp))
     print("rig_refresh_pose_smoke: OK: %d refreshes of a posed rig put every "
           "part back on its SolidWorks pose and bound it there" % len(done))

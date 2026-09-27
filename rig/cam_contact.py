@@ -47,7 +47,11 @@ _HELPER_LENGTH_M = 0.02
 # by r(1 - cos(half the turn)), a tenth of a millimetre on a 37.5 mm roller
 # over a coarse profile (live cam-follower2, 2026-09-15).
 _SHARP_RAD = math.radians(0.05)
-_FAN_STEP_RAD = math.radians(6.0)
+# A fan step of this angle sags r(1 - cos(step / 2)) between its rows:
+# 1.4 um on a 37.5 mm roller. At 6 degrees it was 51 um, and a roller on a
+# coarse profile rested 43 um off the point the rig was built at (the
+# corpus rigging test, 2026-09-27).
+_FAN_STEP_RAD = math.radians(1.0)
 # How far outside the cam the projection starts, in cam sizes. The first
 # face the ray meets is the one the follower rests on.
 _MARGIN_FACTOR = 1.5

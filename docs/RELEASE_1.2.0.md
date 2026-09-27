@@ -92,3 +92,7 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
 - A roller follower rests where the rig was built. Its offset of the cam
   was 51 um short at sharp edges on a coarse profile, and it is now under
   2 um.
+- A STEP file with a color out of range imports. SolidWorks writes
+  -1 for "no color", and the import stopped with "Color out". The import
+  now reads a copy with those colors made neutral, and keeps the other
+  colors.

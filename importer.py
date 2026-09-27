@@ -231,6 +231,43 @@ def _bodies(shape):
     return {k: root(v) for k, v in out.items()}
 
 
+
+# A color that OCCT takes: each part from 0 to 1.
+_COLOUR_RGB = None
+
+
+def neutral_colour_copy(path, neutral=0.8):
+    """A copy of a STEP file with each COLOUR_RGB that has a part out of
+    0..1 made a neutral gray, in the folder of the temporary files, or None
+    when the file has no such color. SolidWorks writes -1 for "no color"."""
+    import re
+    import tempfile
+    global _COLOUR_RGB
+    if _COLOUR_RGB is None:
+        num = r"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)"
+        _COLOUR_RGB = re.compile(
+            r"COLOUR_RGB\s*\(\s*('[^']*')\s*,\s*%s\s*,\s*%s\s*,\s*%s\s*\)"
+            % (num, num, num))
+    changed = [0]
+
+    def fix(m):
+        values = [float(m.group(i)) for i in (2, 3, 4)]
+        if all(0.0 <= v <= 1.0 for v in values):
+            return m.group(0)
+        changed[0] += 1
+        return "COLOUR_RGB(%s,%r,%r,%r)" % (m.group(1), neutral, neutral, neutral)
+
+    with open(path, "r", encoding="latin-1", newline="") as fh:
+        text = fh.read()
+    text = _COLOUR_RGB.sub(fix, text)
+    if not changed[0]:
+        return None
+    fd, out = tempfile.mkstemp(suffix=".step", prefix="cadder_colors_")
+    with os.fdopen(fd, "w", encoding="latin-1", newline="") as fh:
+        fh.write(text)
+    print("Made %d color(s) out of range neutral" % changed[0])
+    return out
+
 class NativeMeshData:
     """Lightweight mesh data holder returned by native extraction path.
 
@@ -1041,6 +1078,30 @@ class ReadSTEP:
         return " " + res + " "
 
     def transfer_with_units(self, filename):
+        """Reads and transfers the STEP file. SolidWorks writes
+        COLOUR_RGB(-1,-1,-1) for "no color", and OCCT stops the whole
+        transfer on it with "Color out" (the corpus rigging test,
+        2026-09-27: three cam samples did not import). Then a copy with
+        those colors made neutral is read instead."""
+        try:
+            return self._transfer_with_units(self.filename)
+        except Exception as exc:  # noqa: BLE001
+            if "Color out" not in str(exc):
+                raise
+            fixed = neutral_colour_copy(self.filename)
+            if fixed is None:
+                raise
+        print("The file has colors out of range (SolidWorks writes -1 for no "
+              "color). Reading a copy with those colors made neutral")
+        try:
+            return self._transfer_with_units(fixed)
+        finally:
+            try:
+                os.remove(fixed)
+            except OSError:
+                pass
+
+    def _transfer_with_units(self, path):
         print("Init transfer with units")
 
         # Init new doc and reader
@@ -1055,7 +1116,7 @@ class ReadSTEP:
 
         # Single ReadFile: the XCAF reader wraps a STEPControl_Reader
         # that we can use for unit detection via ChangeReader().
-        status = step_reader.ReadFile(self.filename)
+        status = step_reader.ReadFile(path)
         if status != IFSelect_RetDone:
             raise AssertionError("The file is damaged, or it is not a STEP file")
 
@@ -1164,7 +1225,7 @@ class ReadSTEP:
                     step_reader.SetNameMode(True)
                     step_reader.SetMatMode(True)
                     step_reader.SetLayerMode(True)
-                    status = step_reader.ReadFile(self.filename)
+                    status = step_reader.ReadFile(path)
                     if status != IFSelect_RetDone:
                         raise AssertionError(
                             "The file is damaged, or it is not a STEP file "

@@ -182,6 +182,9 @@ class BuildResult:
     # anything joined to the screw about the screw's own axis. See
     # graph.py BonePlan.spin_name.
     spin_names: Dict[str, str] = field(default_factory=dict)
+    # group id of the follower of a plane mirror -> its hidden carrier bone.
+    # See graph.py BonePlan.mirror_carrier_name.
+    mirror_carrier_names: Dict[str, str] = field(default_factory=dict)
     contact_mesh_names: Dict[str, str] = field(default_factory=dict)  # joint id -> rail or patch object name
     # Swing-cone balls AND cone_spin collapses: bone_names[gid] is the
     # hidden DEF bone (geometry and child bones ride the clamped result).
@@ -1618,6 +1621,20 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                 eb.inherit_scale = "NONE"
             elif bp.parent_group_id is not None:
                 eb.parent = edit_bones[parent_name]
+            if bp.mirror_carrier_name:
+                # The carrier rests where the follower rests, between it and
+                # its parent. drivers.py poses it as the mirror image of the
+                # plane of the driver's face.
+                mb = edit_bones.new(bp.mirror_carrier_name)
+                mb.head = (0.0, 0.0, 0.0)
+                mb.tail = (0.0, 1.0, 0.0)
+                mb.matrix = eb.matrix.copy()
+                mb.length = eb.length
+                mb.use_connect = False
+                mb.parent = eb.parent
+                eb.parent = mb
+                helpers_coll.assign(mb)
+                result.mirror_carrier_names[bp.group.id] = mb.name
             result.bone_names[bp.group.id] = eb.name
             if bp.spin_name:
                 # A screw's TURN, on a bone of its own: a child of the body,
@@ -1971,7 +1988,8 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
                      + list(result.cone_frame_names.values())
                      + list(result.cam_prj_names.values())
                      + list(result.cam_rel_names.values())
-                     + list(result.cam_off_names.values())):
+                     + list(result.cam_off_names.values())
+                     + list(result.mirror_carrier_names.values())):
             pose.bones[name].rotation_mode = "YXZ"
 
         # Every bone of this build also names its manifest, so an update of
@@ -2111,10 +2129,18 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             if body is not None:
                 body.lock_location = [True, True, True]
 
+        for gid, name in result.mirror_carrier_names.items():
+            # Posed by its drivers only, and skipped by the parenting.
+            pb = pose.bones[name]
+            pb["RIG_helper"] = gid
+            pb.lock_location = [True, True, True]
+            pb.lock_rotation = [True, True, True]
+            pb.lock_scale = [True, True, True]
         n_drivers, drv_warnings = drivers.build(
             arm_obj, manifest, plan, result.bone_names,
             unit_scale=unit_scale, context=context,
-            spin_names=result.spin_names)
+            spin_names=result.spin_names,
+            carrier_names=result.mirror_carrier_names)
         result.warnings.extend(drv_warnings)
         result.warnings.extend(cam_contact.apply(
             arm_obj, manifest, plan, result, cam_surfaces, unit_scale))

@@ -6,6 +6,7 @@ import importlib
 import math
 import os
 import sys
+import copy
 import unittest
 
 # The addons directory (the parent of the CADder repo root) makes
@@ -341,6 +342,25 @@ class TestHingePlan(unittest.TestCase):
         order = [b.group.id for b in plan.bones]
         self.assertLess(order.index("g000"), order.index("g001"))
         self.assertLess(order.index("g001"), order.index("g002"))
+
+    def test_a_plane_mirror_follower_rides_a_carrier(self):
+        # sym4: two free joints, the second the mirror image of the first
+        # across a plane. Its bone rides a hidden carrier, the mirror image
+        # of the plane of the first one's face (drivers._mirror_plane).
+        data = hinge_manifest()
+        data["joints"][0]["type"] = "free"
+        data["joints"][0]["coupling"] = None
+        second = copy.deepcopy(data["joints"][0])
+        second.update(id="j002", child_group="g002")
+        second["coupling"] = {"kind": "mirror", "driver_joint": data["joints"][0]["id"],
+                              "mirror_scope": "plane",
+                              "mirror_plane": {"point": [0.05, 0, 0], "normal": [1, 0, 0]}}
+        data["joints"].append(second)
+        data["rigid_groups"].append(dict(data["rigid_groups"][1], id="g002", name="second",
+                                         components=[]))
+        plan = plan_of(data)
+        self.assertTrue(plan.bone_by_group["g002"].mirror_carrier_name.startswith("MIR_"))
+        self.assertEqual(plan.bone_by_group["g001"].mirror_carrier_name, "")
 
     def test_free_joint_leaves_child_unparented(self):
         data = hinge_manifest()

@@ -94,3 +94,7 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   colors.
 - A part with no mates, free in SolidWorks, gets the widget of a free
   body on its bone.
+- A symmetric mate between two loose parts holds when a part is tilted
+  and slid in its face plane at once. The second part slid in the plane
+  it rests in, not in its tilted face plane, and its face came off the
+  mirror image by some millimeters.

@@ -140,6 +140,15 @@ class BonePlan:
     # which are part of the turning body.
     spin_name: str = ""
     parent_spin: bool = False
+    # The follower of a plane mirror (a symmetric mate) rides a hidden
+    # carrier bone between it and its parent. The carrier is the mirror
+    # image of the PLANE of the driver's face: its offset along the tilted
+    # normal, and its two tilts. The follower's own freedoms, two slides
+    # and a turn, then act in that tilted plane. Driven channel by channel
+    # on the follower, a slide of the driver in its face plane, after a
+    # tilt, moved the plane along the tilted normal, and the follower did
+    # not follow (the corpus sym4, 2026-09-27: 4 mm).
+    mirror_carrier_name: str = ""
 
 
 @dataclass
@@ -1017,6 +1026,12 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             bp.ball_def_name = _unique_name("DEF_" + bp.bone_name, taken_names, gid)
             bp.ball_pole_name = _unique_name("POLE_" + bp.bone_name, taken_names, gid)
             bp.ball_goal_name = _unique_name("GOAL_" + bp.bone_name, taken_names, gid)
+        if joint is not None and joint.coupling is not None \
+                and joint.coupling.kind == "mirror" \
+                and joint.coupling.mirror_scope == "plane" \
+                and joint.coupling.driver_joint:
+            bp.mirror_carrier_name = _unique_name(
+                "MIR_" + bp.bone_name, taken_names, gid)
         if gid in plan.slide_rest and parent_id is not None:
             bp.slide_name = _unique_name("SLD_" + bp.bone_name, taken_names, gid)
             bp.slide_rest_length = plan.slide_rest[gid]

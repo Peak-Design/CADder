@@ -50,6 +50,52 @@ def _add_driver(arm_obj, pose_bone, path, source_bone, transform_type, constant,
     return fcurve
 
 
+def _expression_driver(arm_obj, pose_bone, path, index, source_bone,
+                       variables, expression):
+    """A driver of one channel from several local channels of one bone:
+    `variables` is [(name, transform type)]."""
+    _remove_driver(pose_bone, path, index)
+    fcurve = pose_bone.driver_add(path, index)
+    driver = fcurve.driver
+    driver.type = "SCRIPTED"
+    while driver.variables:
+        driver.variables.remove(driver.variables[0])
+    for name, ttype in variables:
+        var = driver.variables.new()
+        var.name = name
+        var.type = "TRANSFORMS"
+        target = var.targets[0]
+        target.id = arm_obj
+        target.bone_target = source_bone
+        target.transform_type = ttype
+        target.transform_space = "LOCAL_SPACE"
+    driver.expression = expression
+    return fcurve
+
+
+def _mirror_plane(arm_obj, carrier, source_bone):
+    """Poses the carrier of a plane mirror follower as the mirror image of
+    the plane of the driver's face. Both rest with local +Y on the mirror
+    normal, so the reflection flips local Y.
+
+    The driver's pose is T(loc) Rz Rx Ry (Euler YXZ: the turn about Y, the
+    normal, comes first). Its face plane then has the normal
+    n = Rz Rx (0, 1, 0) = (-cos rx sin rz, cos rx cos rz, sin rx) and the
+    offset d = loc . n. The carrier is the mirror image of T(d n) Rz Rx:
+    turned by -rx and -rz, and moved by d (nx, -ny, nz)."""
+    loc = [("x", "LOC_X"), ("y", "LOC_Y"), ("z", "LOC_Z"),
+           ("rx", "ROT_X"), ("rz", "ROT_Z")]
+    d = ("(x*(-cos(rx)*sin(rz)) + y*(cos(rx)*cos(rz)) + z*sin(rx))")
+    for index, part in ((0, "(-cos(rx)*sin(rz))"), (1, "(-cos(rx)*cos(rz))"),
+                        (2, "sin(rx)")):
+        _expression_driver(arm_obj, carrier, "location", index, source_bone,
+                           loc, "%s*%s" % (d, part))
+    _expression_driver(arm_obj, carrier, "rotation_euler", 0, source_bone,
+                       [("rx", "ROT_X")], "-rx")
+    _expression_driver(arm_obj, carrier, "rotation_euler", 2, source_bone,
+                       [("rz", "ROT_Z")], "-rz")
+
+
 # The units a table's input axis is keyed in: see table_driver.
 KEY_DEGREES = 180.0 / math.pi
 KEY_MILLIMETRES = 1000.0
@@ -101,7 +147,7 @@ def table_driver(arm_obj, own_pb, source_bone, driver_turns, driven_turns,
 
 
 def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
-          context=None, spin_names=None):
+          context=None, spin_names=None, carrier_names=None):
     """Creates every coupling driver. bone_names maps group id -> actual
     bone name (Blender may have renamed on collision, so plan names are not
     trusted). spin_names maps a screw body to the hidden child bone that
@@ -189,6 +235,15 @@ def build(arm_obj, manifest: Manifest, plan, bone_names, unit_scale=1.0,
             # "rigid": an assembly MIRROR FEATURE. There the instance IS a
             # full reflection of its source, so all six follow and the pair
             # really is one rigid mirror image.
+            carrier = pose.bones.get((carrier_names or {}).get(own_group, ""))
+            if c.mirror_scope == "plane" and carrier is not None:
+                _mirror_plane(arm_obj, carrier, source_bone)
+                # the follower keeps its own freedoms, in the tilted plane
+                own_pb.lock_location[1] = True
+                own_pb.lock_rotation[0] = True
+                own_pb.lock_rotation[2] = True
+                count += 1
+                continue
             specs = (
                 ("location", 1, "LOC_Y", -1.0),
                 ("rotation_euler", 0, "ROT_X", -1.0),

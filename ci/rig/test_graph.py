@@ -352,7 +352,8 @@ class TestHingePlan(unittest.TestCase):
         plan = plan_of(data)
         self.assertEqual(plan.free_groups, ["g001"])
         self.assertIsNone(plan.bone_by_group["g001"].parent_group_id)
-        self.assertIsNone(plan.bone_by_group["g001"].joint)
+        # the root carries its free joint: it says the body moves every way
+        self.assertEqual(plan.bone_by_group["g001"].joint.type, "free")
 
     @staticmethod
     def _carrier_data(j1_type="revolute", j2_type="revolute",

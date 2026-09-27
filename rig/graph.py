@@ -984,10 +984,17 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
     assembly_stem = manifest.step_file.replace("\\", "/").rsplit("/", 1)[-1]
     if "." in assembly_stem:
         assembly_stem = assembly_stem.rsplit(".", 1)[0]
+    # A free joint that is no tree edge leaves its body a root of its own.
+    # The root still carries it: the joint says where the body is, and its
+    # widget shows that it moves every way.
+    free_of = {j.child_group: j for j in manifest.joints
+               if j.type == "free" and j.child_group not in parent_of}
     while stack:
         gid = stack.pop()
         group = groups[gid]
         parent_id, joint = parent_of.get(gid, (None, None))
+        if joint is None:
+            joint = free_of.get(gid)
         is_root = gid == root_gid
         bp = BonePlan(
             group=group,

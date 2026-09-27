@@ -92,3 +92,5 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   -1 for "no color", and the import stopped with "Color out". The import
   now reads a copy with those colors made neutral, and keeps the other
   colors.
+- A part with no mates, free in SolidWorks, gets the widget of a free
+  body on its bone.

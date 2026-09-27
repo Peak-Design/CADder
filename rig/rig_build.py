@@ -307,7 +307,17 @@ def _bone_rest_matrix(manifest, bone_plan, unit_scale):
         # loc y negates, euler x and z negate, the rest come through
         # unchanged, and those three negating channels are exactly the ones
         # the symmetry constrains, so they are the only ones driven.
-        origin = _group_fallback_translation(manifest, bone_plan.group)
+        #
+        # They turn about their bone heads, so the heads must be mirror
+        # images too. A joint that names its point says so: a rig made in
+        # Blender puts each joint on the same point of its own body. The
+        # part's own origin is that only when the parts are mirrored, not
+        # two copies of one part (the corpus sym4, 2026-09-27: a tilt moved
+        # the second block 16 mm).
+        if joint is not None and joint.origin is not None:
+            origin = joint.origin
+        else:
+            origin = _group_fallback_translation(manifest, bone_plan.group)
         m = _frame_matrix(bone_plan.mirror_normal, None, origin)
         for i in range(3):
             m[i][3] *= unit_scale

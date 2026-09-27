@@ -164,6 +164,18 @@ class LoopPlan:
     # group id -> (min, max) radians on that bone's own Y, holding the
     # chain on the branch it rests on. See _branch_limits.
     branch_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    # A second helper and effector, `axis_arm` metres along the axis of the
+    # closure joint. The closure point alone lets the two sides turn apart
+    # about any line through it: a spatial loop came apart (the corpus
+    # rigging test, 2026-09-27: a landing gear, a Cardan joint between two
+    # shafts). Two points on the axis leave only the turn about it. A
+    # planar loop keeps its bones in the plane, and needs no second point.
+    axis_helper_name: str = ""
+    axis_effector_name: str = ""
+    axis_arm: float = 0.0
+    # Bones of the chain the user poses: a loop with a spare input holds
+    # them out of the solve, with their IK locked (see graph.build).
+    held: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -557,6 +569,104 @@ def _branch_limits(lp: Loop, driven: List[str], closure: Joint, parent_of):
     return limits
 
 
+def _spare_bones(driven: List[str], spare: int, cj: Joint, parent_of, lp: Loop):
+    """The bones of a chain to leave to the user: `spare` of them, those
+    whose loss leaves the solver the best hold on the closure point. The
+    hold is the smallest singular value of how the remaining joints move
+    that point. The root end, as before, unless another choice is clearly
+    better."""
+    from itertools import combinations
+    root_end = driven[len(driven) - spare:]
+    p = cj.origin
+    if p is None:
+        return root_end
+    normal = _unit(lp.plane_normal) if lp.planar and lp.plane_normal else None
+
+    def column(gid):
+        j = parent_of[gid][1]
+        if j.axis is None or j.origin is None:
+            return []
+        a = _unit(j.axis)
+        if j.type in ("revolute", "cylindrical", "pin_slot"):
+            cols = [_v_cross(a, _v_sub(p, j.origin))]
+        elif j.type == "prismatic":
+            cols = [a]
+        elif j.type == "ball":
+            cols = [_v_cross(e, _v_sub(p, j.origin))
+                    for e in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))]
+        else:
+            return []
+        if normal is not None:
+            cols = [_v_sub(c, tuple(x * _v_dot(c, normal) for x in normal))
+                    for c in cols]
+        return cols
+
+    def hold(keep):
+        cols = [c for gid in keep for c in column(gid)]
+        dims = 2 if normal is not None else 3
+        if len(cols) < dims:
+            return 0.0
+        # the smallest singular value, from the eigenvalues of J J^T
+        m = [[sum(c[r] * c[k] for c in cols) for k in range(3)] for r in range(3)]
+        return math.sqrt(max(0.0, _smallest_eigen(m, dims)))
+
+    best, best_hold = root_end, hold([g for g in driven if g not in root_end])
+    base = best_hold
+    for pick in combinations(driven, spare):
+        pick = list(pick)
+        h = hold([g for g in driven if g not in pick])
+        if h > best_hold:
+            best, best_hold = pick, h
+    # The root end stays unless the best is clearly better: the rigs built
+    # before keep their controls.
+    return root_end if base >= 0.5 * best_hold else best
+
+
+def _smallest_eigen(m, dims):
+    """The smallest of the `dims` largest eigenvalues of a symmetric 3x3
+    matrix: for a planar chain the matrix has rank two at most."""
+    a, b, c = m[0][0], m[1][1], m[2][2]
+    d, e, f = m[0][1], m[1][2], m[0][2]
+    p1 = d * d + e * e + f * f
+    q = (a + b + c) / 3.0
+    p2 = (a - q) ** 2 + (b - q) ** 2 + (c - q) ** 2 + 2.0 * p1
+    p = math.sqrt(p2 / 6.0)
+    if p < 1e-30:
+        return q
+    bm = [[(m[i][k] - (q if i == k else 0.0)) / p for k in range(3)] for i in range(3)]
+    det = (bm[0][0] * (bm[1][1] * bm[2][2] - bm[1][2] * bm[2][1])
+           - bm[0][1] * (bm[1][0] * bm[2][2] - bm[1][2] * bm[2][0])
+           + bm[0][2] * (bm[1][0] * bm[2][1] - bm[1][1] * bm[2][0]))
+    r = max(-1.0, min(1.0, det / 2.0))
+    phi = math.acos(r) / 3.0
+    e1 = q + 2.0 * p * math.cos(phi)
+    e3 = q + 2.0 * p * math.cos(phi + 2.0 * math.pi / 3.0)
+    e2 = 3.0 * q - e1 - e3
+    ordered = sorted((e1, e2, e3), reverse=True)
+    return ordered[dims - 1]
+
+
+# The closure joints whose axis the loop must hold, besides their point.
+_AXIS_CLOSURES = ("revolute", "cylindrical", "pin_slot", "fixed")
+
+
+def _axis_arm(lp: Loop, cj: Joint, joints) -> float:
+    """How far along the axis of its closure joint a loop gets its second
+    closure point, in metres, or 0 when the point alone holds it: a ball, a
+    joint with no axis, a planar loop. Half the reach of the loop from the
+    closure, so a small tilt moves the point well clear of the solver's
+    tolerance."""
+    if lp.planar or cj.type not in _AXIS_CLOSURES or cj.axis is None \
+            or cj.origin is None:
+        return 0.0
+    reach = 0.0
+    for jid in lp.member_joints:
+        j = joints.get(jid)
+        if j is not None and j.origin is not None:
+            reach = max(reach, _v_norm(_v_sub(j.origin, cj.origin)))
+    return max(0.5 * reach, 0.01)
+
+
 def _plan_slider(plan: "RigPlan", lp: Loop, cj: Joint,
                  parent_of) -> Optional[SliderPlan]:
     """Turns a cut slide into an aim pair, or explains why it cannot.
@@ -776,16 +886,30 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
         # around one ring is a five-bar with two inputs. Solved whole from
         # the screw, "the arm2 assembly can rotate around a pin on clamp2"
         # in SolidWorks and nothing in Blender could.
+        #
+        # The root end is not always a good one to free. Near a toggle the
+        # two bones left can hardly move the closure point, and the loop
+        # then tears after a millimetre of the other input (the corpus
+        # wrench made in Blender, 2026-09-27: the jaw freed, the handle and
+        # the link almost in line). So the bone freed is the one that
+        # leaves the best closure. When that is not the root end, it stays
+        # in the chain with its IK locked: the solver keeps the pose the
+        # user gives it.
         spare = max(0, lp.mobility - 1)
+        held = []
         if spare and len(driven_groups) > spare:
-            freed = driven_groups[len(driven_groups) - spare:]
-            driven_groups = driven_groups[:len(driven_groups) - spare]
+            freed = _spare_bones(driven_groups, spare, cj, parent_of, lp)
+            if freed == driven_groups[len(driven_groups) - spare:]:
+                driven_groups = driven_groups[:len(driven_groups) - spare]
+            else:
+                held = list(freed)
             plan.warnings.append(
                 "loop {}: it takes {} inputs, so {} stays posable beside "
                 "the driver".format(lp.id, lp.mobility,
                                     ", ".join(freed)))
         for gid in driven_groups:
-            solved_by[gid] = lp.id
+            if gid not in held:
+                solved_by[gid] = lp.id
         slides = []
         for gid in driven_groups:
             pj = parent_of[gid][1]
@@ -815,6 +939,8 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             driver_chain=list(driver_groups),
             chain_count=len(driven_groups) + len(slides),
             branch_limits=_branch_limits(lp, list(driven_groups), cj, parent_of),
+            axis_arm=_axis_arm(lp, cj, joints),
+            held=held,
         ))
 
     # Contact carrier chains fold into single posable bones AFTER loop
@@ -1004,6 +1130,11 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             "HLP_" + lplan.loop.id, taken_names, lplan.loop.id)
         lplan.effector_name = _unique_name(
             "EFF_" + lplan.loop.id, taken_names, lplan.loop.id)
+        if lplan.axis_arm > 0.0:
+            lplan.axis_helper_name = _unique_name(
+                "HLA_" + lplan.loop.id, taken_names, lplan.loop.id)
+            lplan.axis_effector_name = _unique_name(
+                "EFA_" + lplan.loop.id, taken_names, lplan.loop.id)
     for splan in plan.sliders:
         splan.a_aim_name = _unique_name(
             "AIM_" + splan.loop.id + "_a", taken_names, splan.loop.id)

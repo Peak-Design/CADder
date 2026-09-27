@@ -116,6 +116,24 @@ class HookeTests(unittest.TestCase):
                     for d in range(-1440, 1441))
         self.assertLess(worst, 1e-3, "the cut joint came apart by %.4f deg" % worst)
 
+    def test_a_frame_that_is_not_grounded_is_a_frame(self):
+        # A rig made with the Rigging module in Blender has a posable root
+        # and no grounded group. Its Cardan joint was left to the IK, and
+        # tore (the corpus rigging test, 2026-09-27).
+        m = manifest.load(LOCKED)
+        frames = [g for g in m.rigid_groups if g.grounded]
+        for g in m.rigid_groups:
+            g.grounded = False
+        plan = graph.build(m)
+        self.assertEqual(len(plan.hooke_notes), 1)
+        self.assertEqual(plan.loops, [], "the loop must get no IK")
+        for g in frames:
+            g.grounded = True           # the check below starts from them
+        loop = _hooke_loop(m)
+        worst = max(_closure_error(m, loop, math.radians(d * 0.25))
+                    for d in range(-1440, 1441))
+        self.assertLess(worst, 1e-3, "the cut joint came apart by %.4f deg" % worst)
+
     def test_output_speed_is_a_universal_joint(self):
         """The output turns once per input turn, faster and slower within
         it by exactly the bend: between cos(bend) and 1/cos(bend)."""

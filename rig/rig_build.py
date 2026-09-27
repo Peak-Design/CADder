@@ -66,6 +66,9 @@ def _rig_name(manifest) -> str:
     except (AttributeError, TypeError):
         base = ""
     return base + "_Rig" if base else _RIG_NAME_FALLBACK
+# The key of the second closure pair of a loop in helper_names and
+# effector_names: the loop id with this after it.
+AXIS_KEY = ":axis"
 _HELPER_LENGTH_M = 0.02
 _DEFAULT_BBOX_DIAG_M = 0.4
 # Width of a path joint's shrinkwrap ribbon: the bone can land up to half of
@@ -446,8 +449,9 @@ def _ik_driven_groups(plan):
     """
     driven = set()
     for lplan in getattr(plan, "loops", None) or []:
-        driven.update(lplan.driven_chain or [])
-        if lplan.ik_tip_group:
+        held = set(getattr(lplan, "held", None) or [])
+        driven.update(g for g in (lplan.driven_chain or []) if g not in held)
+        if lplan.ik_tip_group and lplan.ik_tip_group not in held:
             driven.add(lplan.ik_tip_group)
     return driven
 
@@ -1841,6 +1845,33 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             helpers_coll.assign(eb)
             result.effector_names[lplan.loop.id] = eb.name
 
+            # The second closure point, out along the axis of the closure
+            # joint (graph.LoopPlan.axis_arm): the same pair, moved.
+            if lplan.axis_helper_name and cj.axis is not None:
+                m2 = m.copy()
+                a = Vector(cj.axis).normalized() * (lplan.axis_arm * unit_scale)
+                for i in range(3):
+                    m2[i][3] += a[i]
+                hb = edit_bones.new(lplan.axis_helper_name)
+                hb.head = (0.0, 0.0, 0.0)
+                hb.tail = (0.0, 1.0, 0.0)
+                hb.matrix = frame @ m2
+                hb.length = _HELPER_LENGTH_M * unit_scale
+                hb.use_connect = False
+                hb.parent = edit_bones[result.helper_names[lplan.loop.id]].parent
+                helpers_coll.assign(hb)
+                result.helper_names[lplan.loop.id + AXIS_KEY] = hb.name
+                fb = edit_bones.new(lplan.axis_effector_name)
+                fb.head = (0.0, 0.0, 0.0)
+                fb.tail = (0.0, 1.0, 0.0)
+                fb.matrix = frame @ m2
+                fb.length = _HELPER_LENGTH_M * unit_scale
+                fb.translate(fb.head - fb.tail)
+                fb.use_connect = False
+                fb.parent = edit_bones[result.bone_names[lplan.ik_tip_group]]
+                helpers_coll.assign(fb)
+                result.effector_names[lplan.loop.id + AXIS_KEY] = fb.name
+
         for splan in plan.sliders:
             # One duplicate per half, each carrying the OTHER half's pivot and
             # parented to that half's PARENT: never to the half itself, or
@@ -2036,7 +2067,11 @@ def build(context, manifest, plan: RigPlan, frame_rows=None, into=None) -> Build
             # Hand-posing either would silently detune the closure. Both
             # carry RIG_helper so parenting and matching skip them.
             for name in (result.helper_names[lplan.loop.id],
-                         result.effector_names[lplan.loop.id]):
+                         result.effector_names[lplan.loop.id],
+                         result.helper_names.get(lplan.loop.id + AXIS_KEY),
+                         result.effector_names.get(lplan.loop.id + AXIS_KEY)):
+                if name is None:
+                    continue
                 pb = pose.bones[name]
                 pb["RIG_helper"] = lplan.loop.id
                 pb.lock_location = [True, True, True]

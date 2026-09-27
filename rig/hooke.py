@@ -169,14 +169,26 @@ def _shape(manifest, loop):
     if loop.closure_kind not in ("ik", "none") or len(loop.member_joints) != 4:
         return None
     joints = manifest.joint_by_id()
-    groups = manifest.group_by_id()
     members = [joints.get(j) for j in loop.member_joints]
     if any(j is None or j.type != "revolute" or j.axis is None
            or j.origin is None for j in members):
         return None
-    shafts = [j for j in members if groups[j.parent_group].grounded]
+    # The two shafts turn on one frame: the body that carries two joints of
+    # the loop and hangs from none of them. It is the ground of a
+    # SolidWorks rig, and a posable root in a rig made in Blender, which is
+    # never grounded (the corpus rigging test, 2026-09-27: a Cardan joint
+    # made with the Rigging module was left to the IK, and tore). The
+    # motion below is relative to the frame, so any frame will do.
+    carried = {j.child_group for j in members}
+    on = {}
+    for j in members:
+        on.setdefault(j.parent_group, []).append(j)
+    frames = [g for g, js in on.items() if len(js) == 2 and g not in carried]
+    if len(frames) != 1:
+        return None
+    shafts = on[frames[0]]
     arms = [j for j in members if j not in shafts]
-    if len(shafts) != 2 or len(arms) != 2:
+    if len(arms) != 2:
         return None
     shaft_bodies = {s.child_group: s for s in shafts}
     cross = None

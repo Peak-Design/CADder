@@ -195,6 +195,27 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
         eff_pb.lock_ik_y = True
         eff_pb.lock_ik_z = True
 
+        # The second closure point, along the axis of the closure joint
+        # (graph.LoopPlan.axis_arm): a second target on the same chain.
+        # Blender joins the two into one IK tree and solves both.
+        from .rig_build import AXIS_KEY
+        helper2 = helper_names.get(lplan.loop.id + AXIS_KEY)
+        eff2 = pose.bones.get(effector_names.get(lplan.loop.id + AXIS_KEY, ""))
+        if helper2 and eff2 is not None:
+            for c in list(eff2.constraints):
+                if c.name.startswith(_IK_NAME):
+                    eff2.constraints.remove(c)
+            c2 = eff2.constraints.new("IK")
+            c2.name = _IK_NAME + lplan.loop.id + AXIS_KEY
+            c2.target = arm_obj
+            c2.subtarget = helper2
+            c2.use_tail = True
+            c2.chain_count = lplan.chain_count + 1
+            c2.use_stretch = con.use_stretch
+            eff2.lock_ik_x = True
+            eff2.lock_ik_y = True
+            eff2.lock_ik_z = True
+
         for gid in lplan.driven_chain:
             pb = pose.bones.get(bone_names.get(gid, ""))
             if pb is None:
@@ -205,5 +226,9 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
             _configure_chain_bone(pb, plan.bone_by_group[gid].joint,
                                   lplan.loop.planar,
                                   lplan.branch_limits.get(gid))
+            if gid in (getattr(lplan, "held", None) or ()):
+                # The user poses this bone (a loop with a spare input): the
+                # solver keeps its pose and moves the others.
+                pb.lock_ik_x = pb.lock_ik_y = pb.lock_ik_z = True
         count += 1
     return count, warnings

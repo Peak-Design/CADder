@@ -79,3 +79,16 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   the configuration for its work and hides it again after. A rig build
   that cannot reach its rig stops before it changes anything, and says
   which collection to show.
+- A loop that is not flat holds the axis of the joint that closes it. It
+  held only the point of that joint, so the two sides could turn apart
+  about it, and a spatial linkage came apart as it moved.
+- A universal joint built from its parts is driven exactly also when its
+  shafts turn on a body that is not fixed. A rig with a movable root left
+  it to the solver, and it tore.
+- A loop that moves in two ways gives the second control to the joint
+  that keeps the loop best closed. It was always the joint next to the
+  frame. On locking pliers near their locked pose, that left the screw
+  about a millimetre of travel. Now the handle turns on its pin.
+- A roller follower rests where the rig was built. Its offset of the cam
+  was 51 um short at sharp edges on a coarse profile, and it is now under
+  2 um.

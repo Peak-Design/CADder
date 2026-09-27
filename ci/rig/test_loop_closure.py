@@ -84,6 +84,24 @@ class SpareInput(unittest.TestCase):
         # locked
         self.assertEqual(lp.driven_chain, ["g3", "g2", "g1"])
 
+    def test_a_loop_that_is_not_marked_planar_holds_the_same_bone(self):
+        # The Rigging module left a loop with a ball unmarked: its pins are
+        # parallel, so the hold is measured in their plane all the same.
+        m = _pliers()
+        m.loops[0].planar = False
+        m.loops[0].plane_normal = None
+        (lp,) = graph.build(m).loops
+        self.assertNotIn("g1", lp.held)
+        self.assertEqual(len(lp.held), 1)
+
+    def test_a_chain_with_a_slide_gets_no_second_point(self):
+        # two targets on a chain stop its stretch bone
+        m = _spatial()
+        m.joint_by_id()["j3"].type = "prismatic"      # the driven side
+        (lp,) = graph.build(m).loops
+        self.assertEqual(lp.driven_chain, ["g3"])
+        self.assertEqual(lp.axis_arm, 0.0)
+
     def test_one_input_holds_no_bone(self):
         plan = graph.build(_pliers(mobility=1))
         self.assertEqual(plan.loops[0].held, [])

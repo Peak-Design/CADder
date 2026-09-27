@@ -170,6 +170,8 @@ class LoopPlan:
     # rigging test, 2026-09-27: a landing gear, a Cardan joint between two
     # shafts). Two points on the axis leave only the turn about it. A
     # planar loop keeps its bones in the plane, and needs no second point.
+    # Nor does a chain with a slide: its stretch bone stops stretching with
+    # two targets on the chain.
     axis_helper_name: str = ""
     axis_effector_name: str = ""
     axis_arm: float = 0.0
@@ -601,14 +603,23 @@ def _spare_bones(driven: List[str], spare: int, cj: Joint, parent_of, lp: Loop):
                     for c in cols]
         return cols
 
+    def gram(cols):
+        return [[sum(c[r] * c[k] for c in cols) for k in range(3)] for r in range(3)]
+
+    # The directions the whole chain can move the closure point in: three,
+    # or two when its pins are parallel. The hold is measured in those.
+    full = gram([c for gid in driven for c in column(gid)])
+    top = _eigen3(full)[0]
+    dims = sum(1 for e in _eigen3(full) if e > 1e-6 * max(top, 1e-30))
+    if normal is not None:
+        dims = min(dims, 2)
+
     def hold(keep):
         cols = [c for gid in keep for c in column(gid)]
-        dims = 2 if normal is not None else 3
-        if len(cols) < dims:
+        if not dims or len(cols) < dims:
             return 0.0
-        # the smallest singular value, from the eigenvalues of J J^T
-        m = [[sum(c[r] * c[k] for c in cols) for k in range(3)] for r in range(3)]
-        return math.sqrt(max(0.0, _smallest_eigen(m, dims)))
+        # the singular value in the last of those directions
+        return math.sqrt(max(0.0, _eigen3(gram(cols))[dims - 1]))
 
     best, best_hold = root_end, hold([g for g in driven if g not in root_end])
     base = best_hold
@@ -622,9 +633,8 @@ def _spare_bones(driven: List[str], spare: int, cj: Joint, parent_of, lp: Loop):
     return root_end if base >= 0.5 * best_hold else best
 
 
-def _smallest_eigen(m, dims):
-    """The smallest of the `dims` largest eigenvalues of a symmetric 3x3
-    matrix: for a planar chain the matrix has rank two at most."""
+def _eigen3(m):
+    """The eigenvalues of a symmetric 3x3 matrix, the largest first."""
     a, b, c = m[0][0], m[1][1], m[2][2]
     d, e, f = m[0][1], m[1][2], m[0][2]
     p1 = d * d + e * e + f * f
@@ -632,7 +642,7 @@ def _smallest_eigen(m, dims):
     p2 = (a - q) ** 2 + (b - q) ** 2 + (c - q) ** 2 + 2.0 * p1
     p = math.sqrt(p2 / 6.0)
     if p < 1e-30:
-        return q
+        return [q, q, q]
     bm = [[(m[i][k] - (q if i == k else 0.0)) / p for k in range(3)] for i in range(3)]
     det = (bm[0][0] * (bm[1][1] * bm[2][2] - bm[1][2] * bm[2][1])
            - bm[0][1] * (bm[1][0] * bm[2][2] - bm[1][2] * bm[2][0])
@@ -642,8 +652,7 @@ def _smallest_eigen(m, dims):
     e1 = q + 2.0 * p * math.cos(phi)
     e3 = q + 2.0 * p * math.cos(phi + 2.0 * math.pi / 3.0)
     e2 = 3.0 * q - e1 - e3
-    ordered = sorted((e1, e2, e3), reverse=True)
-    return ordered[dims - 1]
+    return sorted((e1, e2, e3), reverse=True)
 
 
 # The closure joints whose axis the loop must hold, besides their point.
@@ -939,7 +948,7 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             driver_chain=list(driver_groups),
             chain_count=len(driven_groups) + len(slides),
             branch_limits=_branch_limits(lp, list(driven_groups), cj, parent_of),
-            axis_arm=_axis_arm(lp, cj, joints),
+            axis_arm=0.0 if slides else _axis_arm(lp, cj, joints),
             held=held,
         ))
 

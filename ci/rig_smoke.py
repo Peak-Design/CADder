@@ -235,24 +235,29 @@ def run():
     arm = arm_obj.data
 
     # 1) One bone per rigid group (collapsed carriers get none) plus a
-    # helper and an effector per loop, DEF/POLE/GOAL for every swing-cone
-    # ball, DEF/POLE/GOAL/FRM for every cone_spin collapse, one bone for
-    # every screw's own turn, and one limit dial for every control that has
-    # a limit to show.
+    # helper and an effector per loop and a second pair on the axis of a
+    # spatial loop's closure, DEF/POLE/GOAL for every swing-cone ball,
+    # DEF/POLE/GOAL/FRM for every cone_spin collapse, one bone for every
+    # screw's own turn, a carrier for every follower of a plane mirror, and
+    # one limit dial for every control that has a limit to show.
     coned = [bp for bp in plan.bones if bp.ball_def_name]
     cone_spins = [bp for bp in plan.bones
                   if bp.collapsed is not None and bp.collapsed.kind == "cone_spin"]
     spins = [bp for bp in plan.bones if bp.spin_name]
+    carriers = [bp for bp in plan.bones if bp.mirror_carrier_name]
+    axis_pairs = [lp for lp in plan.loops if lp.axis_helper_name]
     limits = len(result.limit_names)
     expected = (len(m.rigid_groups) - len(plan.collapsed_carriers)
-                + 2 * len(plan.loops) + 3 * len(coned) + 4 * len(cone_spins)
-                + len(spins) + limits)
+                + 2 * len(plan.loops) + 2 * len(axis_pairs) + 3 * len(coned)
+                + 4 * len(cone_spins) + len(spins) + len(carriers) + limits)
     _check(len(arm.bones) == expected,
-           "bone count {} != groups {} - carriers {} + 2x loops {} + 3x "
-           "coned balls {} + 4x cone spins {} + screw turns {} + limit "
+           "bone count {} != groups {} - carriers {} + 2x loops {} + 2x "
+           "axis pairs {} + 3x coned balls {} + 4x cone spins {} + screw "
+           "turns {} + mirror carriers {} + limit "
            "dials {}".format(
                len(arm.bones), len(m.rigid_groups), len(plan.collapsed_carriers),
-               len(plan.loops), len(coned), len(cone_spins), len(spins), limits))
+               len(plan.loops), len(axis_pairs), len(coned), len(cone_spins),
+               len(spins), len(carriers), limits))
     _check(limits > 0, "no limit dial was built at all")
 
     # 2) Every joint bone's local +Y parallel to the manifest axis, except a
@@ -542,12 +547,45 @@ def run():
             drv_pb.location = loc
             drv_pb.rotation_euler = rot
             bpy.context.view_layer.update()
-            want = S @ (arm_obj.matrix_world @ drv_pb.matrix) @ S_lin
+            dm = arm_obj.matrix_world @ drv_pb.matrix
             got = arm_obj.matrix_world @ dvn_pb.matrix
-            err = max(abs(want[r][cc] - got[r][cc])
-                      for r in range(3) for cc in range(4))
+            if rigid:
+                want = S @ dm @ S_lin
+                err = max(abs(want[r][cc] - got[r][cc])
+                          for r in range(3) for cc in range(4))
+            else:
+                # A symmetric mate holds the PLANES of the two faces, each
+                # the plane through its bone's head square to its local +Y.
+                # The follower's place in its plane is its own.
+                nd = (dm.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+                pd = dm.translation
+                nf = (got.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+                pf = got.translation
+                n_want = (S_lin.to_3x3() @ nd).normalized()
+                p_want = (S @ pd.to_4d()).to_3d()
+                err = max((nf.cross(n_want)).length, abs((pf - p_want).dot(nf)))
             _check(err < 1e-5,
                    "mirror {}: driven off the reflection by {}".format(joint.id, err))
+        if not rigid:
+            # and with the driver slid in its face plane after a tilt, the
+            # follower's face plane still mirrors it (live corpus sym4,
+            # 2026-09-27: channel by channel it came 4 mm off)
+            drv_pb.location = (0.02, 0.03, -0.015)
+            drv_pb.rotation_euler = (0.5, 0.8, -0.4)
+            dvn_pb.location = (0.01, 0.0, 0.02)
+            dvn_pb.rotation_euler = (0.0, -0.3, 0.0)
+            bpy.context.view_layer.update()
+            dm = arm_obj.matrix_world @ drv_pb.matrix
+            got = arm_obj.matrix_world @ dvn_pb.matrix
+            nd = (dm.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+            nf = (got.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+            n_want = (S_lin.to_3x3() @ nd).normalized()
+            p_want = (S @ dm.translation.to_4d()).to_3d()
+            err = max((nf.cross(n_want)).length, abs((got.translation - p_want).dot(nf)))
+            _check(err < 1e-5, "mirror {}: tilted and slid, the planes are off the "
+                   "reflection by {}".format(joint.id, err))
+            dvn_pb.location = (0.0, 0.0, 0.0)
+            dvn_pb.rotation_euler = (0.0, 0.0, 0.0)
 
         if rigid:
             # A mirror feature leaves nothing independent, so the
@@ -595,6 +633,9 @@ def run():
             # driver may not read the bone it writes (drivers.py).
             name = (result.spin_names.get(gid) if joint.coupling.kind == "screw"
                     else None) or result.bone_names[gid]
+            # A plane mirror's follower rides a carrier, and the carrier
+            # takes the drivers (graph.py BonePlan.mirror_carrier_name).
+            name = result.mirror_carrier_names.get(gid) or name
             pb = arm_obj.pose.bones[name]
             channel = ("rotation_euler"
                        if joint.coupling.kind in ("gear", "screw")

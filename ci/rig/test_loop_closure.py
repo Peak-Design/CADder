@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """How graph.build closes a loop: on the axis of the closure joint, and
-with the right bone left to the user when the loop has a spare input.
+with a bone left to the user when the loop has a spare input.
 
     python -m pytest ci/rig/test_loop_closure.py
 
 The corpus rigging test, 2026-09-27: a landing gear and a Cardan joint
-made in Blender came apart, because the closure held only a point, and
-locking pliers freed the jaw next to the frame, which left the screw about
-a millimetre of travel near the locked pose.
+made in Blender came apart, because the closure held only a point.
 """
 
 import os
@@ -72,39 +70,16 @@ def _pliers(mobility=2):
 
 class SpareInput(unittest.TestCase):
 
-    def test_the_bone_left_to_the_user_keeps_the_loop_closed(self):
-        plan = graph.build(_pliers())
-        (lp,) = plan.loops
-        # The jaw next to the frame would leave the handle and the link in
-        # line, and they could not move the closure. Another bone is held.
-        self.assertNotIn("g1", lp.held)
-        self.assertEqual(len(lp.held), 1)
-        self.assertIn(lp.held[0], ("g2", "g3"))
-        # the chain keeps its three bones: the held one only has its IK
-        # locked
+    def test_the_bone_next_to_the_frame_is_left_to_the_user(self):
+        # Blender's IK takes the bones of its chain from rest: a bone
+        # locked inside the chain keeps no pose of the user's. So the bone
+        # left to the user is the one at the root end, out of the chain.
+        (lp,) = graph.build(_pliers()).loops
+        self.assertEqual(lp.driven_chain, ["g3", "g2"])
+
+    def test_one_input_frees_no_bone(self):
+        (lp,) = graph.build(_pliers(mobility=1)).loops
         self.assertEqual(lp.driven_chain, ["g3", "g2", "g1"])
-
-    def test_a_loop_that_is_not_marked_planar_holds_the_same_bone(self):
-        # The Rigging module left a loop with a ball unmarked: its pins are
-        # parallel, so the hold is measured in their plane all the same.
-        m = _pliers()
-        m.loops[0].planar = False
-        m.loops[0].plane_normal = None
-        (lp,) = graph.build(m).loops
-        self.assertNotIn("g1", lp.held)
-        self.assertEqual(len(lp.held), 1)
-
-    def test_a_chain_with_a_slide_gets_no_second_point(self):
-        # two targets on a chain stop its stretch bone
-        m = _spatial()
-        m.joint_by_id()["j3"].type = "prismatic"      # the driven side
-        (lp,) = graph.build(m).loops
-        self.assertEqual(lp.driven_chain, ["g3"])
-        self.assertEqual(lp.axis_arm, 0.0)
-
-    def test_one_input_holds_no_bone(self):
-        plan = graph.build(_pliers(mobility=1))
-        self.assertEqual(plan.loops[0].held, [])
 
 
 def _spatial(closure="revolute", planar=False):

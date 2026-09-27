@@ -449,9 +449,8 @@ def _ik_driven_groups(plan):
     """
     driven = set()
     for lplan in getattr(plan, "loops", None) or []:
-        held = set(getattr(lplan, "held", None) or [])
-        driven.update(g for g in (lplan.driven_chain or []) if g not in held)
-        if lplan.ik_tip_group and lplan.ik_tip_group not in held:
+        driven.update(lplan.driven_chain or [])
+        if lplan.ik_tip_group:
             driven.add(lplan.ik_tip_group)
     return driven
 

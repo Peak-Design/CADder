@@ -226,9 +226,5 @@ def close_loops(arm_obj, plan, bone_names, helper_names, effector_names,
             _configure_chain_bone(pb, plan.bone_by_group[gid].joint,
                                   lplan.loop.planar,
                                   lplan.branch_limits.get(gid))
-            if gid in (getattr(lplan, "held", None) or ()):
-                # The user poses this bone (a loop with a spare input): the
-                # solver keeps its pose and moves the others.
-                pb.lock_ik_x = pb.lock_ik_y = pb.lock_ik_z = True
         count += 1
     return count, warnings

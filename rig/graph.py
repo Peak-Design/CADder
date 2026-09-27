@@ -175,9 +175,6 @@ class LoopPlan:
     axis_helper_name: str = ""
     axis_effector_name: str = ""
     axis_arm: float = 0.0
-    # Bones of the chain the user poses: a loop with a spare input holds
-    # them out of the solve, with their IK locked (see graph.build).
-    held: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -571,90 +568,6 @@ def _branch_limits(lp: Loop, driven: List[str], closure: Joint, parent_of):
     return limits
 
 
-def _spare_bones(driven: List[str], spare: int, cj: Joint, parent_of, lp: Loop):
-    """The bones of a chain to leave to the user: `spare` of them, those
-    whose loss leaves the solver the best hold on the closure point. The
-    hold is the smallest singular value of how the remaining joints move
-    that point. The root end, as before, unless another choice is clearly
-    better."""
-    from itertools import combinations
-    root_end = driven[len(driven) - spare:]
-    p = cj.origin
-    if p is None:
-        return root_end
-    normal = _unit(lp.plane_normal) if lp.planar and lp.plane_normal else None
-
-    def column(gid):
-        j = parent_of[gid][1]
-        if j.axis is None or j.origin is None:
-            return []
-        a = _unit(j.axis)
-        if j.type in ("revolute", "cylindrical", "pin_slot"):
-            cols = [_v_cross(a, _v_sub(p, j.origin))]
-        elif j.type == "prismatic":
-            cols = [a]
-        elif j.type == "ball":
-            cols = [_v_cross(e, _v_sub(p, j.origin))
-                    for e in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))]
-        else:
-            return []
-        if normal is not None:
-            cols = [_v_sub(c, tuple(x * _v_dot(c, normal) for x in normal))
-                    for c in cols]
-        return cols
-
-    def gram(cols):
-        return [[sum(c[r] * c[k] for c in cols) for k in range(3)] for r in range(3)]
-
-    # The directions the whole chain can move the closure point in: three,
-    # or two when its pins are parallel. The hold is measured in those.
-    full = gram([c for gid in driven for c in column(gid)])
-    top = _eigen3(full)[0]
-    dims = sum(1 for e in _eigen3(full) if e > 1e-6 * max(top, 1e-30))
-    if normal is not None:
-        dims = min(dims, 2)
-
-    def hold(keep):
-        cols = [c for gid in keep for c in column(gid)]
-        if not dims or len(cols) < dims:
-            return 0.0
-        # the singular value in the last of those directions
-        return math.sqrt(max(0.0, _eigen3(gram(cols))[dims - 1]))
-
-    best, best_hold = root_end, hold([g for g in driven if g not in root_end])
-    base = best_hold
-    for pick in combinations(driven, spare):
-        pick = list(pick)
-        h = hold([g for g in driven if g not in pick])
-        if h > best_hold:
-            best, best_hold = pick, h
-    # The root end stays unless the best is clearly better: the rigs built
-    # before keep their controls.
-    return root_end if base >= 0.5 * best_hold else best
-
-
-def _eigen3(m):
-    """The eigenvalues of a symmetric 3x3 matrix, the largest first."""
-    a, b, c = m[0][0], m[1][1], m[2][2]
-    d, e, f = m[0][1], m[1][2], m[0][2]
-    p1 = d * d + e * e + f * f
-    q = (a + b + c) / 3.0
-    p2 = (a - q) ** 2 + (b - q) ** 2 + (c - q) ** 2 + 2.0 * p1
-    p = math.sqrt(p2 / 6.0)
-    if p < 1e-30:
-        return [q, q, q]
-    bm = [[(m[i][k] - (q if i == k else 0.0)) / p for k in range(3)] for i in range(3)]
-    det = (bm[0][0] * (bm[1][1] * bm[2][2] - bm[1][2] * bm[2][1])
-           - bm[0][1] * (bm[1][0] * bm[2][2] - bm[1][2] * bm[2][0])
-           + bm[0][2] * (bm[1][0] * bm[2][1] - bm[1][1] * bm[2][0]))
-    r = max(-1.0, min(1.0, det / 2.0))
-    phi = math.acos(r) / 3.0
-    e1 = q + 2.0 * p * math.cos(phi)
-    e3 = q + 2.0 * p * math.cos(phi + 2.0 * math.pi / 3.0)
-    e2 = 3.0 * q - e1 - e3
-    return sorted((e1, e2, e3), reverse=True)
-
-
 # The closure joints whose axis the loop must hold, besides their point.
 _AXIS_CLOSURES = ("revolute", "cylindrical", "pin_slot", "fixed")
 
@@ -895,30 +808,16 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
         # around one ring is a five-bar with two inputs. Solved whole from
         # the screw, "the arm2 assembly can rotate around a pin on clamp2"
         # in SolidWorks and nothing in Blender could.
-        #
-        # The root end is not always a good one to free. Near a toggle the
-        # two bones left can hardly move the closure point, and the loop
-        # then tears after a millimetre of the other input (the corpus
-        # wrench made in Blender, 2026-09-27: the jaw freed, the handle and
-        # the link almost in line). So the bone freed is the one that
-        # leaves the best closure. When that is not the root end, it stays
-        # in the chain with its IK locked: the solver keeps the pose the
-        # user gives it.
         spare = max(0, lp.mobility - 1)
-        held = []
         if spare and len(driven_groups) > spare:
-            freed = _spare_bones(driven_groups, spare, cj, parent_of, lp)
-            if freed == driven_groups[len(driven_groups) - spare:]:
-                driven_groups = driven_groups[:len(driven_groups) - spare]
-            else:
-                held = list(freed)
+            freed = driven_groups[len(driven_groups) - spare:]
+            driven_groups = driven_groups[:len(driven_groups) - spare]
             plan.warnings.append(
                 "loop {}: it takes {} inputs, so {} stays posable beside "
                 "the driver".format(lp.id, lp.mobility,
                                     ", ".join(freed)))
         for gid in driven_groups:
-            if gid not in held:
-                solved_by[gid] = lp.id
+            solved_by[gid] = lp.id
         slides = []
         for gid in driven_groups:
             pj = parent_of[gid][1]
@@ -949,7 +848,6 @@ def build(manifest: Manifest, keep_names=None) -> RigPlan:
             chain_count=len(driven_groups) + len(slides),
             branch_limits=_branch_limits(lp, list(driven_groups), cj, parent_of),
             axis_arm=0.0 if slides else _axis_arm(lp, cj, joints),
-            held=held,
         ))
 
     # Contact carrier chains fold into single posable bones AFTER loop

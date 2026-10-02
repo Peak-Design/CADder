@@ -52,6 +52,20 @@ def _watch_parent(pid):
             os._exit(3)
 
 
+def _empty_scene():
+    """Empty the scene, so the saved .blend holds only the import result.
+
+    Do not use read_factory_settings here. It also resets the preferences.
+    Blender then uninstalls the wheels of every extension from the
+    extensions folder, which all sessions share, and OCP is one of them.
+    The session that started the worker has the OCP DLLs open, so Blender
+    cannot delete them and deletes them at its next start instead. CADder
+    then cannot load there (Blender 5.2.2, 2026-10-02).
+    """
+    import bpy
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     import bpy
 
@@ -71,8 +85,7 @@ def main():
 
     log({"phase": "startup", "file": filepath})
 
-    # Empty scene so the saved .blend contains only the import result
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    _empty_scene()
     bpy.ops.preferences.addon_enable(module=module)
 
     # Mirror the parent session's result-affecting addon preferences:

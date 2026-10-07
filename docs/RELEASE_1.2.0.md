@@ -69,6 +69,12 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
 
 ## Bug fixes
 
+- CADder no longer goes missing after a background import. After the
+  import of a file of 2 MB or more, the next start of Blender could show
+  CADder as enabled, with no sidebar tab, no preferences and no Import
+  entry. The background import made Blender delete files of CADder at
+  that start. If your CADder is in this state, disable it and enable it
+  again.
 - The bone widgets no longer show in the scene when it holds two rigs.
 - A lock on one rig no longer stops the build of the rig of another
   assembly.

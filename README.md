@@ -61,6 +61,17 @@ https://www.youtube.com/watch?v=vcaNa9JF-_M
   <img src="docs/images/rig.png" alt="A generated rig, with the limit arcs drawn" width="80%">
 </p>
 
+## New in 1.2.1
+
+- **Split by Material**: a part with faces in two or more materials comes
+  in as one object for each material, from a STEP file and from
+  SolidWorks. A refresh keeps the objects and the materials you gave them.
+- **An assembly that you moved stays together**: put a send under an empty
+  of your own and move it. Refresh Model brings a new part in with the
+  others, and the rig stays under your empty.
+
+The full list is in the [release notes](docs/RELEASE_1.2.1.md).
+
 ## New in 1.2.0
 
 - **Configurations side by side**: each configuration of an assembly is a

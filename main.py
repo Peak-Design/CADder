@@ -1351,6 +1351,91 @@ def _scale_unwrap_to_world(me, world_scale):
     layer.uv.foreach_set("vector", (uv * factor).ravel())
 
 
+def _material_names(mesh):
+    """The name of the Blender material of each triangle of a native mesh:
+    the name from the file, or a name made from the color."""
+    face_mat_names = mesh.tri_mat_names
+    # Pre-compute quantized color hex for unnamed faces using numpy
+    q = np.round(mesh.tri_colors * _COLOR_MERGE_PRECISION) / _COLOR_MERGE_PRECISION
+    q_bytes = np.clip((q * 255).astype(np.int32), 0, 255)
+    resolved_names = []
+    for fi in range(len(mesh.faces)):
+        mn = face_mat_names[fi]
+        if mn is None:
+            r, g, b = q_bytes[fi]
+            mn = f"STEP_{r:02x}{g:02x}{b:02x}"
+        # Match add_material's 60-char truncation so the
+        # bpy.data.materials lookups never miss
+        resolved_names.append(mn[:60])
+    return resolved_names
+
+
+def _pieces_of_data(data, only=None):
+    """Cuts the mesh data of one shape by material (Split by Material).
+
+    `data` is what precompute_mesh_data gives. Returns one (material,
+    data) for each material, in the order the materials come in the shape,
+    or None for a shape of one material and for a mesh that did not come
+    from the native build. With `only`, the piece of that material alone,
+    and an empty list when the shape does not have the material. The cut
+    comes after the tessellation, so two pieces meet with no gap.
+    """
+    if not data:
+        return None
+    mesh = data[0]
+    if not isinstance(mesh, NativeMeshData) or len(mesh.faces) == 0:
+        return None
+    names = _material_names(mesh)
+    order = list(dict.fromkeys(names))
+    if only is None and len(order) < 2:
+        return None
+    slot = {name: k for k, name in enumerate(order)}
+    index = np.array([slot[name] for name in names], dtype=np.int64)
+    out = []
+    for k, material in enumerate(order):
+        if only is not None and material != only:
+            continue
+        part = mesh.piece(index == k)
+        out.append((material, (part, part.get_loop_colors(),
+                               part.get_loop_mat_names(),
+                               part.get_loop_norms(), part.get_loop_uvs())))
+    return out
+
+
+def _piece_name(shape_name, material):
+    """The key of one material of a shape, for the mesh cache, the object
+    names and the instancing."""
+    return shape_name + "|m" + material
+
+
+def _split_materials(entries, tree, precomputed, variant_name):
+    """One entry for each material of a shape, for a shape with two or more.
+
+    Each entry gets (index, material) as its piece, and None when the shape
+    is whole. The mesh data of each piece goes into `precomputed` under
+    _piece_name, so the build below takes a piece as it takes a shape.
+    """
+    out = []
+    cut = {}
+    for shp, node_index, sub_index, _piece in entries:
+        names = None
+        if shp is not None:
+            node = tree.nodes[node_index]
+            shape_name = variant_name(node.get_values()[2], node, sub_index)
+            if shape_name not in cut:
+                pieces = _pieces_of_data(precomputed.get(shape_name))
+                for material, data in pieces or []:
+                    precomputed[_piece_name(shape_name, material)] = data
+                cut[shape_name] = [mat for mat, _ in pieces] if pieces else None
+            names = cut[shape_name]
+        if not names:
+            out.append((shp, node_index, sub_index, None))
+            continue
+        for k, material in enumerate(names):
+            out.append((shp, node_index, sub_index, (k, material)))
+    return out
+
+
 def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
                        vcol_name, build_materials):
     """Fast path: from_pydata + foreach_set, no bmesh for geometry."""
@@ -1404,19 +1489,7 @@ def _apply_native_mesh(obj, mesh, colors, mat_names, norms, uvs,
         face_mat_names = mesh.tri_mat_names  # list[str|None] len=n_faces
         face_colors = mesh.tri_colors        # (n_faces, 3) float32
 
-        # Resolve None names to auto-generated names
-        # Pre-compute quantized color hex for unnamed faces using numpy
-        q = np.round(face_colors * _COLOR_MERGE_PRECISION) / _COLOR_MERGE_PRECISION
-        q_bytes = np.clip((q * 255).astype(np.int32), 0, 255)
-        resolved_names = []
-        for fi in range(n_faces):
-            mn = face_mat_names[fi]
-            if mn is None:
-                r, g, b = q_bytes[fi]
-                mn = f"STEP_{r:02x}{g:02x}{b:02x}"
-            # Match add_material's 60-char truncation so the
-            # bpy.data.materials lookups below never miss
-            resolved_names.append(mn[:60])
+        resolved_names = _material_names(mesh)
 
         # Get unique material names and assign indices
         unique_names = list(dict.fromkeys(resolved_names))  # preserves order
@@ -1886,17 +1959,30 @@ def _apply_trimesh(obj, mesh, colors, mat_names, norms, uvs,
 
 
 def build_mesh(step_reader, obj, shp, lind, angd, vcol_name="Colors",
-               relative=False, part_name="", fallback_color=None):
+               relative=False, part_name="", fallback_color=None, piece=None):
     """Tessellate one shape into obj.data. `relative` says that `lind` is a
     share of each edge and not a distance in file units. It must go
-    through, or a share of 0.005 cuts the mesh at 0.005 file units."""
+    through, or a share of 0.005 cuts the mesh at 0.005 file units.
+
+    `piece` is the material of the one piece of the shape that the object
+    holds (Split by Material). The object keeps its mesh when the shape no
+    longer has that material."""
     hacks = set([])
     if _get_addon_prefs().hack_skip_zero_solids:
         hacks.add("skip_solids")
 
-    mesh, colors, mat_names, norms, uvs = precompute_mesh_data(
+    data = precompute_mesh_data(
         step_reader, shp, lind, angd, hacks, part_name=part_name,
         fallback_color=fallback_color, relative=relative)
+    if piece:
+        cut = _pieces_of_data(data, only=piece)
+        if cut is not None:
+            if not cut:
+                print("CADder: %s has no faces in %s now. It keeps its mesh"
+                      % (part_name or obj.name, piece))
+                return None
+            data = cut[0][1]
+    mesh, colors, mat_names, norms, uvs = data
 
     return apply_mesh_to_blender(
         obj, mesh, colors, mat_names, norms, uvs, vcol_name,
@@ -2884,6 +2970,7 @@ def load_step(
     eng_materials=False,
     group_in_collection=False,
     separate_solids=False,
+    split_by_material=False,
     cursor=None,
     # Older records and scripts. Both now live in uv_mode, and a refresh
     # passes a record back in unchanged.
@@ -3067,6 +3154,7 @@ def load_step(
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
         "separate_solids": separate_solids,
+        "split_by_material": split_by_material,
         "cursor": cursor,
     }
     import_record_json = json.dumps(import_record)
@@ -3190,11 +3278,20 @@ def load_step(
             if mname not in bpy.data.materials:
                 add_material(mname, col, link_vertex_color=False)
 
+    # One entry for each material of a shape (Split by Material). A piece
+    # is an object of its own from here on, as a body of a separated shape
+    # is: it has its own mesh, its own name and its own instances.
+    all_shapes = [entry + (None,) for entry in all_shapes]
+    if split_by_material:
+        all_shapes = _split_materials(all_shapes, tree, precomputed,
+                                      _variant_name)
+        total = len(all_shapes)
+
     print(f"\n--- Phase 2/3: Building {total} Blender objects ---")
     instance_prototypes = {}  # variant_name -> prototype mesh object (instances mode)
     _no_curve_shapes = set()  # variants with no free edges (curves mode)
     wm.progress_begin(0, total)
-    for i, (shp, node_index, sub_index) in enumerate(all_shapes):
+    for i, (shp, node_index, sub_index, piece) in enumerate(all_shapes):
         node = tree.nodes[node_index]
         parent_uuid, self_uuid, tag, name, _, local_t, global_t = node.get_values()
 
@@ -3204,6 +3301,14 @@ def load_step(
             name = "%s.body%03d" % (name, sub_index + 1)
 
         shape_name = _variant_name(tag, node, sub_index)
+        # The curves of a shape belong to the shape and not to one material
+        # of it: they are made once, with the first piece, under the name
+        # of the part.
+        curves_of = shape_name if piece is None or piece[0] == 0 else None
+        plain_name = name
+        if piece is not None:
+            name = "%s.%s" % (name, piece[1])
+            shape_name = _piece_name(shape_name, piece[1])
         wm.progress_update(i)
         obj = None
 
@@ -3279,7 +3384,9 @@ def load_step(
                     created_names[shape_name] = obj
                     # One Blender material per part, named after the CAD
                     # engineering material (AP242/AP214 metadata), if present
-                    if eng_materials:
+                    # A piece keeps the material that it was cut by. The
+                    # one material of the part would make the pieces alike.
+                    if eng_materials and piece is None:
                         _assign_engineering_material(
                             obj, getattr(node, "material", None))
                     if hierarchy_instances:
@@ -3292,6 +3399,8 @@ def load_step(
                         proto["STEP_tree_location"] = node_index
                         proto["STEP_applied_scale"] = scale if apply_scale else 0.0
                         proto["STEP_import_settings"] = import_record_json
+                        if piece is not None:
+                            proto["STEP_piece"] = piece[1]
                         if proto.data is not None and proto.data.materials:
                             proto["STEP_materials"] = json.dumps(
                                 [m.name if m else "" for m in proto.data.materials])
@@ -3306,8 +3415,8 @@ def load_step(
             # Free-edge curves (sketches, construction wires) as curve
             # objects, also for parts whose mesh came out empty (sketch-only
             # parts are exactly the ones that need this).
-            if import_curves and not hierarchy_instances:
-                ckey = shape_name + "|curves"
+            if import_curves and not hierarchy_instances and curves_of:
+                ckey = curves_of + "|curves"
                 cobj = None
                 if ckey in created_names:
                     cobj = created_names[ckey].copy()  # linked curve data
@@ -3316,7 +3425,7 @@ def load_step(
                         shp, curve_deflection, ang_deflection)
                     if polylines:
                         cobj = curves_mod.build_curve_object(
-                            bpy, name + ".curves", polylines)
+                            bpy, plain_name + ".curves", polylines)
                         created_names[ckey] = cobj
                     else:
                         _no_curve_shapes.add(ckey)
@@ -3324,7 +3433,7 @@ def load_step(
                     cobj["STEP_tag"] = tag
                     cobj["STEP_parent"] = parent_uuid
                     cobj["STEP_file"] = filepath
-                    cobj["STEP_name"] = name + ".curves"
+                    cobj["STEP_name"] = plain_name + ".curves"
                     cobj["STEP_tree_location"] = node_index
                     cobj["STEP_applied_scale"] = scale if apply_scale else 0.0
                     curve_objs.add(cobj)
@@ -3350,6 +3459,10 @@ def load_step(
             obj["STEP_tree_location"] = node_index
             obj["STEP_applied_scale"] = scale if apply_scale else 0.0
             obj["STEP_import_settings"] = import_record_json
+            # The material that this piece of the part was cut by. A
+            # rebuild takes the same piece again (build_mesh).
+            if piece is not None:
+                obj["STEP_piece"] = piece[1]
             # Engineering material metadata (AP242/AP214) as custom
             # properties, regardless of the assignment option
             mat_info = getattr(node, "material", None)
@@ -3366,7 +3479,7 @@ def load_step(
             # body speaks for a separated shape. A node with children is an
             # assembly node and carries no shape of its own, so this only
             # ever arises for a leaf someone has parented to.
-            if sub_index in (None, 0):
+            if sub_index in (None, 0) and (piece is None or piece[0] == 0):
                 created_uuid[self_uuid] = obj
 
     # assert len(created_objs) == len(shapes_labels)
@@ -3682,6 +3795,13 @@ class PG_Stepper(bpy.types.PropertyGroup):
                     "pairs that go back together cleanly. Nothing is joined "
                     "across a material, a UV island, a seam or a sharp edge",
         default=True)
+
+    split_by_material: bpy.props.BoolProperty(
+        name="Split by Material",
+        description="Make one object for each material of a part from the "
+                    "CAD link. The objects of a part stay on the same bone. "
+                    "It applies at the next send and the next refresh",
+        default=False)
 
     fix_ascii_file: bpy.props.StringProperty(
         name="File",
@@ -4062,6 +4182,14 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    split_by_material: bpy.props.BoolProperty(
+        name="Split by Material",
+        description="Make one object for each material of a part. A part "
+                    "with faces in several colors comes in as several "
+                    "objects, and a refresh of the file keeps them",
+        default=False,
+    )
+
     group_in_collection: bpy.props.BoolProperty(
         name="Group in a Collection",
         description="Put everything this file creates under one collection "
@@ -4120,6 +4248,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
             "separate_solids": self.separate_solids,
+            "split_by_material": self.split_by_material,
             "tessellation_relative": self.tessellation_relative,
             "lin_deflection_rel": self.lin_deflection_rel,
         }
@@ -4201,6 +4330,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,
+                    split_by_material=self.split_by_material,
                 eng_materials=self.eng_materials,
             )
             if result is False:
@@ -4493,7 +4623,8 @@ class STEP_OT_RebuildSelected(bpy.types.Operator):
                            relative=relative,
                            part_name=obj.get("STEP_name", ""),
                            fallback_color=(
-                               tree.nodes[node_index].color_override))
+                               tree.nodes[node_index].color_override),
+                           piece=obj.get("STEP_piece"))
                 # Re-apply baked scale if it was applied during import
                 applied_scale = obj.get("STEP_applied_scale", 0.0)
                 if applied_scale and applied_scale != 1.0:
@@ -5418,6 +5549,10 @@ class CADLINK_PT_quality(bpy.types.Panel):
         # cuts a part from SolidWorks and a part from a file the same way.
         import_ui.draw_quality(prg, col)
         col.prop(prg, "tris_to_quads")
+        # For the parts of the CAD link. A STEP file has the option in its
+        # import dialog, and keeps what the import chose.
+        if live:
+            col.prop(prg, "split_by_material")
 
         tools_mod.scope_hint(layout, context)
         buttons = []

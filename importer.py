@@ -380,6 +380,33 @@ class NativeMeshData:
             if self.loop_uvs is not None:
                 self.loop_uvs = self.loop_uvs[loop_idx]
 
+    def piece(self, keep):
+        """The triangles that `keep` marks, as a mesh of their own, with
+        only the vertices they use (Split by Material)."""
+        faces = self.faces[keep]
+        used = np.unique(faces)
+        remap = np.full(len(self.verts), -1, dtype=np.int64)
+        remap[used] = np.arange(len(used))
+
+        def rows(block):
+            if block is None or len(block) != len(self.verts):
+                return block
+            return block[used]
+
+        out = NativeMeshData(
+            self.verts[used], remap[faces].astype(self.faces.dtype),
+            rows(self.norms), rows(self.uvs), self.tri_colors[keep],
+            self.tri_batches[keep],
+            [name for name, kept in zip(self.tri_mat_names, keep) if kept],
+            self.matrix,
+            None if self.tri_bodies is None else self.tri_bodies[keep])
+        keep3 = np.repeat(keep, 3)
+        if self.loop_norms is not None:
+            out.loop_norms = self.loop_norms[keep3]
+        if self.loop_uvs is not None:
+            out.loop_uvs = self.loop_uvs[keep3]
+        return out
+
     def fill_empty_color(self):
         """Replace -1 sentinel colors with pink."""
         mask = self.tri_colors[:, 0] < 0

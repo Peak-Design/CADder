@@ -129,6 +129,7 @@ WANT = {
     "import_curves": True,
     "group_in_collection": True,
     "separate_solids": True,
+    "split_by_material": True,
 }
 
 covered = sorted(set(import_ui.PERSISTED_PROPS) - set(WANT))

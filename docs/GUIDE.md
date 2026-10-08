@@ -104,6 +104,8 @@ version: what it is, how to install it, and what is new.
 - One **Mesh Quality** panel for both routes: the button reads the CAD
   again, whether the part came from the live link, a STEP file or an IGES
   file.
+- **Split by Material** gives each material of a part its own object,
+  and a refresh keeps them.
 - **Triangles to Quads** pairs the tessellation back into quads without
   crossing a material, a UV island, a seam or a sharp edge.
 - **Defeature** leaves the small features out of the parts you choose, set
@@ -350,6 +352,15 @@ top collection and moves the rig collection next to the parts. When
 Refresh Model finds the assembly under a new document name, the
 collections and the rig take the new name too.
 
+You can move an assembly in the scene. Move its rig, or put the rig or
+the parts under an empty of your own and move the empty. **Refresh Model**
+keeps the assembly where you put it. A new part comes in with the others,
+and a part that moved in SolidWorks goes to its new place in the assembly
+where it is now. The rig stays under your empty. When you put the parts
+under an empty and not the rig, the rig goes under that empty too, so the
+empty moves all of it. A part that you moved alone stays where you put it,
+and does not move the others.
+
 ### Configurations
 
 Each configuration of an assembly is a send of its own. It has its own
@@ -528,6 +539,17 @@ back together cleanly. Nothing is joined across a material, a UV island, a
 seam or a sharp edge. It is on by default, and it holds for both routes:
 a send, a rebuild and a regenerate all give the same mesh. The CAD add-in
 sends its own answer with the geometry, which sets this one.
+
+**Split by Material** makes one object for each material of a part from
+the CAD link. A part with faces in two or more appearances comes in as
+that many objects, with the name of the part and of the material, for
+example `cover-1.red`. The objects of one part are on the same bone, so
+they move as one, and two placements of a part share the mesh of each
+object. **Refresh Model** keeps each object, with the materials you gave
+it, and **Rebuild from CAD** gives each one its own new geometry. The
+option applies at the next send and the next refresh, and it is off by
+default. Clear it and refresh to get the whole parts back. A STEP file
+has the same option in its import dialog.
 
 **Clean Up Meshes** removes the loose vertices and the zero area faces a
 tessellation can leave.
@@ -773,6 +795,13 @@ only its geometry.
 - **Separate solids**: one object per body of a multibody part, for files
   that hold several solids, shells or surfaces with no assembly structure to
   tell them apart. Off by default.
+- **Split by material**: one object per material of a part, with the name
+  of the part and of the material, for example `housing.RED`. Use it when
+  faces of a part have their own color, such as graphics on a product. A
+  refresh of the file keeps the objects, and **Rebuild from STEP** of one
+  of them gives that one again. A part that is in pieces keeps the
+  material of each face, so **Engineering Materials** does not put its one
+  material on it. Off by default.
 
 ## Engineering Materials (AP242 / AP214)
 
@@ -1037,6 +1066,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 1.2.1   | 5.1     | Split by Material: a part with faces in two or more materials comes in as one object for each material, from a STEP file (import dialog) and from SolidWorks (Mesh Quality panel), and a refresh keeps the objects. An assembly that you moved in Blender stays together through Refresh Model: a new part and a part that moved in SolidWorks go to where the assembly is now, and the rig stays under your empty. Works with CADder Bridge 1.2.0. |
 | 1.2.0   | 5.1     | Configurations. Each configuration of an assembly is a send of its own, in `<assembly>_<configuration>` with its own rig, beside the others. Multiple configurations in the Export Options of CADder Bridge sends several configurations at once. A part that is already in the scene, from any send, is linked to it and not made again. Append as a new copy puts an assembly in the scene again, as a copy with its own rig. Refresh Model asks which configurations to refresh, and brings copies up to date too. Rebuild from CAD asks for each configuration on its own. A send no longer removes the other assemblies in the scene. The Rig panel offers a list of the rigs in the scene. Needs CADder Bridge 1.2 |
 | 1.1.1   | 5.1     | CADder and CADder Bridge say when their versions do not match, before anything is sent. Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |
 | 1.0.1   | 5.1     | Parts from SolidWorks arrive as one connected mesh, not loose faces. Empties are sized to the parts under them. A subassembly that moves as one body keeps its empties under the rig. One set of quality settings (Quality, Distance, Angle, Relative Tessellation, Relative Distance) in the import dialog, Mesh Quality and Export Options, with the same numbers on every route. Artist-Friendly Parameters and Mesh Detail are removed |

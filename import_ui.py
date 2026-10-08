@@ -76,7 +76,7 @@ PERSISTED_PROPS = (
     "box_uv_scale", "uv_pack", "uv_pack_tiles",
     "uv_pack_margin", "tris_to_quads",
     "skip_construction", "import_curves",
-    "group_in_collection", "separate_solids",
+    "group_in_collection", "separate_solids", "split_by_material",
 )
 
 
@@ -269,6 +269,7 @@ def draw_import_dialog(op, layout, prefs):
         body.prop(op, "skip_construction")
         body.prop(op, "import_curves")
         body.prop(op, "separate_solids")
+        body.prop(op, "split_by_material")
 
 
 class STEPPER_FH_step(bpy.types.FileHandler):
@@ -345,7 +346,8 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "tris_to_quads": True, "uv_pack": "NONE",
                 "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
                 "import_curves": False, "eng_materials": True,
-                "group_in_collection": False, "separate_solids": False}
+                "group_in_collection": False, "separate_solids": False,
+                "split_by_material": False}
         if prefs.remember_import_settings and prefs.last_import_settings:
             try:
                 stored = json.loads(prefs.last_import_settings)
@@ -361,7 +363,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                             "uv_pack_tiles", "uv_pack_margin",
                             "import_curves",
                             "group_in_collection", "separate_solids",
-                            "eng_materials"):
+                            "split_by_material", "eng_materials"):
                     if key in stored:
                         opts[key] = stored[key]
                 if "up_as" in stored:

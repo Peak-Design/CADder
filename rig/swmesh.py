@@ -86,6 +86,9 @@ class Definition:
     # file has no section, which means one body, or a file from an add-in
     # that did not write it.
     body_starts: Optional[array.array] = None
+    # The name of the part that this definition is one material of
+    # (split_by_material). None for a whole part.
+    part: Optional[str] = None
 
 
 @dataclass
@@ -126,6 +129,115 @@ class Scene:
             if d.id == def_id:
                 return d
         return None
+
+
+# Between the path of a part and the material of one piece of it
+# (split_by_material). A file name cannot hold this character, so the path
+# of a part from the CAD application does not hold it.
+PIECE = "|"
+
+
+def piece_of(path):
+    """(the path of the part, the material of the piece). The material is
+    "" for a part that is whole."""
+    part, _sep, material = (path or "").partition(PIECE)
+    return part, material
+
+
+def split_by_material(scene, whole=()):
+    """The scene with one part for each material of a part.
+
+    A part with faces in two or more materials becomes that many pieces.
+    Each piece has the triangles of one material, the name of the part
+    with the material after it, and a path of its own: the path of the
+    part, PIECE and the material. The path is what an update knows a part
+    by, so an update finds each piece again and leaves it as it is. The
+    component is the same for all the pieces, so they are on one bone and
+    move as one.
+
+    A part of one material is not changed. `whole` holds paths of parts to
+    leave whole: a part that has no path cannot be told apart from its
+    pieces, so it stays whole too. The scene that comes in is not changed.
+    """
+    import numpy as np
+
+    labels = [m.name or "%02x%02x%02x" % tuple(
+        int(max(0.0, min(1.0, float(c))) * 255 + 0.5) for c in m.rgba[:3])
+        for m in scene.materials]
+    users = {}
+    for inst in scene.instances:
+        users.setdefault(inst.definition_id, []).append(inst)
+    out = Scene(tolerance=scene.tolerance, materials=scene.materials,
+                nodes=scene.nodes)
+    next_id = max([d.id for d in scene.definitions], default=0) + 1
+    pieces = {}
+    for d in scene.definitions:
+        placed = users.get(d.id, [])
+        if d.triangle_materials is None or not d.triangle_count \
+                or any(not i.path or i.path in whole for i in placed):
+            out.definitions.append(d)
+            continue
+        mat = np.frombuffer(d.triangle_materials,
+                            dtype=np.dtype(d.triangle_materials.typecode))
+        kinds, first = np.unique(mat, return_index=True)
+        if len(kinds) < 2:
+            out.definitions.append(d)
+            continue
+        tri = np.frombuffer(
+            d.triangles, dtype=np.dtype(d.triangles.typecode)).reshape(-1, 3)
+        made, taken = [], {}
+        # In the order the materials come in the part, which is the order
+        # of its faces: the first material keeps the first name.
+        for material in [int(kinds[i]) for i in np.argsort(first)]:
+            label = labels[material] if 0 <= material < len(labels) \
+                else "material %d" % material
+            taken[label] = taken.get(label, 0) + 1
+            if taken[label] > 1:
+                label = "%s %d" % (label, taken[label])
+            faces = tri[mat == material]
+            used = np.unique(faces)
+            remap = np.full(d.vertex_count, -1, dtype=np.int64)
+            remap[used] = np.arange(len(used))
+
+            def rows(block, width):
+                if block is None:
+                    return None
+                kept = np.frombuffer(block, dtype=np.dtype(
+                    block.typecode)).reshape(-1, width)[used]
+                return array.array(block.typecode, kept.tobytes())
+
+            starts = None
+            if d.body_starts is not None:
+                edges = list(d.body_starts) + [d.vertex_count]
+                at = np.searchsorted(used, edges)
+                starts = array.array(d.body_starts.typecode, [
+                    int(at[i]) for i in range(len(edges) - 1)
+                    if at[i + 1] > at[i]])
+            made.append((label, Definition(
+                id=next_id, name="%s.%s" % (d.name, label),
+                vertex_count=len(used), triangle_count=len(faces),
+                positions=rows(d.positions, 3), normals=rows(d.normals, 3),
+                uvs=rows(d.uvs, 2),
+                triangles=array.array(d.triangles.typecode, remap[faces]
+                                      .astype(tri.dtype).tobytes()),
+                triangle_materials=array.array(
+                    d.triangle_materials.typecode, [material] * len(faces)),
+                body_starts=starts, part=d.name)))
+            out.definitions.append(made[-1][1])
+            next_id += 1
+        pieces[d.id] = made
+    for inst in scene.instances:
+        made = pieces.get(inst.definition_id)
+        if made is None:
+            out.instances.append(inst)
+            continue
+        for label, definition in made:
+            out.instances.append(Instance(
+                definition_id=definition.id, component_id=inst.component_id,
+                name="%s.%s" % (inst.name or inst.component_id, label),
+                transform=inst.transform, path=inst.path + PIECE + label,
+                local=inst.local))
+    return out
 
 
 class _Reader:

@@ -196,6 +196,20 @@ def _mark_edges(me, w):
         me.edges.foreach_set("use_seam", np.isin(keys, w.seams))
 
 
+def split_wanted(context):
+    """True when the scene asks for one object for each material of a part
+    (Split by Material, in the Mesh Quality panel)."""
+    prg = getattr(getattr(context, "scene", None), "stepper", None)
+    return bool(getattr(prg, "split_by_material", False))
+
+
+def _load(context, path):
+    """The scene of a .swmesh, with its parts split by material when the
+    Blender scene asks for it."""
+    scene = swmesh.load(path)
+    return swmesh.split_by_material(scene) if split_wanted(context) else scene
+
+
 def scene_unit_scale(context):
     """Blender units per meter in the scene: 1 / Unit Scale.
 
@@ -978,6 +992,8 @@ class _Placer:
         self.stem = stem
         self.root = root
         self.frame = frame
+        # Where the user moved the import to, in an update (_user_move).
+        self.offset = Matrix.Identity(4)
         self.unit_scale = unit_scale
         self.hierarchy = hierarchy
         self.material_prefix = material_prefix
@@ -1324,7 +1340,8 @@ class _Placer:
             and signature == _legacy_definition_hash(definition)
 
     def pose(self, obj, inst):
-        obj.matrix_world = self.frame @ _matrix(inst.transform, self.unit_scale)
+        obj.matrix_world = self.offset @ self.frame @ _matrix(
+            inst.transform, self.unit_scale)
 
     def on_pose(self, obj, transform):
         """True when the object stands where the CAD pose it was tagged
@@ -1347,7 +1364,8 @@ class _Placer:
             # on the collection, so an update finds it again when Blender
             # put a number on its name.
             definition = self.definitions.get(obj.get(_TAG_DEFINITION))
-            key = (definition.name if definition is not None and definition.name
+            key = ((getattr(definition, "part", None) or definition.name)
+                   if definition is not None and definition.name
                    else obj.data.name if obj.data is not None
                    else obj.name or "part")
             col = self.flat_groups.get(key)
@@ -1494,7 +1512,7 @@ def build(context, path, manifest=None, collection_name=None,
     rest of the scene, see update()."""
     if unit_scale is None:
         unit_scale = scene_unit_scale(context)
-    scene = swmesh.load(path)
+    scene = _load(context, path)
     frame_rows = up_frame(up_as)
     stem = import_name or os.path.splitext(os.path.basename(path))[0]
     if hierarchy not in HIERARCHIES:
@@ -1591,6 +1609,10 @@ class UpdateReport:
     # Parts with new geometry in the export that kept their own, because
     # their geometry is locked (geometry_lock.py).
     locked: List[str] = field(default_factory=list)
+    # Where the user put the import, and the object the user put its parts
+    # under (_user_move). None when the parts do not say.
+    user_move: object = None
+    user_parent: object = None
 
     def describe(self):
         text = ("%d part(s) added, %d removed, %d moved, %d re-tessellated, "
@@ -1632,7 +1654,7 @@ def update(context, path, manifest=None, unit_scale=None,
     `copy_of` are as for build()."""
     if unit_scale is None:
         unit_scale = scene_unit_scale(context)
-    scene = swmesh.load(path)
+    scene = _load(context, path)
     frame_rows = up_frame(up_as)
     stem = import_name or os.path.splitext(os.path.basename(path))[0]
     if hierarchy not in HIERARCHIES:
@@ -1693,6 +1715,11 @@ def update(context, path, manifest=None, unit_scale=None,
 
     new = diff_mod.from_scene_file(scene, manifest)
     changes = diff_mod.compare(old, new)
+    # Where the user put the import. A new part, and a part that moved in
+    # the CAD application, go there with the others, and so does the rig.
+    move, follow = _user_move(placer, changes.pairs, stem)
+    if move is not None:
+        placer.offset = move
     # New geometry brings the CAD appearances with it. A locked part gets
     # its own materials back before the database runs.
     locks = material_lock.take()
@@ -1703,6 +1730,7 @@ def update(context, path, manifest=None, unit_scale=None,
                len(changes.pairs) + len(changes.added) + len(changes.removed))
     done = 0
     out = UpdateReport(structural=changes.structural, copies=disowned)
+    out.user_move, out.user_parent = move, follow
     objects = []
     report = matching.MatchReport()
     report.frame_rows = frame_rows
@@ -1754,6 +1782,7 @@ def update(context, path, manifest=None, unit_scale=None,
         if obj is None:
             report.unmatched.append(occurrence.component_id)
             continue
+        _under(obj, follow)
         objects.append(obj)
         out.added.append(obj.name)
         report.matched.append(matching.MatchEntry(
@@ -1834,6 +1863,71 @@ _OCCURRENCE_TAGS = (_TAG_FILE, _TAG_PATH, _TAG_PERSISTENT, _TAG_COMPONENT,
                     _TAG_GROUP, _TAG_DEFINITION, _TAG_TOLERANCE, _TAG_LOCAL,
                     _TAG_GEOMETRY, _TAG_TRANSFORM, _TAG_DOCUMENT,
                     _TAG_CONFIGURATION, _TAG_COPY_OF, "RIG_parent_mode")
+
+
+def _user_move(placer, pairs, stem):
+    """Where the user put the import: (the move, the parent). Each is None
+    when the parts do not say.
+
+    The parts that did not move in the CAD application say it. Each one
+    stands where its CAD pose and the work of the user put it. When more
+    than half of them were moved the same way, that is the move of the
+    import: the rig moved, an empty that the user put the import under and
+    moved, or the parts moved as one. The move is the identity when the
+    import is where the send put it. A new part, and a part that the CAD
+    application moved, then go to the same place, and so does the rig
+    (bridge._settle_rig). Before, a new part of an import with no rig, or
+    with its parts under an empty of the user, went to the pose of the CAD
+    application and stood away from the others.
+
+    The parent is the object that all of those parts have as their parent,
+    when this import did not make it. A new part goes under it.
+    """
+    groups = {}
+    counted = 0
+    for pair in pairs:
+        if pair.moved:
+            continue
+        obj = pair.old.payload
+        try:
+            tag = obj.get(_TAG_TRANSFORM)
+            if not tag or len(tag) != 16:
+                continue
+            want = placer.frame @ _matrix(list(tag), placer.unit_scale)
+            delta = obj.matrix_world @ want.inverted()
+            parent = obj.parent
+        except (ReferenceError, ValueError):
+            continue
+        counted += 1
+        key = tuple(round(v, 4) for row in delta for v in row)
+        group = groups.setdefault(key, [0, delta, []])
+        group[0] += 1
+        group[2].append(parent)
+    if not groups:
+        return None, None
+    count, delta, parents = max(groups.values(), key=lambda g: g[0])
+    if count * 2 <= counted:
+        return None, None
+    parent = parents[0]
+    if parent is None or any(p is not parent for p in parents) \
+            or parent.type == "ARMATURE" or parent.get(_TAG_FILE) == stem:
+        parent = None
+    return delta, parent
+
+
+def _under(obj, parent):
+    """Puts a new part under the parent of the user, where the part stands.
+    A part that the import put under an empty of its own stays there."""
+    if parent is None:
+        return
+    try:
+        if obj.parent is None:
+            world = obj.matrix_world.copy()
+            obj.parent = parent
+            obj.matrix_parent_inverse = parent.matrix_world.inverted()
+            obj.matrix_world = world
+    except ReferenceError:
+        pass
 
 
 def _disown(obj):
@@ -2067,6 +2161,14 @@ def refine(context, path, unit_scale=None, material_prefix="SW ",
         path = obj.get(_TAG_PATH)
         if path:
             by_path.setdefault(path, []).append(obj)
+    # A part that the scene holds in pieces, one for each material, gets
+    # its new geometry in the same pieces. The scene says which parts
+    # those are, and not the setting, which can have changed since.
+    in_pieces = {swmesh.piece_of(p)[0] for p in by_path if swmesh.PIECE in p}
+    if in_pieces:
+        scene = swmesh.split_by_material(scene, whole={
+            inst.path for inst in scene.instances
+            if inst.path not in in_pieces})
 
     meshes = {}
     # A list answers "is this one already in?" by walking itself, which on

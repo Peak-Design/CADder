@@ -73,6 +73,7 @@ _IMPORT_OPTION_KEYS = {
     "uv_pack_margin", "box_uv_scale", "tris_to_quads",
     "eng_materials", "material_database", "import_curves",
     "skip_construction", "group_in_collection", "separate_solids",
+    "split_by_material",
 }
 
 _state = {
@@ -926,12 +927,46 @@ def _rig_for(manifest, stem=None):
     return None
 
 
-def _update_rig(mode, log, rig=None, stem=None):
+def _settle_rig(arm, move, under, held):
+    """Puts the rig where the import is, and under what the import is under.
+
+    `held` is the parent that the rig had before a new rig took its place
+    (parent, type, bone): Build a New Rig made the new rig with no parent,
+    so a rig that the user had put under an empty came out from under it.
+    `move` and `under` are what the parts say (native_import._user_move).
+    A user who puts the parts under an empty, and not the rig, takes them
+    off their bones. Relink puts them back on the bones, so the rig goes
+    under that empty and to the place of the parts: the empty then carries
+    the import as before, and the bones stand at their parts."""
+    if arm is None:
+        return
+    try:
+        world = arm.matrix_world.copy()
+        if arm.parent is None:
+            parent, kind, bone = held or (None, "OBJECT", "")
+            if parent is None and under is not None and under is not arm:
+                parent, kind, bone = under, "OBJECT", ""
+            if parent is not None:
+                parent.name                     # raises when it is gone
+                arm.parent = parent
+                arm.parent_type = kind
+                if kind == "BONE" and bone:
+                    arm.parent_bone = bone
+        if move is not None:
+            world = move
+        arm.matrix_world = world
+        bpy.context.view_layer.update()
+    except (ReferenceError, AttributeError, TypeError, ValueError):
+        pass
+
+
+def _update_rig(mode, log, rig=None, stem=None, move=None, under=None):
     """The rig half of an update: KEEP, APPEND or REGENERATE. `rig` is the
     rig of the assembly being updated (see _rig_for), or None when it has
     none yet. Then KEEP and APPEND build a new one, as REGENERATE does.
     `stem` is the import: the bones keep the names of the parts of this
-    import only."""
+    import only. `move` and `under` are where the user put the import and
+    what they put it under (_settle_rig)."""
     from .rig import imports, rig_update, ui as rig_ui
 
     manifest = rig_ui._STATE.get("manifest")
@@ -945,6 +980,8 @@ def _update_rig(mode, log, rig=None, stem=None):
     # its frame, so a new rig takes the same place and the machine stays
     # where it was put.
     placed = arm.matrix_world.copy() if arm is not None else None
+    held = ((arm.parent, arm.parent_type, arm.parent_bone)
+            if arm is not None and arm.parent is not None else None)
     try:
         result, rig_report = rig_update.apply(
             bpy.context, mode, manifest, arm,
@@ -959,6 +996,9 @@ def _update_rig(mode, log, rig=None, stem=None):
         if placed is not None and new_arm is not None and new_arm is not arm:
             new_arm.matrix_world = placed
             bpy.context.view_layer.update()
+        _settle_rig(new_arm, move, under, held)
+    else:
+        _settle_rig(arm, move, under, None)
     log.append("rig (%s): %s" % (mode.lower(), rig_report.describe()))
     return {
         "mode": rig_report.mode,
@@ -1110,6 +1150,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # touches the parts: it reads the group ids of the export the
             # rig was built from, which the update overwrites.
             rig_ui._STATE["rig_snapshot"] = {}
+            # Where the user put the import, and what they put its parts
+            # under: an update reads it off the parts (native_import
+            # ._user_move), and the rig is put there too (_settle_rig).
+            user_move = user_parent = None
 
             def before_changes(stem):
                 # Runs once the update has found this assembly in the
@@ -1165,6 +1209,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                                 obj["RIG_group"] = gid
                         except ReferenceError:
                             continue
+                    user_move = changed.user_move
+                    user_parent = changed.user_parent
                     stages["update"] = {
                         "added": changed.added,
                         "removed": changed.removed,
@@ -1198,13 +1244,17 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # because a free part may have been placed by hand.
                 # In the rig's own frame: bones stand at the armature's
                 # transform times the CAD frame, so a rig the user moved
-                # keeps its parts with it.
+                # keeps its parts with it. When the parts say where the
+                # import is (the user moved them and not the rig), that
+                # place is the frame, and the rig goes there after
+                # (_settle_rig).
                 import copy
                 from mathutils import Matrix
                 from .rig import pose_sync
                 in_rig = copy.copy(report)
                 in_rig.frame_rows = [list(r) for r in (
-                    released.arm_obj.matrix_world
+                    (user_move if user_move is not None
+                     else released.arm_obj.matrix_world)
                     @ Matrix([tuple(r) for r in report.frame_rows]))]
                 # A part new in this update goes on the rig too, so it is
                 # placed in the rig's frame as well, not at the CAD origin.
@@ -1285,6 +1335,12 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 log.append("ignored import options: %s" % ", ".join(ignored))
             kwargs.setdefault("up_as", "ZPOS")
             kwargs.setdefault("fw_as", "YPOS")
+            # Split by Material is a choice of this scene (Mesh Quality
+            # panel). It holds for a send as a STEP file as it does for a
+            # direct send, when the CAD application does not say.
+            from .rig import native_import as _native
+            kwargs.setdefault("split_by_material",
+                              _native.split_wanted(bpy.context))
             # override_file forces the synchronous path: the background
             # worker returns FINISHED before geometry exists, and every
             # stage after this one would run against an empty scene.
@@ -1376,7 +1432,8 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 # it inside the armature that is there (which keeps the
                 # animation), or build a new one.
                 said.stage("bringing the rig up to date", 88, 96)
-                stages["rig"] = _update_rig(mode, log, own, stem)
+                stages["rig"] = _update_rig(mode, log, own, stem,
+                                            move=user_move, under=user_parent)
                 if stages["rig"].get("error"):
                     return {"ok": False, "error": stages["rig"]["error"],
                             "stages": stages}
@@ -1435,6 +1492,20 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 "drift_violations": len(rep.violations),
                 "posed_bones": [name for name, _ in rep.posed_bones],
             }
+            # A new part that got no bone (the rig was kept as it is)
+            # goes under the rig itself, where it stands. It then moves
+            # with the import, and not only its neighbors.
+            for name in (stages.get("update") or {}).get("added") or []:
+                obj = bpy.data.objects.get(name)
+                try:
+                    if obj is not None and obj.parent is None \
+                            and obj is not target:
+                        world = obj.matrix_world.copy()
+                        obj.parent = target
+                        obj.parent_type = "OBJECT"
+                        obj.matrix_world = world
+                except (ReferenceError, AttributeError, TypeError):
+                    continue
         # The parts are bound at rest, so the animation can have the rig
         # back.
         released = rig_hold.get("release")

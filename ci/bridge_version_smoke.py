@@ -91,6 +91,31 @@ check(bridge._addon_name() == name,
 check(bridge._instance_info().get("addon_name") == bridge._addon_name(),
       "the registry file of this Blender says which addon it runs")
 
+# An extension has no bl_info: Blender takes it off an add-on that it loads
+# as an extension, and each released CADder is one. The version then comes
+# from the manifest. Without it the registry file said "unknown", so no
+# pair of versions got a warning, and the update check found no update.
+import tomllib  # noqa: E402
+import CADder  # noqa: E402
+from CADder import updater  # noqa: E402
+with open(os.path.join(_REPO, "blender_manifest.toml"), "rb") as f:
+    in_manifest = tomllib.load(f)["version"]
+kept = CADder.bl_info
+del CADder.bl_info
+try:
+    check(updater.current_version() == updater.parse_version(in_manifest),
+          "with no bl_info the version comes from the manifest (%s)"
+          % (updater.current_version(),))
+    check(bridge._addon_version() == in_manifest,
+          "the registry file then gives that version (%s)"
+          % bridge._addon_version())
+    check(bridge.mismatch_for("v0.9.0") is not None,
+          "an add-in of another version then gets the warning")
+    check(updater.is_newer((99, 0, 0), updater.current_version()),
+          "the update check then sees a newer release")
+finally:
+    CADder.bl_info = kept
+
 # 3. Found from the registry files of the add-ins, without a send.
 tmp = tempfile.mkdtemp(prefix="cadder_version_")
 saved = cad_link._REGISTRY

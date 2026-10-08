@@ -119,11 +119,14 @@ def _private_dir(folder: str):
 
 
 def _addon_version() -> str:
+    """The version of this build, from the one reader, which also works
+    in an extension (updater.current_version)."""
     try:
-        from . import bl_info
-        return ".".join(str(v) for v in bl_info.get("version", ()))
+        from . import updater
+        version = updater.current_version()
     except Exception:
-        return "unknown"
+        version = None
+    return ".".join(str(v) for v in version) if version else "unknown"
 
 
 def _addon_name() -> str:

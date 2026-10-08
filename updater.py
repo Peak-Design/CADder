@@ -12,6 +12,7 @@
 # only place the cached answer is written back to the preferences.
 
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -39,10 +40,26 @@ _timer_running = False
 
 
 def current_version():
-    """This build's version as a tuple, or None if it cannot be read."""
+    """This build's version as a tuple, or None if it cannot be read.
+
+    Blender takes bl_info off an add-on that it loads as an extension, and
+    each released CADder is an extension. The version then comes from the
+    manifest. Without it an installed CADder found no version: the update
+    check never showed an update, and CADder Bridge got "unknown", so no
+    warning showed for versions that do not match (Blender 5.1 and 5.2,
+    2026-10-08).
+    """
     try:
         from . import bl_info
         return tuple(bl_info["version"])
+    except Exception:
+        pass
+    try:
+        import tomllib
+        manifest = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "blender_manifest.toml")
+        with open(manifest, "rb") as f:
+            return parse_version(tomllib.load(f).get("version"))
     except Exception:
         return None
 

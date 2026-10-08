@@ -75,6 +75,11 @@ CADder 1.2 works with CADder Bridge 1.2. Update both. See
   entry. The background import made Blender delete files of CADder at
   that start. If your CADder is in this state, disable it and enable it
   again.
+- An installed CADder knows its version again. Blender removes the data
+  that CADder read its version from. So CADder did not show that an
+  update is available, and CADder and CADder Bridge showed no warning
+  when their versions did not match. Earlier versions do not show this
+  update: get it from the release page.
 - The bone widgets no longer show in the scene when it holds two rigs.
 - A lock on one rig no longer stops the build of the rig of another
   assembly.

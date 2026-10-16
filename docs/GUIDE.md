@@ -811,7 +811,7 @@ The **Engineering Materials** import option is on by default. It gives each part
 
 > **Not every CAD system writes this data.** SOLIDWORKS does not write engineering material data into STEP in any schema. Its "Export Appearances" option carries only flat per face colors, because STEP cannot hold textures or PBR properties. SOLIDWORKS also flattens the appearance overrides on components and assemblies, so every instance of a part arrives with the part color. CATIA and NX do write material data when you turn on the right export options. A file without material data imports without the custom properties.
 >
-> **Do you work in SOLIDWORKS?** Our free [NEXT-STEP](https://github.com/Peak-Design/NEXT-STEP-SW) add-in closes both gaps. It writes the material name and the density into the STEP file. It also keeps the color override on each instance. The geometry stays identical to the native SOLIDWORKS output.
+> **Do you work in SOLIDWORKS?** The **Export STEP+** command of [CADder Bridge](https://github.com/Peak-Design/CADder-SW-Bridge) closes both gaps. It writes the material name and the density into the STEP file. It also keeps the color override on each instance. The geometry stays identical to the native SOLIDWORKS output.
 
 ## UV Maps
 

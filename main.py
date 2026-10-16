@@ -4059,7 +4059,7 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                     "material, such as \"AISI 304 Steel\", instead of color "
                     "materials. The STEP file must carry engineering material "
                     "data. CATIA and NX write it. SOLIDWORKS writes it only "
-                    "through the free NEXT-STEP add-in. The addon stores the "
+                    "through Export STEP+ of CADder Bridge. The addon stores the "
                     "density and the description as custom properties. Use the "
                     "Material Database to map each name to a full shader",
         default=True,

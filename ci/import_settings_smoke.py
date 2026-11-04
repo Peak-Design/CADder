@@ -75,6 +75,7 @@ SHIPPED = {
     "uv_normalize": False,
     "uv_closed_seams": "SINGLE",
     "uv_pack": "NONE",
+    "uv_rotate": False,
     "tris_to_quads": True,
 }
 by_id = {p.identifier: p for p in rna.properties}
@@ -124,6 +125,8 @@ WANT = {
     "uv_pack": "UDIM",
     "uv_pack_tiles": 7,
     "uv_pack_margin": 0.0123,
+    "uv_rotate": True,
+    "uv_project_angle": 0.5,
     "tris_to_quads": True,
     "skip_construction": True,
     "import_curves": True,

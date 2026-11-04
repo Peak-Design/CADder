@@ -6,6 +6,8 @@
 # triplanar box-projection generator that works on any finished Blender
 # mesh, and the Smart merge that grows islands out of the CAD charts.
 
+import math
+
 import numpy as np
 
 
@@ -101,6 +103,13 @@ UNWRAP_MODES = ("CONFORMAL", "ANGLE_BASED", "MINIMUM_STRETCH")
 # The modes that start from the parametric UVs of the CAD surface. The
 # unwrap modes keep them as the content to fall back on if the unwrap fails.
 SURFACE_MODES = ("SURFACE", "SMART") + UNWRAP_MODES
+
+# Blender's Smart UV Project. Like Box Project it reads the mesh and nothing
+# else, so it needs no CAD data.
+PROJECT_MODE = "SMART_PROJECT"
+# Blender's own default angle limit, 66 degrees, in radians as the operator
+# and an angle property hold it.
+PROJECT_ANGLE = math.radians(66.0)
 
 
 def migrate_settings(d):
@@ -1440,6 +1449,144 @@ def fit_charts(me, faces, before=None, limit=SMART_STRAIN,
                        + moved * nudge * np.array([0.8, 0.6]))
     r.layer.uv.foreach_set("vector", r.uv.astype(np.float32).ravel())
     return moved
+
+
+# Upright islands. Each CAD face gives a chart in the parameter frame of its
+# own surface, so the islands of one part lie in all directions. Turned so
+# world up points up the tile, a texture with a direction (wood grain,
+# brushed metal, text) runs the same way on every island.
+#
+# An island is mostly horizontal when the up direction, laid on its faces,
+# is shorter than this on average (about 15 degrees from flat). It then
+# takes the north direction (world Y) instead, as a plan view does.
+UPRIGHT_FLAT = 0.25
+# The directions of an island agree when their sum is at least this share
+# of their total length. Below it, a direction that only agrees as a line
+# (a horizontal cylinder, where up runs around the outside) sets the axis.
+UPRIGHT_AGREE = 0.25
+
+
+def _island_dirs(co, lv, uv, t0, t1, t2, w):
+    """The UV direction of the 3D direction `w` on every fan triangle.
+
+    The direction is laid flat on the triangle and carried into UV space
+    through the triangle's own 3D to UV map. Its length is the share of `w`
+    that lies on the triangle, times the UV scale. Returns (directions,
+    triangle areas, share of `w` on the triangle).
+    """
+    p0, p1, p2 = co[lv[t0]], co[lv[t1]], co[lv[t2]]
+    e1, e2 = p1 - p0, p2 - p0
+    n = np.cross(e1, e2)
+    nl = np.linalg.norm(n, axis=1)
+    area = 0.5 * nl
+    nn = n / np.maximum(nl, 1e-300)[:, None]
+    wt = w[None, :] - (nn @ w)[:, None] * nn
+    g11 = (e1 * e1).sum(axis=1)
+    g12 = (e1 * e2).sum(axis=1)
+    g22 = (e2 * e2).sum(axis=1)
+    b1 = (e1 * wt).sum(axis=1)
+    b2 = (e2 * wt).sum(axis=1)
+    det = g11 * g22 - g12 * g12
+    ok = det > 1e-24 * np.maximum(g11 * g22, 1e-300)
+    det = np.where(ok, det, 1.0)
+    a = np.where(ok, (g22 * b1 - g12 * b2) / det, 0.0)
+    b = np.where(ok, (g11 * b2 - g12 * b1) / det, 0.0)
+    d1 = uv[t1] - uv[t0]
+    d2 = uv[t2] - uv[t0]
+    v = a[:, None] * d1 + b[:, None] * d2
+    return v, np.where(ok, area, 0.0), np.linalg.norm(wt, axis=1)
+
+
+def upright(me, up, north):
+    """Turn every UV island of a mesh so `up` points up the tile.
+
+    `up` and `north` are world Z and world Y in the mesh's own frame. A
+    mostly horizontal island takes `north` instead (UPRIGHT_FLAT). An island
+    whose directions cancel out as arrows but agree as a line, such as the
+    rolled out side of a horizontal cylinder, gets that line upright. An
+    island with no clear direction stays as it is.
+
+    A mirrored island (a face whose surface runs the other way) cannot be
+    turned into place, so it is mirrored back first. Each island keeps the
+    lower left corner of its bounds, so an island in the 0 to 1 tile stays
+    near it. The joins inside an island and the seams do not change.
+    Returns how many islands moved.
+    """
+    r = _Read(me)
+    if not r.ok:
+        return 0
+    up = np.asarray(up, dtype=np.float64)
+    north = np.asarray(north, dtype=np.float64)
+    co = np.empty(len(me.vertices) * 3, dtype=np.float64)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    uv, lv, t0, t1, t2 = r.uv, r.lv, r.t0, r.t1, r.t2
+    chart = r.charts(uv)
+    nc = int(chart.max()) + 1
+    tchart = chart[r.tp]
+    lchart = chart[r.pol]
+
+    def per_island(x):
+        return np.bincount(tchart, weights=x, minlength=nc)
+
+    lo = np.full((nc, 2), np.inf)
+    hi = np.full((nc, 2), -np.inf)
+    np.minimum.at(lo, lchart, uv)
+    np.maximum.at(hi, lchart, uv)
+
+    # Mirrored back first, so a turn can put it upright.
+    flip = per_island(r.signed(uv)) < 0.0
+    if flip.any():
+        fl = flip[lchart]
+        uv[fl, 0] = (lo[:, 0] + hi[:, 0])[lchart][fl] - uv[fl, 0]
+
+    v, area, share = _island_dirs(co, lv, uv, t0, t1, t2, up)
+    total = per_island(area)
+    flat = per_island(area * share) < UPRIGHT_FLAT * np.maximum(total, 1e-300)
+    if flat.any():
+        vn, _a, _s = _island_dirs(co, lv, uv, t0, t1, t2, north)
+        v = np.where(flat[tchart][:, None], vn, v)
+
+    vx, vy = v[:, 0] * area, v[:, 1] * area
+    length = np.hypot(v[:, 0], v[:, 1])
+    big = per_island(length * area)
+    sx, sy = per_island(vx), per_island(vy)
+    # The same directions as lines: double the angle, keep the length.
+    inv = 1.0 / np.maximum(length, 1e-300)
+    dx = per_island((v[:, 0] * v[:, 0] - v[:, 1] * v[:, 1]) * inv * area)
+    dy = per_island(2.0 * v[:, 0] * v[:, 1] * inv * area)
+
+    turn = np.zeros(nc)
+    arrow = np.hypot(sx, sy) >= UPRIGHT_AGREE * big
+    line = (~arrow) & (np.hypot(dx, dy) >= UPRIGHT_AGREE * big)
+    turn[arrow] = np.pi / 2.0 - np.arctan2(sy[arrow], sx[arrow])
+    axis = 0.5 * np.arctan2(dy[line], dx[line])
+    t_a = np.pi / 2.0 - axis
+    t_a = (t_a + np.pi) % (2.0 * np.pi) - np.pi
+    # Either way up is upright for a line: take the smaller turn.
+    t_b = np.where(t_a > 0.0, t_a - np.pi, t_a + np.pi)
+    turn[line] = np.where(np.abs(t_a) <= np.abs(t_b), t_a, t_b)
+    turn = (turn + np.pi) % (2.0 * np.pi) - np.pi
+    turn[~(big > 0.0)] = 0.0
+    # An island that is already upright stays exactly as it is, so a second
+    # pass (an update, Apply UVs after a refine) changes nothing.
+    turn[np.abs(turn) < 1e-6] = 0.0
+
+    moved = (turn != 0.0) | flip
+    if not moved.any():
+        return 0
+    c, s = np.cos(turn)[lchart], np.sin(turn)[lchart]
+    mid = (0.5 * (lo + hi))[lchart]
+    d = uv - mid
+    out = np.stack([c * d[:, 0] - s * d[:, 1], s * d[:, 0] + c * d[:, 1]],
+                   axis=1) + mid
+    new_lo = np.full((nc, 2), np.inf)
+    np.minimum.at(new_lo, lchart, out)
+    out += (lo - new_lo)[lchart]
+    keep = ~moved[lchart]
+    out[keep] = r.uv[keep]
+    r.layer.uv.foreach_set("vector", out.astype(np.float32).ravel())
+    return int(moved.sum())
 
 
 def mark_seams(me):

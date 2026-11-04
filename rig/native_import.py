@@ -2055,8 +2055,11 @@ def _post_key(scene):
     prg = getattr(scene, "stepper", None)
     if prg is None:
         return "q0u0"
-    return "q%du%d" % (bool(getattr(prg, "tris_to_quads", False)),
-                       bool(getattr(prg, "uv_unwrap_compound", False)))
+    key = "q%du%d" % (bool(getattr(prg, "tris_to_quads", False)),
+                      bool(getattr(prg, "uv_unwrap_compound", False)))
+    # Upright islands (Rotate to Fit off). A mesh made before the option
+    # has the key without it, and its islands are not upright.
+    return key if getattr(prg, "uv_rotate", True) else key + "o"
 
 
 def to_finish(objects, stem, context=None):
@@ -2120,6 +2123,22 @@ def quads(objects):
         return 0
     from .. import main as main_mod
     return main_mod._tris_to_quads_objects(objects) or 0
+
+
+def upright(objects):
+    """Turn the UV islands upright to the world, when the scene asks.
+
+    The CAD application sends one island for each CAD face, in the frame of
+    its surface. With Rotate to Fit off (the UV panel), each island is
+    turned so world Z points up the tile, as a STEP import does. Read from
+    the scene, like quads(), so a send and a refine give the same answer.
+    Returns how many islands moved.
+    """
+    prg = getattr(bpy.context.scene, "stepper", None)
+    if prg is None or getattr(prg, "uv_rotate", True) or not objects:
+        return 0
+    from .. import main as main_mod
+    return main_mod._upright_uv_objects(objects) or 0
 
 
 def refine(context, path, unit_scale=None, material_prefix="SW ",
@@ -2249,4 +2268,5 @@ def refine(context, path, unit_scale=None, material_prefix="SW ",
 
     quads(replaced)
     context.view_layer.update()
+    upright(replaced)
     return replaced

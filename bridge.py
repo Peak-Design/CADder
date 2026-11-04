@@ -70,8 +70,8 @@ _IMPORT_OPTION_KEYS = {
     "ang_deflection_rot", "tessellation_relative", "lin_deflection_rel",
     "uv_mode", "uv_normalize", "uv_closed_seams", "uv_smart_distortion",
     "uv_smart_sharp", "uv_smart_split", "uv_unwrap_compound", "uv_pack", "uv_pack_tiles",
-    "uv_pack_margin", "box_uv_scale", "tris_to_quads",
-    "eng_materials", "material_database", "import_curves",
+    "uv_pack_margin", "box_uv_scale", "tris_to_quads", "uv_rotate",
+    "uv_project_angle", "eng_materials", "material_database", "import_curves",
     "skip_construction", "group_in_collection", "separate_solids",
     "split_by_material",
 }
@@ -1142,7 +1142,7 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # then holds that answer: a later rebuild or regenerate here
             # gives the same mesh as the send did.
             prg = getattr(bpy.context.scene, "stepper", None)
-            for key in ("tris_to_quads", "uv_unwrap_compound"):
+            for key in ("tris_to_quads", "uv_unwrap_compound", "uv_rotate"):
                 if key in opts and prg is not None:
                     setattr(prg, key, bool(opts[key]))
             # An UPDATE keeps the scene and changes what changed. A send
@@ -1294,6 +1294,11 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
                 if faces:
                     log.append("unwrapped %d compound face(s) into %d "
                                "island(s)" % (faces, islands))
+            # Rotate to Fit off: the islands stand upright to the world.
+            # After the parts are placed, because the world decides.
+            turned = native_import.upright(finish)
+            if turned:
+                log.append("turned %d UV island(s) upright" % turned)
             stages["mesh"] = {
                 "file": os.path.basename(mesh_path),
                 "objects": len(objects),

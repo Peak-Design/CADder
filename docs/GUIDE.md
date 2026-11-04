@@ -92,8 +92,10 @@ version: what it is, how to install it, and what is new.
 - **CAD Surfaces (Smart)** joins faces that meet smoothly into one island,
   so a sheet metal part comes out as its flat pattern, and hands the faces
   no one scale can flatten to Blender's unwrap.
-- Blender's own unwrap methods and a box projection, for the parts that
-  want them.
+- Blender's own unwrap methods, Smart UV Project and a box projection, for
+  the parts that want them.
+- Islands that stand upright to the world, so a texture with a direction
+  runs the same way on every face.
 - Real world UV scale, island packing with a margin, and UDIM tiles.
 - Seams on closed faces, so a hole unrolls instead of smearing.
 - The UV panel makes the map again for the selected parts, so one part can
@@ -582,8 +584,8 @@ in Blender. These do not change it:
 A lock keeps the geometry and nothing else. A locked part still moves to
 the pose that SolidWorks gives it, and the material database still applies
 to it. Use **Lock Materials** to keep its materials too. **Clean Up
-Meshes** and **Box Project** work on the mesh as it is, so they still
-change a locked part.
+Meshes**, **Box Project** and **Smart UV Project** work on the mesh as it
+is, so they still change a locked part.
 
 Parts that share a mesh share its geometry, so a lock on one of them keeps
 the mesh of all. The placements of a collection instance share the mesh of
@@ -654,8 +656,9 @@ parts are asked for again straight after.
 
 ### UV
 
-The UV map of any part, whichever way it came in. **Box Project** reads
-the mesh and nothing else. The other modes start from one island per CAD
+The UV map of any part, whichever way it came in. **Box Project** and
+**Smart UV Project** read the mesh and nothing else. The other modes start
+from one island per CAD
 face, so they need the CAD data: a part from a STEP file is read from the
 file again, and a part from the live link is asked of the CAD application.
 One UV unit is one metre of the part, whichever way the part came in, so
@@ -825,6 +828,7 @@ The addon creates one `UVMap` layer. The **UV Map** import option chooses what g
 | **Unwrap (Conformal)** | Blender's unwrap with packed islands. Sharp CAD edges act as seams. Keeps the angles. |
 | **Unwrap (Angle Based)** | The same unwrap with the angle based method. It can fold a long cylinder on to itself. |
 | **Unwrap (Minimum Stretch)** | The same unwrap with the minimum stretch method. The slowest mode. |
+| **Smart UV Project** | Blender's Smart UV Project. It cuts the mesh where two faces meet at more than the **Angle Limit** (66 degrees by default), not on the CAD faces. It reads only the mesh, so it also works on a part whose geometry is locked. |
 | **Box Project** | Triplanar projection with a world-unit tile size. |
 
 > **Recommended settings for large models:** import with **UV Map** set to
@@ -1010,6 +1014,22 @@ down as more parts share a tile. Without that correction the default margin
 fills only 6 percent of the tile on a 300 part import, against 80 percent
 with it. Raise the margin if a bake bleeds between islands.
 
+**Rotate to Fit** lets the packer turn the islands to fill the tile. It is
+off by default. Then the addon turns each island of **CAD Surfaces** and
+**CAD Surfaces (Smart)** so that world Z points up the tile, and the packer
+keeps that direction. A face that lies flat uses world Y, as a plan view
+does. A lying cylinder has no single up direction around its side, so its
+axis goes across the tile. A texture with a direction, such as wood grain or
+brushed metal, then runs the same way on every island. An island that came
+in mirrored is put the right way round first, so text in a texture reads
+correctly.
+
+Upright islands fill the tile less tightly than turned ones. Turn **Rotate
+to Fit** on when the texture has no direction and the texel count matters
+more. The option also applies to a send from the CAD application: set it in
+the **CADder: UV** panel before the send. A file that was imported before
+this option keeps its islands as they were at a refresh and a rebuild.
+
 **Normalize UVs** decides whether the packer may resize the islands. With
 it on the islands are scaled to fill the tile. With it off the packer only
 arranges them and every island keeps its real world size, so the packed
@@ -1042,8 +1062,9 @@ selected parts again. It holds the same settings as the import dialog, so
 one part can get a treatment its neighbor does not. A bent bracket can be
 one flat pattern while the machined block beside it stays face by face.
 
-Box Project reads the mesh and nothing else, so it runs on the parts as they
-are. The other modes need the parametric surfaces, so the addon reads the
+Box Project and Smart UV Project read the mesh and nothing else, so they run
+on the parts as they are. The other modes need the parametric surfaces, so
+the addon reads the
 source CAD file again and replaces the mesh, the same way **Rebuild from
 STEP** does. Work you did on the mesh itself does not survive that. Transforms,
 parenting, modifiers, materials and custom properties do.

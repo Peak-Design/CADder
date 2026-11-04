@@ -215,9 +215,9 @@ asked = []
 real_unwrap = live._unwrap_uv_objects
 
 
-def spy(objs, world_scale=None, method="CONFORMAL"):
+def spy(objs, world_scale=None, method="CONFORMAL", **kw):
     asked.append(method)
-    return real_unwrap(objs, world_scale=world_scale, method=method)
+    return real_unwrap(objs, world_scale=world_scale, method=method, **kw)
 
 
 live._unwrap_uv_objects = spy

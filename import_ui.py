@@ -72,9 +72,9 @@ PERSISTED_PROPS = (
     "ang_deflection_rot", "lin_deflection_rel",
     "eng_materials", "uv_mode", "uv_normalize", "uv_closed_seams",
     "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
-    "uv_unwrap_compound",
+    "uv_unwrap_compound", "uv_project_angle",
     "box_uv_scale", "uv_pack", "uv_pack_tiles",
-    "uv_pack_margin", "tris_to_quads",
+    "uv_pack_margin", "uv_rotate", "tris_to_quads",
     "skip_construction", "import_curves",
     "group_in_collection", "separate_solids", "split_by_material",
 )
@@ -182,7 +182,8 @@ def draw_uv_mode(owner, layout):
     mode = owner.uv_mode
     layout.prop(owner, "uv_mode")
     sub = layout.row()
-    sub.active = mode in uv_mod.SURFACE_MODES
+    sub.active = (mode in uv_mod.SURFACE_MODES
+                  or mode == uv_mod.PROJECT_MODE)
     sub.prop(owner, "uv_normalize")
     sub = layout.row()
     sub.active = mode == "BOX"
@@ -202,6 +203,26 @@ def draw_uv_mode(owner, layout):
     sub = layout.row()
     sub.active = mode == "SURFACE" or mode in uv_mod.UNWRAP_MODES
     sub.prop(owner, "uv_closed_seams")
+    sub = layout.row()
+    sub.active = mode == uv_mod.PROJECT_MODE
+    sub.prop(owner, "uv_project_angle")
+
+
+def draw_uv_pack(owner, layout):
+    """Pack UVs and the settings that go with it, for the import dialog and
+    the UV panel. Rotate to Fit is active wherever it changes something:
+    a pack, or the islands of the CAD faces, which it turns upright."""
+    layout.prop(owner, "uv_pack")
+    sub = layout.row()
+    sub.active = owner.uv_pack == "UDIM"
+    sub.prop(owner, "uv_pack_tiles")
+    sub = layout.row()
+    sub.active = owner.uv_pack != "NONE"
+    sub.prop(owner, "uv_pack_margin")
+    sub = layout.row()
+    sub.active = owner.uv_pack != "NONE" or owner.uv_mode in ("SURFACE",
+                                                              "SMART")
+    sub.prop(owner, "uv_rotate")
 
 
 def draw_quality(owner, layout):
@@ -254,13 +275,7 @@ def draw_import_dialog(op, layout, prefs):
         body.prop(op, "material_database", text="Material DB")
         body.prop(op, "eng_materials")
         draw_uv_mode(op, body)
-        body.prop(op, "uv_pack")
-        sub = body.row()
-        sub.active = op.uv_pack == "UDIM"
-        sub.prop(op, "uv_pack_tiles")
-        sub = body.row()
-        sub.active = op.uv_pack != "NONE"
-        sub.prop(op, "uv_pack_margin")
+        draw_uv_pack(op, body)
         body.prop(op, "tris_to_quads")
 
     header, body = layout.panel("stepper_advanced", default_closed=True)
@@ -345,6 +360,8 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                 "uv_unwrap_compound": True,
                 "tris_to_quads": True, "uv_pack": "NONE",
                 "uv_pack_tiles": 4, "uv_pack_margin": 0.005,
+                "uv_rotate": False,
+                "uv_project_angle": uv_mod.PROJECT_ANGLE,
                 "import_curves": False, "eng_materials": True,
                 "group_in_collection": False, "separate_solids": False,
                 "split_by_material": False}
@@ -361,6 +378,7 @@ class STEPPER_OT_batch_import_folder(bpy.types.Operator):
                             "uv_smart_split", "uv_unwrap_compound",
                             "box_uv_scale", "tris_to_quads", "uv_pack",
                             "uv_pack_tiles", "uv_pack_margin",
+                            "uv_rotate", "uv_project_angle",
                             "import_curves",
                             "group_in_collection", "separate_solids",
                             "split_by_material", "eng_materials"):

@@ -309,6 +309,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         # Smart runs once for each set of settings, because the tile it
         # fits and the bend it allows come from the record of each object.
         smart_objs = {}
+        # The parts whose record has Rotate to Fit off. A record from before
+        # the option has no key and keeps the islands as they were made.
+        upright_objs = []
         for filepath, objs in by_file.items():
             reader = m._cache_get(filepath)
             if reader is None:
@@ -444,7 +447,13 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                     quad_objs.append(obj)
                 if uv_mode in uv_mod.UNWRAP_MODES:
                     unwrap_objs.setdefault(
-                        (uv_mode, bool(m._uv_options["normalize"])),
+                        (uv_mode, bool(m._uv_options["normalize"]), None),
+                        []).append(obj)
+                elif uv_mode == uv_mod.PROJECT_MODE:
+                    unwrap_objs.setdefault(
+                        (uv_mode, bool(m._uv_options["normalize"]),
+                         float(stored.get("uv_project_angle",
+                                          uv_mod.PROJECT_ANGLE))),
                         []).append(obj)
                 elif uv_mode == "SMART":
                     smart_objs.setdefault(
@@ -456,6 +465,9 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
                          bool(stored.get("uv_smart_split", True)),
                          bool(stored.get("uv_unwrap_compound", True))),
                         []).append(obj)
+                if (uv_mode in m.UPRIGHT_MODES
+                        and not stored.get("uv_rotate", True)):
+                    upright_objs.append(obj)
                 done += 1
                 wm.progress_update(done)
 
@@ -477,16 +489,20 @@ class STEPPER_OT_regenerate(bpy.types.Operator):
         for smart_set, objs_s in smart_objs.items():
             m._smart_merge_objects(objs_s, *smart_set)
 
+        if upright_objs:
+            m._upright_uv_objects(upright_objs)
+
         # One unwrap for each method and each Normalize UVs setting, so
         # every part gets the map its own record asks for. The setting was
         # once read after the loop, which gave every part the setting of
         # the part rebuilt last. Regenerated meshes are already scaled to
         # scene units, so real-world UV mode needs no extra unit conversion.
-        for (method, normalize), objs_m in unwrap_objs.items():
+        for (method, normalize, angle), objs_m in unwrap_objs.items():
             m._unwrap_uv_objects(
                 objs_m,
                 world_scale=None if normalize else 1.0,
-                method=method)
+                method=method,
+                angle=uv_mod.PROJECT_ANGLE if angle is None else angle)
 
         wm.progress_end()
 
@@ -869,7 +885,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
     KEYS = ("uv_mode", "uv_normalize", "uv_closed_seams",
             "uv_smart_distortion", "uv_smart_sharp", "uv_smart_split",
             "uv_unwrap_compound",
-            "box_uv_scale", "uv_pack", "uv_pack_tiles", "uv_pack_margin")
+            "box_uv_scale", "uv_pack", "uv_pack_tiles", "uv_pack_margin",
+            "uv_rotate", "uv_project_angle")
 
     @classmethod
     def poll(cls, context):
@@ -923,6 +940,16 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
                     if obj.name in cad:
                         _write_record(obj, want)
             made.append("box projected %d mesh(es)" % n)
+        elif want["uv_mode"] == uv_mod.PROJECT_MODE:
+            # Smart UV Project also reads only the mesh. The meshes in the
+            # scene are in scene units, so real world scale is 1.
+            m._unwrap_uv_objects(
+                targets, world_scale=None if want["uv_normalize"] else 1.0,
+                method=uv_mod.PROJECT_MODE, angle=want["uv_project_angle"])
+            for obj in targets:
+                if obj.name in cad:
+                    _write_record(obj, want)
+            made.append("Smart UV Project on %d mesh(es)" % len(targets))
         else:
             # The CAD data is where these modes start, and a part knows which
             # CAD data is its own: a STEP file on disk, or the CAD
@@ -990,7 +1017,8 @@ class STEPPER_OT_reapply_uv(bpy.types.Operator):
         if want["uv_pack"] != "NONE":
             m._pack_uv_objects(targets, want["uv_pack"],
                                want["uv_pack_tiles"], want["uv_pack_margin"],
-                               bool(want["uv_normalize"]))
+                               bool(want["uv_normalize"]),
+                               rotate=bool(want["uv_rotate"]))
 
         if problem is not None:
             if not made:
@@ -1112,6 +1140,11 @@ def _uv_modes_on_live(m, objs, want):
             objs, want["uv_pack"], want["uv_pack_tiles"],
             want["uv_smart_distortion"], bool(want["uv_smart_sharp"]),
             bool(want["uv_smart_split"]), bool(want["uv_unwrap_compound"]))
+        # The joins turned the charts, so the islands are made upright
+        # again. CAD Surfaces needs nothing here: the geometry came back
+        # upright from the CAD application (native_import.upright).
+        if not want["uv_rotate"]:
+            m._upright_uv_objects(objs)
     elif mode in uv_mod.UNWRAP_MODES:
         m._unwrap_uv_objects(
             objs,

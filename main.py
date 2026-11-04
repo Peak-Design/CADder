@@ -729,6 +729,10 @@ UV_MODE_ITEMS = [
     ("MINIMUM_STRETCH", "Unwrap (Minimum Stretch)",
      "Blender unwrap that works to even out the stretch. The slowest mode",
      6),
+    ("SMART_PROJECT", "Smart UV Project",
+     "Blender's Smart UV Project. It cuts the mesh where two faces meet at "
+     "more than the angle limit, not on the CAD faces. It needs no CAD data, "
+     "so it also works on a mesh from another source", 7),
     ("BOX", "Box Project",
      "Project each face from the nearest of three directions, with a tile "
      "size in world units", 3),
@@ -871,7 +875,7 @@ def _crowd_margin(margin, count):
     return margin / math.sqrt(max(1, count))
 
 
-def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
+def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True, rotate=True):
     """Pack one set of meshes into tile 0, together.
 
     Selects and deselects only its own meshes. Clearing the whole scene on
@@ -882,6 +886,9 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
     The packer applies one factor to the whole group, so it keeps whatever
     size difference the islands arrive with. Averaging gives every island in
     the group the same texel density before that.
+
+    `rotate` lets the packer turn islands to fill the tile (Rotate to Fit).
+    Off, every island keeps the way up it has.
     """
     if not objs:
         return
@@ -897,7 +904,7 @@ def _pack_group(objs, margin=UV_PACK_MARGIN, scale=True):
             # Each island keeps its own center, so the group stays in the
             # tile the packer is about to read it from.
             bpy.ops.uv.average_islands_scale()
-        bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=True,
+        bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=rotate,
                                 scale=scale,
                                 margin=_crowd_margin(margin, len(objs)))
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -932,7 +939,8 @@ def _balance(objs, groups):
     return [g for g in out if g]
 
 
-def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
+def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True,
+                     rotate=True):
     """Pack the UV islands. Unique meshes only, so linked copies come free.
 
     ALL     one tile for the whole import, ready to merge and texture as one
@@ -944,6 +952,8 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
     UV scale survives the pack. The result can then be larger than one tile,
     which is why UDIM always scales: its tiles are a fixed grid and an
     island that overruns one lands in the next.
+
+    `rotate` is Rotate to Fit: whether the packer may turn the islands.
     """
     if mode in (None, "NONE"):
         return
@@ -969,7 +979,7 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
         if mode == "ALL":
             for o in targets:
                 _uv_home(o.data)
-            _pack_group(targets, margin, scale)
+            _pack_group(targets, margin, scale, rotate)
             used = 1
         elif mode == "OBJECT":
             # One pack for each part. This is the slow one by nature: the
@@ -977,7 +987,7 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
             # tile of its own.
             for o in targets:
                 _uv_home(o.data)
-                _pack_group([o], margin, scale)
+                _pack_group([o], margin, scale, rotate)
             used = len(targets)
         else:
             if not scale:
@@ -987,7 +997,7 @@ def _pack_uv_objects(objs, mode, tiles=4, margin=UV_PACK_MARGIN, scale=True):
             for i, group in enumerate(groups):
                 for o in group:
                     _uv_home(o.data)
-                _pack_group(group, margin, True)
+                _pack_group(group, margin, True, rotate)
                 du, dv = i % UDIM_ROW, i // UDIM_ROW
                 if du or dv:
                     for o in group:
@@ -1063,11 +1073,14 @@ def _tris_to_quads_objects(objs):
     return meshes
 
 
-def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
+def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL",
+                       angle=uv_mod.PROJECT_ANGLE):
     """Blender's unwrap with packed islands into the 'UVMap' layer.
 
     `method` is the unwrap operator's own method name, which is also the
-    identifier of the unwrap mode in the UV Map dropdown. Runs Blender's
+    identifier of the unwrap mode in the UV Map dropdown. SMART_PROJECT runs
+    Smart UV Project instead, which cuts the mesh where two faces meet at
+    more than `angle` (radians) and ignores the seams. Runs Blender's
     unwrap operator once over all given objects in multi-object edit mode. The imported seams (marked at sharp normal
     discontinuities between CAD faces) define the islands. The unwrap
     operator packs them into the 0-1 square per mesh.
@@ -1114,12 +1127,17 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
         # what leaves an island folded on top of itself. correct_aspect is
         # off so the UVs are for a square tile. On, it reads the image in
         # the material and squashes the UVs to its proportions.
-        try:
-            bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True,
-                              correct_aspect=False)
-        except TypeError:
-            bpy.ops.uv.unwrap(method=method, margin=0.005,
-                              correct_aspect=False)
+        if method == uv_mod.PROJECT_MODE:
+            bpy.ops.uv.smart_project(angle_limit=angle,
+                                     island_margin=UV_PACK_MARGIN,
+                                     correct_aspect=False)
+        else:
+            try:
+                bpy.ops.uv.unwrap(method=method, margin=0.005, no_flip=True,
+                                  correct_aspect=False)
+            except TypeError:
+                bpy.ops.uv.unwrap(method=method, margin=0.005,
+                                  correct_aspect=False)
         bpy.ops.object.mode_set(mode="OBJECT")
         if world_scale is not None:
             for o in targets:
@@ -1136,6 +1154,102 @@ def _unwrap_uv_objects(objs, world_scale=None, method="CONFORMAL"):
         if holders:
             bpy.data.batch_remove(holders)
             view_layer.objects.active = active
+
+
+# The UV modes whose islands Rotate to Fit acts on: one island for each CAD
+# face, in the parameter frame of its surface. With the option off, the
+# islands are turned upright to the world before the pack.
+UPRIGHT_MODES = ("SURFACE", "SMART")
+
+
+def _world_rotation(obj, instancers=None):
+    """The rotation of an object in the world, as a 3x3 matrix.
+
+    The prototype of a collection instance stands at the origin in a hidden
+    collection, and the empty that shows it holds the placement. So for a
+    prototype the first empty that instances its collection speaks for it.
+    `instancers` maps a collection to that empty (_instancers).
+    """
+    if instancers:
+        for col in obj.users_collection:
+            holder = instancers.get(col.name)
+            if holder is not None:
+                return holder.matrix_world.to_quaternion().to_matrix()
+    return obj.matrix_world.to_quaternion().to_matrix()
+
+
+def _instancers():
+    """Collection name -> the first empty that instances it."""
+    out = {}
+    for o in bpy.context.scene.objects:
+        col = getattr(o, "instance_collection", None)
+        if o.instance_type == "COLLECTION" and col is not None:
+            out.setdefault(col.name, o)
+    return out
+
+
+def _import_frames(objs, tree, up_as):
+    """The world rotation each object of an import will get, before it is
+    placed: its place in the assembly tree, then the turn to the up axis
+    (transform_to_up)."""
+    up = up_as if isinstance(up_as, str) else up_as[0]
+    up_axis = {"X": 0, "Y": 1, "Z": 2}.get(up[:1], 2)
+    frames = {}
+    for o in objs:
+        try:
+            m = np.array(tree.nodes[o["STEP_tree_location"]].global_transform,
+                         dtype=np.float64)[:3, :3]
+        except (KeyError, IndexError, TypeError, AttributeError):
+            continue
+        if up_axis != 2:
+            m[[up_axis, 2]] = m[[2, up_axis]]
+            m[up_axis] *= -1
+        frames[o] = Matrix([tuple(r) for r in m]).to_quaternion().to_matrix()
+    return frames
+
+
+def _upright_uv_objects(objs, frames=None):
+    """Turn the UV islands of every unique mesh upright to the world.
+
+    World Z points up the tile, and world Y on a mostly horizontal island
+    (uv.upright). One mesh can be placed many ways, so the first object
+    that holds it decides. `frames` maps an object to its world rotation
+    when the object is not placed yet, as during the import. Returns how
+    many islands moved.
+    """
+    seen = set()
+    picked = []
+    for o in objs:
+        if (o is None or getattr(o, "type", None) != "MESH"
+                or o.data is None or o.data in seen
+                or not len(o.data.polygons)
+                or not len(o.data.uv_layers)):
+            continue
+        seen.add(o.data)
+        picked.append(o)
+    if not picked:
+        return 0
+    t0 = time.time()
+    instancers = None
+    if frames is None:
+        bpy.context.view_layer.update()
+        instancers = _instancers()
+    moved = 0
+    for o in picked:
+        rot = (frames or {}).get(o)
+        if rot is None:
+            rot = _world_rotation(o, instancers)
+        # World Z and world Y in the mesh's own frame.
+        inv = rot.transposed()
+        up = inv @ Vector((0.0, 0.0, 1.0))
+        north = inv @ Vector((0.0, 1.0, 0.0))
+        try:
+            moved += uv_mod.upright(o.data, tuple(up), tuple(north))
+        except Exception as e:
+            print(f"UV upright failed on {o.name}: {e}")
+    print("UV upright: %d island(s) turned on %d mesh(es) in %.2fs"
+          % (moved, len(picked), time.time() - t0))
+    return moved
 
 
 def _unwrap_compound_objects(targets, method="MINIMUM_STRETCH"):
@@ -2966,6 +3080,11 @@ def load_step(
     uv_pack="NONE",
     uv_pack_tiles=4,
     uv_pack_margin=UV_PACK_MARGIN,
+    # True is how every import before this option turned its islands, so
+    # a refresh of an older record makes the same map again. The dialog
+    # passes its own setting, which is off by default.
+    uv_rotate=True,
+    uv_project_angle=uv_mod.PROJECT_ANGLE,
     import_curves=False,
     eng_materials=False,
     group_in_collection=False,
@@ -3150,6 +3269,8 @@ def load_step(
         "uv_pack": uv_pack,
         "uv_pack_tiles": uv_pack_tiles,
         "uv_pack_margin": uv_pack_margin,
+        "uv_rotate": bool(uv_rotate),
+        "uv_project_angle": float(uv_project_angle),
         "import_curves": import_curves,
         "eng_materials": eng_materials,
         "group_in_collection": group_in_collection,
@@ -3507,17 +3628,24 @@ def load_step(
         _smart_merge_objects(created_names.values(), uv_pack, uv_pack_tiles,
                              uv_smart_distortion, uv_smart_sharp,
                              uv_smart_split, uv_unwrap_compound)
-    if _uv_options.get("unwrap"):
+    if _uv_options.get("unwrap") or uv_mode == uv_mod.PROJECT_MODE:
         _unwrap_uv_objects(
             created_names.values(),
             world_scale=(None if (_uv_options.get("normalize", True)
                                   or rescales)
                          else _uv_options["unit_scale"]),
-            method=uv_mode)
+            method=uv_mode, angle=uv_project_angle)
+    # Rotate to Fit off: the islands of the CAD faces stand upright to the
+    # world, and the pack keeps them that way. The parts are not placed
+    # yet, so the world rotation comes from the assembly tree.
+    if not uv_rotate and uv_mode in UPRIGHT_MODES:
+        _upright_uv_objects(
+            created_names.values(),
+            frames=_import_frames(created_names.values(), tree, up_as))
 
     if packing:
         _pack_uv_objects(created_names.values(), uv_pack, uv_pack_tiles,
-                         uv_pack_margin, pack_scale)
+                         uv_pack_margin, pack_scale, rotate=bool(uv_rotate))
 
     # remove all temporary links
     for tobj in created_objs:
@@ -3875,6 +4003,20 @@ class PG_Stepper(bpy.types.PropertyGroup):
         description="Space left around each island. The addon scales this "
                     "down as more parts share a tile",
         default=UV_PACK_MARGIN, min=0.0, max=0.25, precision=4)
+    uv_rotate: bpy.props.BoolProperty(
+        name="Rotate to Fit",
+        description="Let the pack turn the islands to fill the UV tile. When "
+                    "this is off, the islands of CAD Surfaces and CAD "
+                    "Surfaces (Smart) are turned so world Z points up the "
+                    "tile, and world Y on a flat face. A texture with a "
+                    "direction then runs the same way on every island",
+        default=False)
+    uv_project_angle: bpy.props.FloatProperty(
+        name="Angle Limit", subtype="ANGLE",
+        description="Cut the mesh where two faces meet at more than this "
+                    "angle. Smart UV Project only",
+        default=uv_mod.PROJECT_ANGLE, min=math.radians(1.0),
+        max=math.radians(89.0))
 
     # Material database UI state
     mat_db_mappings: bpy.props.CollectionProperty(type=PG_MaterialMapping)
@@ -4148,6 +4290,26 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
         precision=4,
     )
 
+    uv_rotate: bpy.props.BoolProperty(
+        name="Rotate to Fit",
+        description="Let the pack turn the islands to fill the UV tile. When "
+                    "this is off, the islands of CAD Surfaces and CAD "
+                    "Surfaces (Smart) are turned so world Z points up the "
+                    "tile, and world Y on a flat face. A texture with a "
+                    "direction then runs the same way on every island",
+        default=False,
+    )
+
+    uv_project_angle: bpy.props.FloatProperty(
+        name="Angle Limit",
+        subtype="ANGLE",
+        description="Cut the mesh where two faces meet at more than this "
+                    "angle. Smart UV Project only",
+        default=uv_mod.PROJECT_ANGLE,
+        min=math.radians(1.0),
+        max=math.radians(89.0),
+    )
+
     tris_to_quads: bpy.props.BoolProperty(
         name="Tris to Quads",
         description="Pair the tessellation triangles back into quads after "
@@ -4244,6 +4406,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
             "uv_pack": self.uv_pack,
             "uv_pack_tiles": self.uv_pack_tiles,
             "uv_pack_margin": self.uv_pack_margin,
+            "uv_rotate": self.uv_rotate,
+            "uv_project_angle": self.uv_project_angle,
             "eng_materials": self.eng_materials,
             "import_curves": self.import_curves,
             "group_in_collection": self.group_in_collection,
@@ -4327,6 +4491,8 @@ class ImportStepCADOperator(bpy.types.Operator, ImportHelper):
                 uv_pack=self.uv_pack,
                 uv_pack_tiles=self.uv_pack_tiles,
                 uv_pack_margin=self.uv_pack_margin,
+                uv_rotate=self.uv_rotate,
+                uv_project_angle=self.uv_project_angle,
                 import_curves=self.import_curves,
                 group_in_collection=self.group_in_collection,
                 separate_solids=self.separate_solids,
@@ -5647,13 +5813,7 @@ class STEP_PT_STEPper_UV(bpy.types.Panel):
         layout = self.layout
         col = layout.column()
         import_ui.draw_uv_mode(prg, col)
-        col.prop(prg, "uv_pack")
-        sub = col.row()
-        sub.active = prg.uv_pack == "UDIM"
-        sub.prop(prg, "uv_pack_tiles")
-        sub = col.row()
-        sub.active = prg.uv_pack != "NONE"
-        sub.prop(prg, "uv_pack_margin")
+        import_ui.draw_uv_pack(prg, col)
         tools_mod.scope_hint(layout, context)
         layout.operator("stepper.reapply_uv", icon="UV")
 

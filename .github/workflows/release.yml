@@ -143,7 +143,10 @@ jobs:
   # ════════════════════════════════════════════════════════════════════
   build-macos:
     needs: version
-    runs-on: macos-14
+    # GitHub retired macos-14 on 2026-11-02. The deployment target in the
+    # two builds below keeps the minimum macOS at 14.0. Without it, the
+    # module takes the macOS version of this runner.
+    runs-on: macos-15
     defaults:
       run:
         # -e/-o pipefail: GitHub only injects fail-fast for the builtin
@@ -178,6 +181,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
             -DPython3_EXECUTABLE="$CONDA_PREFIX/bin/python3"
           cmake --build . --config Release
 
@@ -189,6 +193,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
             -DPython3_EXECUTABLE="$CONDA_PREFIX/bin/python3" \
             -DOCCT_ROOT="$GITHUB_WORKSPACE/occt-x64"
           cmake --build . --config Release

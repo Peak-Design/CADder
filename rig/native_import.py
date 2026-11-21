@@ -152,6 +152,7 @@ def _build_mesh(definition, materials, unit_scale):
         uv = me.uv_layers.new(name="UVMap")
         uvs = np.frombuffer(definition.uvs, dtype=np.float32).reshape(-1, 2)
         uv.data.foreach_set("uv", uvs[w.corners].ravel())
+        me[_TAG_CAD_UV] = True
 
     if definition.triangle_materials is not None and materials:
         # Only the materials this definition uses, so a part does not
@@ -294,6 +295,10 @@ _TAG_COPY_OF = imports_mod.TAG_COPY_OF
 # What was done to a mesh after it was built (tris to quads, the unwrap of
 # compound faces). A part links only to a mesh made the same way.
 _TAG_POST = "SWMESH_post"
+# This mesh holds the UVs as the CAD application sent them, and the UV passes
+# of a send have not seen it yet. A mesh without the tag keeps the UVs it
+# has: they can be the work of the user.
+_TAG_CAD_UV = "SWMESH_cad_uv"
 # The part a collection of the flat mode is for.
 _TAG_GROUP_KEY = "SWMESH_group"
 # Blender cuts a longer name at this many bytes.
@@ -2125,6 +2130,27 @@ def quads(objects):
     return main_mod._tris_to_quads_objects(objects) or 0
 
 
+def with_cad_uvs(objects):
+    """One object for each mesh of `objects` that was just built from the
+    CAD data. A Refresh Model passes every part, and a part that did not
+    change keeps its mesh and the UVs the user gave it, so the UV passes of
+    a send take only these."""
+    holders, seen = [], set()
+    for obj in objects or ():
+        try:
+            found = _mesh_holders(obj)
+        except ReferenceError:
+            continue
+        for holder in found:
+            me = holder.data
+            if (me is None or me.get(_TAG_CAD_UV) is None
+                    or me.as_pointer() in seen):
+                continue
+            seen.add(me.as_pointer())
+            holders.append(holder)
+    return holders
+
+
 def upright(objects):
     """Turn the UV islands upright to the world, when the scene asks.
 
@@ -2132,13 +2158,20 @@ def upright(objects):
     its surface. With Rotate to Fit off (the UV panel), each island is
     turned so world Z points up the tile, as a STEP import does. Read from
     the scene, like quads(), so a send and a refine give the same answer.
-    Returns how many islands moved.
+
+    Only a mesh that was just built from the CAD data is turned
+    (with_cad_uvs). This is the last UV pass of a send, so it also takes
+    the tag off. Returns how many islands moved.
     """
+    holders = with_cad_uvs(objects)
+    moved = 0
     prg = getattr(bpy.context.scene, "stepper", None)
-    if prg is None or getattr(prg, "uv_rotate", True) or not objects:
-        return 0
-    from .. import main as main_mod
-    return main_mod._upright_uv_objects(objects) or 0
+    if holders and prg is not None and not getattr(prg, "uv_rotate", True):
+        from .. import main as main_mod
+        moved = main_mod._upright_uv_objects(holders) or 0
+    for holder in holders:
+        del holder.data[_TAG_CAD_UV]
+    return moved
 
 
 def refine(context, path, unit_scale=None, material_prefix="SW ",

@@ -1290,7 +1290,10 @@ def _run_stages(payload, stages, log, manifest_path, step_path, mesh_path,
             # it runs here, on what just arrived.
             if prg is None or prg.uv_unwrap_compound:
                 from . import main as main_mod
-                faces, islands = main_mod._unwrap_compound_objects(finish)
+                # Only what was just built: a part that did not change
+                # keeps its UVs through a Refresh Model.
+                faces, islands = main_mod._unwrap_compound_objects(
+                    native_import.with_cad_uvs(finish))
                 if faces:
                     log.append("unwrapped %d compound face(s) into %d "
                                "island(s)" % (faces, islands))

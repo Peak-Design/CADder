@@ -98,7 +98,8 @@ PARTS = [("c001", "turned", rot((0, 0, 1), 30), 0.0),
          ("c003", "tipped", rot((0, 1, 0), 90) @ rot((1, 0, 0), 35), 0.2)]
 
 
-def write_mesh(path):
+def write_mesh(path, grown=None):
+    """`grown` names a part that is larger, as if it changed in CAD."""
     pos, uvs, tris = box()
     body = struct.pack("<III", swmesh.MAGIC, 3, swmesh.FLAG_UVS)
     body += struct.pack("<d", 0.0005)
@@ -107,7 +108,7 @@ def write_mesh(path):
     body += _text("") + struct.pack("<I", 0)
     for i, (_cid, name, _r, _x) in enumerate(PARTS):
         # A size of its own for each, so the shapes are not one mesh.
-        p = pos * (1.0 + 0.1 * i)
+        p = pos * (1.0 + 0.1 * i) * (1.25 if name == grown else 1.0)
         body += struct.pack("<i", i + 1) + _text(name)
         body += struct.pack("<II", len(p), len(tris))
         body += struct.pack("<%df" % p.size, *p.ravel())
@@ -126,13 +127,13 @@ def write_mesh(path):
     return path
 
 
-def send(mesh, update=False):
+def send(mesh, update=False, mode="FLAT"):
     result = bridge._run_job({
         "step": None, "mesh": mesh, "manifest": None,
         "steps": {"import": False, "replace": not update, "update": update,
                   "match": False, "sync_poses": False, "build_rig": False,
                   "relink": False, "cleanup": False},
-        "import_options": {"hierarchy_types": "FLAT", "up_as": "ZPOS"},
+        "import_options": {"hierarchy_types": mode, "up_as": "ZPOS"},
     })
     check(result.get("ok"), "the send ran (%s)" % result.get("error"))
     return result
@@ -143,7 +144,7 @@ def parts():
             if o.type == "MESH" and o.get("SWMESH_file") == STEM}
 
 
-def worst(obj):
+def worst(obj, world=None):
     """The worst angle, in degrees, between world up and +V over the
     triangles (world Z on an upright face, world Y on a flat one), and the
     share of UV area that is mirrored."""
@@ -151,7 +152,8 @@ def worst(obj):
     me = obj.data
     co = np.empty(len(me.vertices) * 3)
     me.vertices.foreach_get("co", co)
-    co = co.reshape(-1, 3) @ np.array(obj.matrix_world.to_3x3()).T
+    co = co.reshape(-1, 3) @ np.array(
+        (world or obj.matrix_world).to_3x3()).T
     lv = np.empty(len(me.loops), dtype=np.int64)
     me.loops.foreach_get("vertex_index", lv)
     uv = np.empty(len(me.loops) * 2)
@@ -224,6 +226,85 @@ all_upright("update")
 print("\n== a refine brings new geometry, and makes it upright too")
 native_import.refine(bpy.context, MESH, stems=[STEM])
 all_upright("refine")
+
+print("\n== a Refresh Model keeps the UVs of a part that did not change")
+
+
+def uv_of(obj):
+    a = np.empty(len(obj.data.loops) * 2)
+    obj.data.uv_layers.active.uv.foreach_get("vector", a)
+    return a
+
+
+fresh()
+send(MESH)
+for obj in parts().values():
+    # A map of the user: skewed, so no pass of the addon makes it.
+    a = uv_of(obj).reshape(-1, 2) @ np.array([[0.9, 0.3], [-0.1, 0.7]]) + 0.25
+    obj.data.uv_layers.active.uv.foreach_set("vector", a.ravel())
+    obj.data.update()
+kept = {k: uv_of(o) for k, o in parts().items()}
+from CADder import main as main_mod  # noqa: E402
+real_unwrap = main_mod._unwrap_compound_objects
+asked = []
+
+
+def spy(targets, *args, **kw):
+    asked.extend(targets)
+    return real_unwrap(targets, *args, **kw)
+
+
+main_mod._unwrap_compound_objects = spy
+try:
+    send(MESH, update=True)
+finally:
+    main_mod._unwrap_compound_objects = real_unwrap
+check(not asked, "the unwrap of compound faces leaves the unchanged parts "
+      "alone (%d asked)" % len(asked))
+for key, obj in sorted(parts().items()):
+    check(np.allclose(uv_of(obj), kept[key], atol=1e-5),
+          "%s keeps the UVs of the user" % key)
+
+print("\n== a part that changed in CAD comes in upright, the others stay")
+os.makedirs(os.path.join(tmp, "changed"), exist_ok=True)
+CHANGED = write_mesh(os.path.join(tmp, "changed", STEM + ".swmesh"),
+                     grown="turned")
+send(CHANGED, update=True)
+for key, obj in sorted(parts().items()):
+    if key.startswith("turned"):
+        err, n, _mir = worst(obj)
+        check(n > 0 and err < TOL, "%s changed and is upright (worst %.3f "
+              "degrees)" % (key, err))
+    else:
+        check(np.allclose(uv_of(obj), kept[key], atol=1e-5),
+              "%s did not change and keeps the UVs of the user" % key)
+
+print("\n== a mesh from before this option is not turned by a refresh")
+fresh()
+bpy.context.scene.stepper.uv_rotate = True
+send(MESH)
+old = {k: uv_of(o) for k, o in parts().items()}
+bpy.context.scene.stepper.uv_rotate = False
+send(MESH, update=True)
+for key, obj in sorted(parts().items()):
+    check(np.allclose(uv_of(obj), old[key], atol=1e-5),
+          "%s keeps the UVs it had" % key)
+
+print("\n== a send as collection instances is upright too")
+fresh()
+send(MESH, mode="COLLECTION_INSTANCES")
+placed = [o for o in bpy.data.objects if o.instance_type == "COLLECTION"
+          and o.instance_collection is not None
+          and o.get("SWMESH_file") == STEM]
+check(len(placed) == len(PARTS), "%d placements" % len(placed))
+for holder in placed:
+    for proto in holder.instance_collection.all_objects:
+        if proto.type != "MESH":
+            continue
+        err, n, mir = worst(proto, holder.matrix_world)
+        check(n > 0 and err < TOL and mir < 1e-6,
+              "%s is upright in the world (worst %.3f degrees)"
+              % (holder.name, err))
 
 print("\n== with Rotate to Fit on, the islands stay as the CAD side sent them")
 fresh()

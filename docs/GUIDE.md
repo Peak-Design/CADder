@@ -1026,9 +1026,15 @@ correctly.
 
 Upright islands fill the tile less tightly than turned ones. Turn **Rotate
 to Fit** on when the texture has no direction and the texel count matters
-more. The option also applies to a send from the CAD application: set it in
-the **CADder: UV** panel before the send. A file that was imported before
-this option keeps its islands as they were at a refresh and a rebuild.
+more. For a send from the CAD application, set the option in the **CADder:
+UV** panel before the send. Parts that share one mesh also share one UV map,
+so the first placement of the part sets which way is up.
+
+Your existing scenes keep their UV maps. A STEP file that was imported before
+this option keeps its layout at a refresh and a rebuild. **Refresh Model**
+does not change the UVs of a part that did not change in the CAD application,
+including UVs that you made by hand. A new or changed part follows the
+setting.
 
 **Normalize UVs** decides whether the packer may resize the islands. With
 it on the islands are scaled to fill the tile. With it off the packer only
@@ -1087,6 +1093,7 @@ The check sends no information about you or your files, and runs on a background
 
 | Version | Blender | Changes |
 |---------|---------|---------|
+| 1.2.2   | 5.1     | UV islands of CAD Surfaces and CAD Surfaces (Smart) stand upright to the world, so a texture with a direction runs the same way on every face. Rotate to Fit lets Pack UVs turn the islands as before. New UV mode: Smart UV Project. Works with CADder Bridge 1.2.0. |
 | 1.2.1   | 5.1     | Split by Material: a part with faces in two or more materials comes in as one object for each material, from a STEP file (import dialog) and from SolidWorks (Mesh Quality panel), and a refresh keeps the objects. An assembly that you moved in Blender stays together through Refresh Model: a new part and a part that moved in SolidWorks go to where the assembly is now, and the rig stays under your empty. Works with CADder Bridge 1.2.0. |
 | 1.2.0   | 5.1     | Configurations. Each configuration of an assembly is a send of its own, in `<assembly>_<configuration>` with its own rig, beside the others. Multiple configurations in the Export Options of CADder Bridge sends several configurations at once. A part that is already in the scene, from any send, is linked to it and not made again. Append as a new copy puts an assembly in the scene again, as a copy with its own rig. Refresh Model asks which configurations to refresh, and brings copies up to date too. Rebuild from CAD asks for each configuration on its own. A send no longer removes the other assemblies in the scene. The Rig panel offers a list of the rigs in the scene. Needs CADder Bridge 1.2 |
 | 1.1.1   | 5.1     | CADder and CADder Bridge say when their versions do not match, before anything is sent. Lock Materials keeps the materials of a part through the material database, Refresh Model, a send and Regenerate. Lock Geometry keeps the mesh of a part, and your changes to it, through Rebuild from CAD, Refresh Model, a send and Regenerate. The Material Database list hides the entries the scene does not use, selects the parts of an entry and removes an entry, and Load keeps the database's materials in the file. Refresh Model keeps your rig and is offered only when a running Blender holds the document. A send puts the assembly and its rig side by side in one `<assembly>_Top_Level` collection. The SolidWorks Bridge is in the Windows version only. A background import lands at the 3D cursor, and each STEP import is one undo step. Improvements and bug fixes to the automatic rig engine, Refresh Model, STEP import, Refresh from Disk, background import, Mesh Quality and the live link |

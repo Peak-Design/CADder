@@ -127,7 +127,7 @@ Everything, with the details: **[the CADder guide](docs/GUIDE.md)**.
 
 ## Install
 
-You need **Blender 5.1**. On Windows you also need the
+You need **Blender 5.1** or later. On Windows you also need the
 [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
 
 1. Download the `.zip` for your platform from
@@ -136,7 +136,8 @@ You need **Blender 5.1**. On Windows you also need the
    Extensions > Install from Disk**.
 3. For the SolidWorks link: tick **SolidWorks Bridge** in the CADder
    preferences, and install [CADder Bridge](https://github.com/Peak-Design/CADder-SW-Bridge)
-   in SolidWorks. SolidWorks runs only on Windows, so the macOS and Linux
+   in SolidWorks with its `setup.exe`. The CADder Bridge `.zip` is not a
+   Blender add-on. SolidWorks runs only on Windows, so the macOS and Linux
    versions do not have this option.
 
 The **CADder** tab is in the 3D View sidebar (N). Windows is tested.

@@ -245,6 +245,16 @@ except ModuleNotFoundError:
     INSIDE_BLENDER = False
 
 
+# A checkout loaded as a plain add-on (development) has OCP unpacked beside
+# the code. An installed extension gets OCP from its wheel, and Blender's
+# extension policy does not let an extension change sys.path.
+if not __name__.startswith("bl_ext."):
+    import os as _os
+    import sys as _sys
+    _here = _os.path.dirname(__file__)
+    if _os.path.isdir(_os.path.join(_here, "OCP")) and _here not in _sys.path:
+        _sys.path.append(_here)
+
 if INSIDE_BLENDER:
     # Normally don't do import star, but here it's basically a file concatenation
     # File concatenation is because the test framework breaks on __init__.py import bpy

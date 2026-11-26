@@ -22,12 +22,11 @@
 #   - Scoped face recovery to only unmapped entities (prevents geometry bleed)
 #   - Migrated to OCP bindings (cadquery-ocp-novtk 7.9.3.1.1 / OCCT 7.9.3). Native module now receives faces via BinTools serialize handoff
 
-import sys
 from os.path import dirname
 
+# The folder of the add-on. It is not put on sys.path: Blender's extension
+# policy does not allow it, and every import here is relative.
 file_dirname = dirname(__file__)
-if file_dirname not in sys.path:
-    sys.path.append(file_dirname)
 
 import importlib
 import math
